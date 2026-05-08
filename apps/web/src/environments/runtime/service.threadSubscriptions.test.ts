@@ -84,6 +84,12 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
       dispatchCommand: vi.fn(),
       getTurnDiff: vi.fn(),
       getFullThreadDiff: vi.fn(),
+      getArchivedShellSnapshot: vi.fn(async () => ({
+        snapshotSequence: 1,
+        projects: [],
+        threads: [],
+        updatedAt: "2026-04-13T00:00:00.000Z",
+      })),
       subscribeShell: vi.fn(() => () => undefined),
       subscribeThread: mockSubscribeThread,
     },

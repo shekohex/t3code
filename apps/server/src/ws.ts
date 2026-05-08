@@ -9,6 +9,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
+  DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   type AuthAccessStreamEvent,
   AuthSessionId,
   CommandId,
@@ -185,6 +186,14 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const serverEnvironment = yield* ServerEnvironment;
       const serverAuth = yield* ServerAuth;
       const sourceControlDiscovery = yield* SourceControlDiscoveryLayer.SourceControlDiscovery;
+      const automaticGitFetchInterval = serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.automaticGitFetchInterval),
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to read automatic Git fetch interval setting", {
+            detail: cause.message,
+          }).pipe(Effect.as(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL)),
+        ),
+      );
       const sourceControlRepositories = yield* SourceControlRepositoryService;
       const bootstrapCredentials = yield* BootstrapCredentialService;
       const sessions = yield* SessionCredentialService;
@@ -313,12 +322,24 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               }),
             );
           case "thread.deleted":
+          case "thread.archived":
             return Effect.succeed(
               Option.some({
                 kind: "thread-removed" as const,
                 sequence: event.sequence,
                 threadId: event.payload.threadId,
               }),
+            );
+          case "thread.unarchived":
+            return projectionSnapshotQuery.getThreadShellById(event.payload.threadId).pipe(
+              Effect.map((thread) =>
+                Option.map(thread, (nextThread) => ({
+                  kind: "thread-upserted" as const,
+                  sequence: event.sequence,
+                  thread: nextThread,
+                })),
+              ),
+              Effect.catch(() => Effect.succeed(Option.none())),
             );
           default:
             if (event.aggregateKind !== "thread") {
@@ -739,6 +760,23 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             }),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
+            projectionSnapshotQuery.getArchivedShellSnapshot().pipe(
+              Effect.tapError((cause) =>
+                Effect.logError("orchestration archived shell snapshot load failed", { cause }),
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationGetSnapshotError({
+                    message: "Failed to load archived orchestration shell snapshot",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [ORCHESTRATION_WS_METHODS.subscribeThread]: (input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
@@ -957,7 +995,9 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(
             WS_METHODS.subscribeVcsStatus,
-            vcsStatusBroadcaster.streamStatus(input),
+            vcsStatusBroadcaster.streamStatus(input, {
+              automaticRemoteRefreshInterval: automaticGitFetchInterval,
+            }),
             {
               "rpc.aggregate": "vcs",
             },

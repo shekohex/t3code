@@ -641,6 +641,13 @@ const buildAppUnderTest = (options?: {
               threads: [],
               updatedAt: "1970-01-01T00:00:00.000Z",
             }),
+          getArchivedShellSnapshot: () =>
+            Effect.succeed({
+              snapshotSequence: 0,
+              projects: [],
+              threads: [],
+              updatedAt: "1970-01-01T00:00:00.000Z",
+            }),
           getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
           getProjectShellById: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),

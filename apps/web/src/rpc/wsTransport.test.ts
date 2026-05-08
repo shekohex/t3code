@@ -1,4 +1,5 @@
-import { DEFAULT_SERVER_SETTINGS, WS_METHODS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, ServerSettings, WS_METHODS } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -16,6 +17,8 @@ import {
   resetWsConnectionStateForTests,
 } from "../rpc/wsConnectionState";
 import { WsTransport } from "./wsTransport";
+
+const encodeServerSettings = Schema.encodeSync(ServerSettings);
 
 type WsEventType = "open" | "message" | "close" | "error";
 type WsEvent = { code?: number; data?: unknown; reason?: string; type?: string };
@@ -583,7 +586,7 @@ describe("WsTransport (web instrumentation)", () => {
         requestId: requestMessage.id,
         exit: {
           _tag: "Success",
-          value: DEFAULT_SERVER_SETTINGS,
+          value: encodeServerSettings(DEFAULT_SERVER_SETTINGS),
         },
       }),
     );
