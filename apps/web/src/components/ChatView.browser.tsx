@@ -65,12 +65,38 @@ import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test
 
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-vi.mock("../lib/vcsStatusState", () => ({
-  useVcsStatus: () => ({ data: null, error: null, cause: null, isPending: false }),
-  useVcsStatuses: () => new Map(),
-  refreshVcsStatus: () => Promise.resolve(null),
-  resetVcsStatusStateForTests: () => undefined,
-}));
+vi.mock("../lib/vcsStatusState", () => {
+  const status = {
+    data: {
+      isRepo: true,
+      sourceControlProvider: {
+        kind: "github",
+        name: "GitHub",
+        baseUrl: "https://github.com",
+      },
+      hasPrimaryRemote: true,
+      isDefaultRef: true,
+      refName: "main",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: null,
+    },
+    error: null,
+    cause: null,
+    isPending: false,
+  };
+
+  return {
+    getVcsStatusSnapshot: () => status,
+    useVcsStatus: () => status,
+    useVcsStatuses: () => new Map(),
+    refreshVcsStatus: () => Promise.resolve(null),
+    resetVcsStatusStateForTests: () => undefined,
+  };
+});
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
 const THREAD_TITLE = "Browser test thread";
