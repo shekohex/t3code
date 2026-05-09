@@ -206,7 +206,7 @@ export const launchDetached = (launch: EditorLaunch) =>
             },
           ),
         );
-        yield* child.unref;
+        yield* Effect.asVoid(child.unref);
       }),
     ).pipe(
       Effect.mapError(
