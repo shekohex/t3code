@@ -281,6 +281,24 @@ export const resolveRemoteProviderCompatibilityDocument = Effect.fn(
   return document;
 });
 
+function baseStatusWithoutAdvisory<Snapshot extends ProviderCompatibilitySnapshot>(
+  snapshot: Snapshot,
+): Snapshot["status"] {
+  const prev = snapshot.compatibilityAdvisory;
+  if (!prev || !snapshot.enabled) return snapshot.status;
+  if (prev.severity === "error" && snapshot.status === "error") return "ready";
+  if (prev.severity === "warning" && snapshot.status === "warning") return "ready";
+  return snapshot.status;
+}
+
+function baseMessageWithoutAdvisory<Snapshot extends ProviderCompatibilitySnapshot>(
+  snapshot: Snapshot,
+): Snapshot["message"] {
+  const prev = snapshot.compatibilityAdvisory;
+  if (prev?.message != null && snapshot.message === prev.message) return undefined;
+  return snapshot.message;
+}
+
 function applyCompatibilityAdvisory<Snapshot extends ProviderCompatibilitySnapshot>(
   snapshot: Snapshot,
   compatibilityAdvisory: ServerProviderCompatibilityAdvisory | undefined,
@@ -290,6 +308,8 @@ function applyCompatibilityAdvisory<Snapshot extends ProviderCompatibilitySnapsh
     return snapshotWithoutAdvisory as Snapshot;
   }
 
+  const baseStatus = baseStatusWithoutAdvisory(snapshot);
+
   const compatibilityMessage =
     compatibilityAdvisory.severity !== "info"
       ? (compatibilityAdvisory.message ?? undefined)
@@ -297,18 +317,18 @@ function applyCompatibilityAdvisory<Snapshot extends ProviderCompatibilitySnapsh
   const status =
     snapshot.enabled && compatibilityAdvisory.severity === "error"
       ? "error"
-      : snapshot.enabled &&
-          compatibilityAdvisory.severity === "warning" &&
-          snapshot.status === "ready"
+      : snapshot.enabled && compatibilityAdvisory.severity === "warning" && baseStatus === "ready"
         ? "warning"
-        : snapshot.status;
+        : baseStatus;
+
+  const baseMessage = baseMessageWithoutAdvisory(snapshot);
+  const resolvedMessage = compatibilityMessage ?? baseMessage;
+  const { message: _existingMessage, ...snapshotWithoutMessage } = snapshot;
 
   return {
-    ...snapshot,
+    ...snapshotWithoutMessage,
     status,
-    ...(compatibilityMessage || snapshot.message
-      ? { message: compatibilityMessage ?? snapshot.message }
-      : {}),
+    ...(resolvedMessage != null ? { message: resolvedMessage } : {}),
     compatibilityAdvisory,
   } as Snapshot;
 }

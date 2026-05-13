@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import {
+  applyBundledProviderCompatibilityAdvisory,
   clearProviderCompatibilityCacheForTests,
   createProviderCompatibilityAdvisory,
   enrichProviderSnapshotWithCompatibilityAdvisory,
@@ -120,5 +121,43 @@ describe("provider compatibility", () => {
       status: "broken",
       recommendedVersion: "0.129.0",
     });
+  });
+
+  it("remote advisory demotes status set by bundled advisory", async () => {
+    // The bundled document marks <0.129.0 as "broken", so 0.128.0 triggers
+    // an error advisory on the initial snapshot.
+    const snapshotAfterBundled = applyBundledProviderCompatibilityAdvisory({
+      snapshot: { ...baseProvider, version: "0.128.0" },
+      driver: codexDriver,
+      currentVersion: "0.128.0",
+    });
+    expect(snapshotAfterBundled.status).toBe("error");
+    expect(snapshotAfterBundled.compatibilityAdvisory?.severity).toBe("error");
+
+    // The remote document relaxes the policy: 0.128.0 is now "supported".
+    const remoteDocument = {
+      version: 1,
+      policies: [
+        {
+          t3CodeRange: ">=0.0.0",
+          driver: "codex",
+          recommendedRange: ">=0.129.0",
+          recommendedVersion: "0.129.0",
+          ranges: [{ status: "supported", range: ">=0.128.0" }],
+        },
+      ],
+    };
+
+    const enriched = await Effect.runPromise(
+      enrichProviderSnapshotWithCompatibilityAdvisory({
+        ...snapshotAfterBundled,
+        instanceId: baseProvider.instanceId,
+        driver: baseProvider.driver,
+      }).pipe(Effect.provideService(HttpClient.HttpClient, jsonHttpClient(remoteDocument))),
+    );
+
+    expect(enriched.status).toBe("ready");
+    expect(enriched.compatibilityAdvisory?.severity).toBe("info");
+    expect(enriched.message).toBeUndefined();
   });
 });
