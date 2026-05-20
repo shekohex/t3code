@@ -45,17 +45,20 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   preview,
   onClose,
 }: ExpandedImageDialogProps) {
-  const [activeIndex, setActiveIndex] = useState(preview.index);
+  const [navigationOffset, setNavigationOffset] = useState(0);
+  const imageCount = preview.images.length;
+  const activeIndex =
+    imageCount > 0 ? (preview.index + navigationOffset + imageCount) % imageCount : preview.index;
 
   const navigateImage = useCallback((direction: -1 | 1) => {
-    setActiveIndex((existingIndex) => {
-      if (preview.images.length <= 1) return existingIndex;
-      return (existingIndex + direction + preview.images.length) % preview.images.length;
+    setNavigationOffset((offset) => {
+      if (imageCount <= 1) return offset;
+      return offset + direction;
     });
-  }, [preview.images.length]);
+  }, [imageCount]);
 
   useExpandedImageDialogKeyboardShortcuts({
-    imageCount: preview.images.length,
+    imageCount,
     onClose,
     onNavigate: navigateImage,
   });
@@ -76,7 +79,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         aria-label="Close image preview"
         onClick={onClose}
       />
-      {preview.images.length > 1 && (
+      {imageCount > 1 && (
         <Button
           type="button"
           size="icon"
@@ -107,10 +110,10 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         />
         <p className="mt-2 max-w-[92vw] truncate text-center text-xs text-muted-foreground/80">
           {item.name}
-          {preview.images.length > 1 ? ` (${activeIndex + 1}/${preview.images.length})` : ""}
+          {imageCount > 1 ? ` (${activeIndex + 1}/${imageCount})` : ""}
         </p>
       </div>
-      {preview.images.length > 1 && (
+      {imageCount > 1 && (
         <Button
           type="button"
           size="icon"
