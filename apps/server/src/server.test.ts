@@ -2127,6 +2127,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         relayIssuer: "http://relay.example.test",
         environmentCredential: "t3env_test_credential",
       });
+      const nonOriginRelayUrl = yield* postRelayConfig({
+        relayUrl: "https://relay.example.test/path",
+        cloudUserId: "user_123",
+        environmentCredential: "t3env_test_credential",
+      });
       const emptyCredential = yield* postRelayConfig({
         relayUrl: "https://relay.example.test",
         cloudUserId: "user_123",
@@ -2137,6 +2142,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       const insecureRelayIssuerBody = yield* responseJsonEffect<{ readonly message?: string }>(
         insecureRelayIssuer,
+      );
+      const nonOriginRelayUrlBody = yield* responseJsonEffect<{ readonly message?: string }>(
+        nonOriginRelayUrl,
       );
       const emptyCredentialBody = yield* responseJsonEffect<{ readonly message?: string }>(
         emptyCredential,
@@ -2149,6 +2157,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         insecureRelayIssuerBody.message,
         "Relay issuer must be a secure absolute HTTPS URL.",
       );
+      assert.equal(nonOriginRelayUrl.status, 400);
+      assert.equal(nonOriginRelayUrlBody.message, "Relay URL must be a secure absolute HTTPS URL.");
       assert.equal(emptyCredential.status, 400);
       assert.equal(emptyCredentialBody.message, "Relay environment credential is required.");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),

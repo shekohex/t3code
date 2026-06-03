@@ -37,6 +37,7 @@ import {
   signRelayJwt,
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
+import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
@@ -153,20 +154,6 @@ function validateCloudMintPublicKey(
           ),
     ),
   );
-}
-
-function isSecureRelayUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === "https:" &&
-      url.username.length === 0 &&
-      url.password.length === 0 &&
-      url.hash.length === 0
-    );
-  } catch {
-    return false;
-  }
 }
 
 function validateRelayConfigPayload(

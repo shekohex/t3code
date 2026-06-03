@@ -1,5 +1,6 @@
 import Constants from "expo-constants";
 import { relayClerkTokenOptions } from "@t3tools/shared/relayAuth";
+import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 
 type ExpoExtra = Readonly<Record<string, unknown>> | undefined;
 
@@ -22,7 +23,7 @@ export function resolveCloudPublicConfig(extra: ExpoExtra = Constants.expoConfig
   return {
     clerkPublishableKey: trimNonEmpty(clerk?.publishableKey),
     clerkJwtTemplate: trimNonEmpty(clerk?.jwtTemplate),
-    relayUrl: trimNonEmpty(relay?.url)?.replace(/\/+$/u, "") ?? null,
+    relayUrl: normalizeSecureRelayUrl(trimNonEmpty(relay?.url) ?? ""),
   } satisfies CloudPublicConfig;
 }
 

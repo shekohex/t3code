@@ -16,7 +16,10 @@ import {
 } from "./managedRelay.ts";
 import { remoteHttpClientLayer } from "./remote.ts";
 
-function managedRelayTestLayer(fetchFn: typeof globalThis.fetch) {
+function managedRelayTestLayer(
+  fetchFn: typeof globalThis.fetch,
+  relayUrl = "https://relay.example.test",
+) {
   const httpClientLayer = remoteHttpClientLayer(fetchFn);
   const signerLayer = Layer.succeed(
     ManagedRelayDpopSigner,
@@ -26,12 +29,33 @@ function managedRelayTestLayer(fetchFn: typeof globalThis.fetch) {
     }),
   );
   return managedRelayClientLayer({
-    relayUrl: "https://relay.example.test",
+    relayUrl,
     clientId: "t3-mobile",
   }).pipe(Layer.provide(signerLayer), Layer.provide(httpClientLayer));
 }
 
 describe("ManagedRelayClient", () => {
+  it.effect("rejects unsafe relay URLs before sending credentials", () => {
+    let requestCount = 0;
+    const fetchFn = (() => {
+      requestCount += 1;
+      return Promise.resolve(Response.json({}));
+    }) satisfies typeof globalThis.fetch;
+
+    return Effect.gen(function* () {
+      const relayClient = yield* ManagedRelayClient;
+      const error = yield* relayClient
+        .listEnvironments({ clerkToken: "clerk-token" })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "ManagedRelayClientError",
+        message: "Relay URL must be a secure absolute HTTPS origin.",
+      });
+      expect(requestCount).toBe(0);
+    }).pipe(Effect.provide(managedRelayTestLayer(fetchFn, "http://relay.example.test")));
+  });
+
   it.effect("reuses usable DPoP tokens and refreshes cleared or expiring cache entries", () => {
     let tokenExchangeCount = 0;
     const fetchFn = ((input) => {

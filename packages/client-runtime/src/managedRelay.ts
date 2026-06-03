@@ -26,6 +26,7 @@ import {
   RelayUnregisterDeviceEndpoint,
 } from "@t3tools/contracts/relay";
 import { encodeOAuthScope, oauthScopeSetEquals } from "@t3tools/shared/oauthScope";
+import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -183,14 +184,37 @@ function dpopHeaders(authorization: ManagedRelayAuthorization) {
   };
 }
 
+function disabledManagedRelayClient(relayUrl: string): ManagedRelayClientShape {
+  const unavailable = () =>
+    Effect.fail(relayClientError("Relay URL must be a secure absolute HTTPS origin."));
+  return ManagedRelayClient.of({
+    relayUrl,
+    listEnvironments: unavailable,
+    listDevices: unavailable,
+    createEnvironmentLinkChallenge: unavailable,
+    linkEnvironment: unavailable,
+    unlinkEnvironment: unavailable,
+    getEnvironmentStatus: unavailable,
+    connectEnvironment: unavailable,
+    registerDevice: unavailable,
+    unregisterDevice: unavailable,
+    registerLiveActivity: unavailable,
+    resetTokenCache: Effect.void,
+  });
+}
+
 export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions) {
   return Layer.effect(
     ManagedRelayClient,
     Effect.gen(function* () {
+      const relayUrl = normalizeSecureRelayUrl(options.relayUrl);
+      if (relayUrl === null) {
+        return disabledManagedRelayClient(options.relayUrl);
+      }
       const signer = yield* ManagedRelayDpopSigner;
-      const client = yield* HttpApiClient.make(RelayApi, { baseUrl: options.relayUrl });
+      const client = yield* HttpApiClient.make(RelayApi, { baseUrl: relayUrl });
       const cachedTokens = yield* SynchronizedRef.make<ReadonlyArray<CachedRelayAccessToken>>([]);
-      const urlBuilder = HttpApiClient.urlBuilder(RelayApi, { baseUrl: options.relayUrl });
+      const urlBuilder = HttpApiClient.urlBuilder(RelayApi, { baseUrl: relayUrl });
 
       type DpopProofTarget = Pick<ManagedRelayDpopProofInput, "method" | "url">;
       const dpopProofTargets = {
@@ -257,7 +281,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                     subject_token: input.clerkToken,
                     subject_token_type: RelayJwtSubjectTokenType,
                     requested_token_type: RelayAccessTokenType,
-                    resource: options.relayUrl,
+                    resource: relayUrl,
                     scope: encodeOAuthScope(input.scopes),
                     client_id: options.clientId,
                   },
@@ -325,7 +349,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
         });
 
       return ManagedRelayClient.of({
-        relayUrl: options.relayUrl,
+        relayUrl,
         listEnvironments: (input) =>
           client.client.listEnvironments({ headers: bearerHeaders(input.clerkToken) }).pipe(
             Effect.map((response) => response.environments),

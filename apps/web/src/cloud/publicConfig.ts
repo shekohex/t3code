@@ -1,4 +1,5 @@
 import { relayClerkTokenOptions } from "@t3tools/shared/relayAuth";
+import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 
 export interface CloudPublicConfig {
   readonly clerkPublishableKey: string | null;
@@ -16,11 +17,9 @@ export function resolveCloudPublicConfig(): CloudPublicConfig {
       import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined,
     ),
     clerkJwtTemplate: trimNonEmpty(import.meta.env.VITE_CLERK_JWT_TEMPLATE as string | undefined),
-    relayUrl:
-      trimNonEmpty(import.meta.env.VITE_T3CODE_RELAY_URL as string | undefined)?.replace(
-        /\/+$/u,
-        "",
-      ) ?? null,
+    relayUrl: normalizeSecureRelayUrl(
+      (import.meta.env.VITE_T3CODE_RELAY_URL as string | undefined) ?? "",
+    ),
   };
 }
 
