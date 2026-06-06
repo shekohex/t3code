@@ -329,7 +329,7 @@ describe("RelayClient", () => {
     );
   });
 
-  it.effect("times out install lock waits with the test clock", () => {
+  it.effect("exhausts install lock retries with the test clock", () => {
     const bytes = new TextEncoder().encode("test-cloudflared-binary");
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

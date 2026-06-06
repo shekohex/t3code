@@ -102,7 +102,6 @@ const CLOUDFLARED_RELEASE_ASSETS: Readonly<
 
 const INSTALL_LOCK_RETRY_COUNT = 100;
 const INSTALL_LOCK_RETRY_DELAY = Duration.millis(100);
-const INSTALL_LOCK_TIMEOUT = Duration.times(INSTALL_LOCK_RETRY_DELAY, INSTALL_LOCK_RETRY_COUNT);
 const INSTALL_LOCK_STALE_AGE = Duration.minutes(5);
 
 class RelayClientInstallLockBusy extends Data.TaggedError("RelayClientInstallLockBusy")<{
@@ -110,6 +109,7 @@ class RelayClientInstallLockBusy extends Data.TaggedError("RelayClientInstallLoc
 }> {}
 
 const retryWhileInstallLockBusy = Schedule.spaced(INSTALL_LOCK_RETRY_DELAY).pipe(
+  Schedule.both(Schedule.recurs(INSTALL_LOCK_RETRY_COUNT - 1)),
   Schedule.setInputType<RelayClientInstallLockBusy | PlatformError.PlatformError>(),
   Schedule.while(({ input }) => input._tag === "RelayClientInstallLockBusy"),
 );
@@ -399,16 +399,6 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   ) {
     return yield* attemptAcquireInstallLock(lockPath).pipe(
       Effect.retry(retryWhileInstallLockBusy),
-      Effect.timeoutOrElse({
-        duration: INSTALL_LOCK_TIMEOUT,
-        orElse: () =>
-          Effect.fail(
-            new RelayClientInstallError({
-              reason: "install_locked",
-              message: "Another relay client installation is still in progress.",
-            }),
-          ),
-      }),
       Effect.catchTag("RelayClientInstallLockBusy", () =>
         Effect.fail(
           new RelayClientInstallError({
