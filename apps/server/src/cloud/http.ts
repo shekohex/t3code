@@ -12,6 +12,7 @@ import {
   EnvironmentHttpInternalServerError,
   EnvironmentHttpUnauthorizedError,
 } from "@t3tools/contracts";
+import { withRelayClientTracing } from "@t3tools/client-runtime";
 import {
   RelayCloudEnvironmentHealthProofPayload,
   RelayCloudEnvironmentHealthRequest,
@@ -512,6 +513,7 @@ const relayClientRequest = <A>(
           message: `T3 Cloud relay request failed: ${String(cause)}`,
         }),
     ),
+    withRelayClientTracing,
   );
 
 const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesiredLinkWith")(

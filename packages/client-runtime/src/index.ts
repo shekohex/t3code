@@ -28,3 +28,4 @@ export * from "./checkpointDiffState.ts";
 export * from "./remote.ts";
 export * from "./managedRelay.ts";
 export * from "./managedRelayState.ts";
+export * from "./relayTracing.ts";

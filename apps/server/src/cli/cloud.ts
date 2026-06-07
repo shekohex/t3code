@@ -4,6 +4,7 @@ import {
   type RelayClientInstallProgressEvent,
   type RelayClientInstallProgressStage,
 } from "@t3tools/contracts";
+import { withRelayClientTracing } from "@t3tools/client-runtime";
 import { RelayOkResponse } from "@t3tools/contracts/relay";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import * as Console from "effect/Console";
@@ -29,6 +30,7 @@ import * as CliState from "../cloud/CliState.ts";
 import * as CliTokenManager from "../cloud/CliTokenManager.ts";
 import { CLOUD_LINKED_USER_ID, RELAY_URL_SECRET } from "../cloud/config.ts";
 import { relayUrlConfig } from "../cloud/publicConfig.ts";
+import { serverRelayClientTracingLayer } from "../cloud/relayTracing.ts";
 import { ServerConfig } from "../config.ts";
 import { ServerEnvironmentLive } from "../environment/Layers/ServerEnvironment.ts";
 import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
@@ -228,6 +230,7 @@ const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(f
     httpClient.execute,
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayOkResponse)),
+    withRelayClientTracing,
   );
   return response.ok
     ? ({ status: "revoked" } satisfies RelayUnlinkResult)
@@ -299,6 +302,7 @@ const runCloudCommand = <A, E>(
       RelayClient.layerCloudflared({ baseDir: config.baseDir }),
       EnvironmentAuth.runtimeLayer,
       ServerEnvironmentLive,
+      serverRelayClientTracingLayer,
     ).pipe(
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provideMerge(Layer.succeed(ServerConfig, config)),
