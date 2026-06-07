@@ -38,6 +38,8 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import type { HttpMethod } from "effect/unstable/http/HttpMethod";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 
+import { withRelayClientTracing } from "./relayTracing.ts";
+
 export interface ManagedRelayDpopProofInput {
   readonly method: HttpMethod;
   readonly url: string;
@@ -155,6 +157,9 @@ function timeoutRelayRequest(message: string) {
       ),
     );
 }
+
+const traceRelayRequest = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  withRelayClientTracing(effect);
 
 function tokenMatches(
   token: CachedRelayAccessToken,
@@ -357,6 +362,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
               relayClientError("Could not list relay-managed environments.", cause),
             ),
             timeoutRelayRequest("Relay environment listing timed out."),
+            traceRelayRequest,
           ),
         listDevices: (input) =>
           client.client
@@ -369,6 +375,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 relayClientError("Could not list relay client devices.", cause),
               ),
               timeoutRelayRequest("Relay client device listing timed out."),
+              traceRelayRequest,
             ),
         createEnvironmentLinkChallenge: (input) =>
           client.client
@@ -381,6 +388,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 relayClientError("Could not create relay environment link challenge.", cause),
               ),
               timeoutRelayRequest("Relay environment link challenge timed out."),
+              traceRelayRequest,
             ),
         linkEnvironment: (input) =>
           client.client
@@ -393,6 +401,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 relayClientError("Could not link relay environment.", cause),
               ),
               timeoutRelayRequest("Relay environment linking timed out."),
+              traceRelayRequest,
             ),
         unlinkEnvironment: (input) =>
           client.client
@@ -405,6 +414,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 relayClientError("Could not unlink relay environment.", cause),
               ),
               timeoutRelayRequest("Relay environment unlinking timed out."),
+              traceRelayRequest,
             ),
         getEnvironmentStatus: (input) =>
           Effect.gen(function* () {
@@ -424,7 +434,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 ),
                 timeoutRelayRequest("Relay environment status request timed out."),
               );
-          }),
+          }).pipe(traceRelayRequest),
         connectEnvironment: (input) =>
           Effect.gen(function* () {
             const authorization = yield* authorize({
@@ -448,7 +458,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 ),
                 timeoutRelayRequest("Relay environment connection timed out."),
               );
-          }),
+          }).pipe(traceRelayRequest),
         registerDevice: (input) =>
           Effect.gen(function* () {
             const authorization = yield* authorizeMobileRegistration({
@@ -466,7 +476,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 ),
                 timeoutRelayRequest("Relay mobile device registration timed out."),
               );
-          }),
+          }).pipe(traceRelayRequest),
         unregisterDevice: (input) =>
           Effect.gen(function* () {
             const authorization = yield* authorizeMobileRegistration({
@@ -484,7 +494,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 ),
                 timeoutRelayRequest("Relay mobile device unregistration timed out."),
               );
-          }),
+          }).pipe(traceRelayRequest),
         registerLiveActivity: (input) =>
           Effect.gen(function* () {
             const authorization = yield* authorizeMobileRegistration({
@@ -502,7 +512,7 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 ),
                 timeoutRelayRequest("Relay Live Activity registration timed out."),
               );
-          }),
+          }).pipe(traceRelayRequest),
         resetTokenCache: SynchronizedRef.set(cachedTokens, []),
       });
     }),
