@@ -1,6 +1,4 @@
-import type {
-  RelayEnvironmentStatusResponse,
-} from "@t3tools/contracts/relay";
+import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
 import {
   RelayClientEnvironmentRecord,
   RelayEnvironmentConnectScope,
