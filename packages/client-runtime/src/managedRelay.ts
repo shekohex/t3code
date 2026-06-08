@@ -26,6 +26,7 @@ import {
   RelayUnregisterDeviceEndpoint,
 } from "@t3tools/contracts/relay";
 import { encodeOAuthScope, oauthScopeSetEquals } from "@t3tools/shared/oauthScope";
+import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -37,8 +38,6 @@ import * as Option from "effect/Option";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import type { HttpMethod } from "effect/unstable/http/HttpMethod";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
-
-import { withRelayClientTracing } from "./relayTracing.ts";
 
 export interface ManagedRelayDpopProofInput {
   readonly method: HttpMethod;

@@ -1,5 +1,5 @@
 import Constants from "expo-constants";
-import { makeRelayClientTracingLayer } from "@t3tools/client-runtime";
+import { makeRelayClientTracingLayer } from "@t3tools/shared/relayTracing";
 
 import { hasMobileTracingPublicConfig, resolveCloudPublicConfig } from "../cloud/publicConfig";
 

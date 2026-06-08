@@ -12,7 +12,6 @@ import {
   EnvironmentHttpInternalServerError,
   EnvironmentHttpUnauthorizedError,
 } from "@t3tools/contracts";
-import { withRelayClientTracing } from "@t3tools/client-runtime";
 import {
   RelayCloudEnvironmentHealthProofPayload,
   RelayCloudEnvironmentHealthRequest,
@@ -30,6 +29,7 @@ import {
   RelayLinkProofRequest,
   RelayManagedEndpointOrigin,
 } from "@t3tools/contracts/relay";
+import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
   normalizeRelayIssuer,
   RELAY_HEALTH_REQUEST_TYP,

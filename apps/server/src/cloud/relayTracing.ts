@@ -1,4 +1,4 @@
-import { makeRelayClientTracingLayer } from "@t3tools/client-runtime";
+import { makeRelayClientTracingLayer } from "@t3tools/shared/relayTracing";
 
 import { resolveRelayClientTracingConfig } from "./publicConfig.ts";
 
