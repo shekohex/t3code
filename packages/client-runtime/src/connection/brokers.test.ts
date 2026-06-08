@@ -1,10 +1,12 @@
 import { EnvironmentId, type DesktopSshEnvironmentTarget } from "@t3tools/contracts";
 import { RelayEnvironmentConnectScope } from "@t3tools/contracts/relay";
+import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Tracer from "effect/Tracer";
 
 import {
   ManagedRelayClient,
@@ -51,6 +53,20 @@ const SSH_TARGET: DesktopSshEnvironmentTarget = {
 
 function unsupported<A>(name: string): Effect.Effect<A> {
   return Effect.die(new Error(`Unexpected relay call: ${name}`));
+}
+
+function collectingTracer(spans: Array<string>): Tracer.Tracer {
+  return Tracer.make({
+    span: (options) => {
+      const span = new Tracer.NativeSpan(options);
+      const end = span.end.bind(span);
+      span.end = (endTime, exit) => {
+        end(endTime, exit);
+        spans.push(span.name);
+      };
+      return span;
+    },
+  });
 }
 
 function relayClient(connectEnvironment: ManagedRelayClient["Service"]["connectEnvironment"]) {
@@ -274,6 +290,42 @@ describe("ConnectionBroker", () => {
         },
       ]);
       expect(yield* Ref.get(bootstrapCredentials)).toEqual(["relay-bootstrap"]);
+    }),
+  );
+
+  it.effect("exports the complete relay authorization flow through the product tracer", () =>
+    Effect.gen(function* () {
+      const userSpans: Array<string> = [];
+      const productSpans: Array<string> = [];
+      const target = new RelayConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Cloud",
+      });
+      const brokerLayer = yield* makeDependencies({
+        authorizeDpop: (input) =>
+          input.obtainBootstrap.pipe(
+            Effect.as({
+              environmentId: input.expectedEnvironmentId,
+              label: "Cloud",
+              httpBaseUrl: ENDPOINT.httpBaseUrl,
+              socketUrl: "wss://environment.example.test/ws?wsTicket=dpop",
+            }),
+            Effect.withSpan("test.remote.authorizeDpop"),
+          ),
+      });
+      const broker = yield* ConnectionBroker.pipe(Effect.provide(brokerLayer));
+
+      yield* broker
+        .prepare(target)
+        .pipe(
+          Effect.provideService(RelayClientTracer, Option.some(collectingTracer(productSpans))),
+          Effect.withTracer(collectingTracer(userSpans)),
+        );
+
+      expect(productSpans).toContain("clientRuntime.connection.broker.relay");
+      expect(productSpans).toContain("test.remote.authorizeDpop");
+      expect(userSpans).toContain("clientRuntime.connection.broker.prepare");
+      expect(userSpans).not.toContain("test.remote.authorizeDpop");
     }),
   );
 

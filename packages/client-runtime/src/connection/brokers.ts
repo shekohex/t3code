@@ -1,4 +1,5 @@
 import { RelayEnvironmentConnectScope } from "@t3tools/contracts/relay";
+import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -119,39 +120,41 @@ const makeRelayBroker = Effect.fn("clientRuntime.connection.broker.makeRelay")(f
   const identity = yield* RelayDeviceIdentity;
   const remote = yield* RemoteEnvironmentAuthorization;
 
-  return Effect.fn("clientRuntime.connection.broker.relay")(function* (
-    target: RelayConnectionTarget,
-  ) {
-    const authorized = yield* remote.authorizeDpop({
-      expectedEnvironmentId: target.environmentId,
-      obtainBootstrap: Effect.gen(function* () {
-        const clerkToken = yield* session.clerkToken;
-        const deviceId = yield* identity.deviceId;
-        const connected = yield* relay
-          .connectEnvironment({
-            clerkToken,
-            scopes: [RelayEnvironmentConnectScope],
-            environmentId: target.environmentId,
-            ...(Option.isSome(deviceId) ? { deviceId: deviceId.value } : {}),
-          })
-          .pipe(Effect.mapError(mapManagedRelayError));
-        if (connected.environmentId !== target.environmentId) {
-          return yield* environmentMismatchError({
-            expected: target.environmentId,
-            actual: connected.environmentId,
-          });
-        }
-        return connected;
-      }),
-    });
-    return {
-      environmentId: authorized.environmentId,
-      label: authorized.label,
-      httpBaseUrl: authorized.httpBaseUrl,
-      socketUrl: authorized.socketUrl,
-      target,
-    } satisfies PreparedConnection;
-  });
+  return Effect.fnUntraced(
+    function* (target: RelayConnectionTarget) {
+      const authorized = yield* remote.authorizeDpop({
+        expectedEnvironmentId: target.environmentId,
+        obtainBootstrap: Effect.gen(function* () {
+          const clerkToken = yield* session.clerkToken;
+          const deviceId = yield* identity.deviceId;
+          const connected = yield* relay
+            .connectEnvironment({
+              clerkToken,
+              scopes: [RelayEnvironmentConnectScope],
+              environmentId: target.environmentId,
+              ...(Option.isSome(deviceId) ? { deviceId: deviceId.value } : {}),
+            })
+            .pipe(Effect.mapError(mapManagedRelayError));
+          if (connected.environmentId !== target.environmentId) {
+            return yield* environmentMismatchError({
+              expected: target.environmentId,
+              actual: connected.environmentId,
+            });
+          }
+          return connected;
+        }),
+      });
+      return {
+        environmentId: authorized.environmentId,
+        label: authorized.label,
+        httpBaseUrl: authorized.httpBaseUrl,
+        socketUrl: authorized.socketUrl,
+        target,
+      } satisfies PreparedConnection;
+    },
+    Effect.withSpan("clientRuntime.connection.broker.relay"),
+    withRelayClientTracing,
+  );
 });
 
 const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(function* () {
