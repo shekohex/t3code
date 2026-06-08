@@ -17,6 +17,7 @@ export interface RelayClientTracingResource {
   readonly serviceVersion?: string;
   readonly runtime: string;
   readonly client: string;
+  readonly component?: string;
 }
 
 export class RelayClientTracer extends Context.Reference(
@@ -57,7 +58,7 @@ export function makeRelayClientTracingLayer(
       serviceVersion: resource.serviceVersion,
       attributes: {
         "service.runtime": resource.runtime,
-        "service.component": "relay-client",
+        "service.component": resource.component ?? "relay-client",
         "t3.client.surface": resource.client,
       },
     },

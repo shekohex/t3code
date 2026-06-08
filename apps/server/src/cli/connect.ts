@@ -30,7 +30,7 @@ import * as CliState from "../cloud/CliState.ts";
 import * as CliTokenManager from "../cloud/CliTokenManager.ts";
 import { CLOUD_LINKED_USER_ID, RELAY_URL_SECRET } from "../cloud/config.ts";
 import { relayUrlConfig } from "../cloud/publicConfig.ts";
-import { serverRelayClientTracingLayer } from "../cloud/relayTracing.ts";
+import { headlessRelayClientTracingLayer } from "../cloud/relayTracing.ts";
 import { ServerConfig } from "../config.ts";
 import { ServerEnvironmentLive } from "../environment/Layers/ServerEnvironment.ts";
 import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
@@ -302,7 +302,7 @@ const runCloudCommand = <A, E>(
       RelayClient.layerCloudflared({ baseDir: config.baseDir }),
       EnvironmentAuth.runtimeLayer,
       ServerEnvironmentLive,
-      serverRelayClientTracingLayer,
+      headlessRelayClientTracingLayer,
     ).pipe(
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provideMerge(Layer.succeed(ServerConfig, config)),
