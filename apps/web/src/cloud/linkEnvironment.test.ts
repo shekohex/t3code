@@ -1,6 +1,11 @@
-import { EnvironmentId, type RelayClientInstallProgressEvent } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type RelayClientInstallProgressEvent,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import { RelayWebClientId } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -8,12 +13,13 @@ import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 import {
+  EnvironmentRpc,
+  type EnvironmentRpcService,
   EnvironmentRegistry,
   managedRelayClientLayer,
   ManagedRelayClient,
   ManagedRelayDpopSigner,
   remoteHttpClientLayer,
-  type EnvironmentRuntimeService,
 } from "@t3tools/client-runtime";
 
 import {
@@ -69,20 +75,32 @@ function registryLayer(options?: {
   readonly status?: { readonly status: "available"; readonly version: string };
   readonly installEvents?: ReadonlyArray<RelayClientInstallProgressEvent>;
 }) {
-  const runtime = {
-    operations: {
-      cloud: {
-        getRelayClientStatus: () =>
-          Effect.succeed(options?.status ?? { status: "available", version: "2026.6.0" }),
-        installRelayClient: () => Stream.fromIterable(options?.installEvents ?? []),
-      },
-    },
-  } as unknown as EnvironmentRuntimeService;
+  const rpc = {
+    config: Effect.die(new Error("Config is not used by cloud link tests.")),
+    request: ((tag: string) =>
+      tag === WS_METHODS.cloudGetRelayClientStatus
+        ? Effect.succeed(options?.status ?? { status: "available", version: "2026.6.0" })
+        : Effect.die(
+            new Error(`Unexpected RPC request: ${tag}`),
+          )) as EnvironmentRpcService["request"],
+    runStream: ((tag: string) =>
+      tag === WS_METHODS.cloudInstallRelayClient
+        ? Stream.fromIterable(options?.installEvents ?? [])
+        : Stream.die(
+            new Error(`Unexpected RPC stream: ${tag}`),
+          )) as EnvironmentRpcService["runStream"],
+    subscribe: (() => Stream.never) as EnvironmentRpcService["subscribe"],
+  } satisfies EnvironmentRpcService;
+  const context = Context.make(EnvironmentRpc, rpc);
   const service = {
-    withRuntime: <A, E>(
+    run: <A, E, R extends EnvironmentRpc>(
       _environmentId: EnvironmentId,
-      use: (runtime: EnvironmentRuntimeService) => Effect.Effect<A, E>,
-    ) => use(runtime),
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.provide(effect, context as Context.Context<R>),
+    runStream: <A, E, R extends EnvironmentRpc>(
+      _environmentId: EnvironmentId,
+      stream: Stream.Stream<A, E, R>,
+    ) => Stream.provide(stream, context as Context.Context<R>),
   } as unknown as EnvironmentRegistry["Service"];
   return Layer.succeed(EnvironmentRegistry, EnvironmentRegistry.of(service));
 }

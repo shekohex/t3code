@@ -8,7 +8,7 @@ import {
 import * as Effect from "effect/Effect";
 import { type ReactNode, useEffect, useRef } from "react";
 
-import { mobileEnvironmentReact } from "../../connection/mobileConnectionRuntime";
+import { useMobileEnvironmentConnectionActions } from "../../connection/mobileConnectionState";
 import { mobileRuntime } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import {
@@ -25,7 +25,7 @@ function resetManagedRelayTokenCache(): Promise<void> {
 
 function CloudAuthBridge(props: { readonly children: ReactNode }) {
   const { getToken, isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
-  const { removeRelayEnvironments } = mobileEnvironmentReact.useConnectionActions();
+  const { removeRelayEnvironments } = useMobileEnvironmentConnectionActions();
   const previousTokenProviderRef = useRef<{
     readonly userId: string;
     readonly provider: () => Promise<string | null>;

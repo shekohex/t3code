@@ -28,7 +28,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
-import { useMobileActions } from "../../connection/useMobileEnvironmentData";
+import { useMobileProjectActions } from "../../connection/mobileProjectEnvironment";
+import { useMobileSourceControlActions } from "../../connection/mobileSourceControlEnvironment";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { ErrorBanner } from "../../components/ErrorBanner";
 import { SourceControlIcon } from "../../components/SourceControlIcon";
@@ -427,7 +428,7 @@ export function AddProjectSourceScreen() {
 
 function useCreateProject(environment: EnvironmentOption | null) {
   const router = useRouter();
-  const actions = useMobileActions();
+  const projectActions = useMobileProjectActions();
   const { projects } = useRemoteCatalog();
 
   return useCallback(
@@ -459,7 +460,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
         workspaceRoot,
         createdAt: new Date().toISOString(),
       });
-      await actions.projects.create({
+      await projectActions.create({
         environmentId: environment.environmentId,
         input: command,
       });
@@ -472,7 +473,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
         },
       });
     },
-    [actions.projects, environment, projects, router],
+    [environment, projectActions, projects, router],
   );
 }
 
@@ -488,7 +489,7 @@ function useEnvironmentFromParam(): EnvironmentOption | null {
 }
 
 export function AddProjectRepositoryScreen() {
-  const actions = useMobileActions();
+  const sourceControlActions = useMobileSourceControlActions();
   const router = useRouter();
   const params = useLocalSearchParams<{ environmentId?: string; source?: string }>();
   const environment = useEnvironmentFromParam();
@@ -517,7 +518,7 @@ export function AddProjectRepositoryScreen() {
         return;
       }
 
-      const repository = await actions.sourceControl.lookupRepository({
+      const repository = await sourceControlActions.lookupRepository({
         environmentId: environment.environmentId,
         input: {
           provider,
@@ -538,7 +539,7 @@ export function AddProjectRepositoryScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [actions.sourceControl, environment, isSubmitting, repositoryInput, router, source]);
+  }, [environment, isSubmitting, repositoryInput, router, source, sourceControlActions]);
 
   return (
     <AddProjectShell>
@@ -720,7 +721,7 @@ export function AddProjectLocalFolderScreen() {
 }
 
 export function AddProjectDestinationScreen() {
-  const actions = useMobileActions();
+  const sourceControlActions = useMobileSourceControlActions();
   const params = useLocalSearchParams<{
     environmentId?: string;
     remoteUrl?: string;
@@ -756,7 +757,7 @@ export function AddProjectDestinationScreen() {
 
     setIsSubmitting(true);
     try {
-      const result = await actions.sourceControl.cloneRepository({
+      const result = await sourceControlActions.cloneRepository({
         environmentId: environment.environmentId,
         input: {
           remoteUrl,
@@ -769,7 +770,7 @@ export function AddProjectDestinationScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [actions.sourceControl, createProject, environment, isSubmitting, pathInput, remoteUrl]);
+  }, [createProject, environment, isSubmitting, pathInput, remoteUrl, sourceControlActions]);
 
   return (
     <AddProjectShell>

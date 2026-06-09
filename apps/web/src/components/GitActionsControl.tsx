@@ -72,7 +72,8 @@ import {
   useVcsPullAction,
 } from "~/lib/sourceControlActions";
 import { useWebRepositoryStatus } from "~/connection/webAppQueries";
-import { useWebActions, useWebServerConfig } from "~/connection/useWebEnvironmentData";
+import { useWebServerConfig } from "~/connection/useWebEnvironmentData";
+import { useWebThreadActions } from "~/connection/webThreadEnvironment";
 import { useSourceControlDiscovery } from "~/lib/sourceControlDiscoveryState";
 import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
@@ -948,7 +949,7 @@ export default function GitActionsControl({
   activeThreadRef,
   draftId,
 }: GitActionsControlProps) {
-  const actions = useWebActions();
+  const threadActions = useWebThreadActions();
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
   const serverConfig = useWebServerConfig(activeEnvironmentId);
   const openInPreferredEditor = useOpenInPreferredEditor(
@@ -1013,7 +1014,7 @@ export default function GitActionsControl({
         }
 
         const worktreePath = activeServerThread.worktreePath;
-        void actions.threads
+        void threadActions
           .updateMetadata({
             environmentId: activeThreadRef.environmentId,
             input: {
@@ -1041,10 +1042,10 @@ export default function GitActionsControl({
       activeDraftThread,
       activeServerThread,
       activeThreadRef,
-      actions.threads,
       draftId,
       setDraftThreadContext,
       setThreadBranch,
+      threadActions,
     ],
   );
 

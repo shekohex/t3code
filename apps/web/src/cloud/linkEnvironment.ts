@@ -13,6 +13,7 @@ import {
   EnvironmentHttpInternalServerError,
   EnvironmentHttpUnauthorizedError,
   EnvironmentId,
+  WS_METHODS,
 } from "@t3tools/contracts";
 import {
   type RelayClientDeviceRecord,
@@ -22,6 +23,7 @@ import {
   type RelayManagedEndpointProviderKind,
 } from "@t3tools/contracts/relay";
 import {
+  EnvironmentRpc,
   EnvironmentRegistry,
   makeEnvironmentHttpApiClient,
   ManagedRelayClient,
@@ -70,7 +72,12 @@ function ensureRelayClientAvailable(
   return Effect.gen(function* () {
     const registry = yield* EnvironmentRegistry;
     const status = yield* registry
-      .withRuntime(environmentId, (runtime) => runtime.operations.cloud.getRelayClientStatus())
+      .run(
+        environmentId,
+        EnvironmentRpc.pipe(
+          Effect.flatMap((rpc) => rpc.request(WS_METHODS.cloudGetRelayClientStatus, {})),
+        ),
+      )
       .pipe(Effect.mapError(relayClientRpcError("Could not check relay client availability.")));
     if (status.status === "available") return;
     if (status.status === "unsupported") {
@@ -90,13 +97,16 @@ function ensureRelayClientAvailable(
     }
 
     const installed = yield* registry
-      .withRuntime(environmentId, (runtime) => {
-        return runtime.operations.cloud.installRelayClient({}).pipe(
-          Stream.tap((event) => Effect.sync(() => reportRelayClientInstallProgress(event))),
-          Stream.runLast,
-        );
-      })
+      .runStream(
+        environmentId,
+        Stream.unwrap(
+          EnvironmentRpc.pipe(
+            Effect.map((rpc) => rpc.runStream(WS_METHODS.cloudInstallRelayClient, {})),
+          ),
+        ).pipe(Stream.tap((event) => Effect.sync(() => reportRelayClientInstallProgress(event)))),
+      )
       .pipe(
+        Stream.runLast,
         Effect.mapError(relayClientRpcError("Could not install the relay client.")),
         Effect.ensuring(Effect.sync(finishRelayClientInstall)),
       );

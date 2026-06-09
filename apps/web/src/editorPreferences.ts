@@ -1,7 +1,7 @@
 import { EDITORS, EditorId, type EnvironmentId } from "@t3tools/contracts";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
 import { useCallback, useMemo } from "react";
-import { useWebActions } from "./connection/useWebEnvironmentData";
+import { useWebShellActions } from "./connection/webShellEnvironment";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 
@@ -31,7 +31,7 @@ export function useOpenInPreferredEditor(
   environmentId: EnvironmentId | null,
   availableEditors: readonly EditorId[],
 ) {
-  const actions = useWebActions();
+  const shellActions = useWebShellActions();
 
   return useCallback(
     async (targetPath: string): Promise<EditorId> => {
@@ -42,7 +42,7 @@ export function useOpenInPreferredEditor(
       if (!editor) {
         throw new Error("No available editors found.");
       }
-      await actions.shell.openInEditor({
+      await shellActions.openInEditor({
         environmentId,
         input: {
           cwd: targetPath,
@@ -51,6 +51,6 @@ export function useOpenInPreferredEditor(
       });
       return editor;
     },
-    [actions.shell, availableEditors, environmentId],
+    [availableEditors, environmentId, shellActions],
   );
 }

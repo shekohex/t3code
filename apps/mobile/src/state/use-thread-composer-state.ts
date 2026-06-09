@@ -6,7 +6,7 @@ import { CommandId, MessageId, type EnvironmentId, type ThreadId } from "@t3tool
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 import { Atom } from "effect/unstable/reactivity";
 
-import { useMobileActions } from "../connection/useMobileEnvironmentData";
+import { useMobileThreadActions } from "../connection/mobileThreadEnvironment";
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import {
   convertPastedImagesToAttachments,
@@ -195,7 +195,7 @@ function useQueueDrain(input: {
 }
 
 export function useThreadComposerState() {
-  const actions = useMobileActions();
+  const threadActions = useMobileThreadActions();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const { threads } = useRemoteCatalog();
   const { selectedThread: selectedThreadShell } = useThreadSelection();
@@ -282,7 +282,7 @@ export function useThreadComposerState() {
       }
 
       try {
-        await actions.threads.startTurn({
+        await threadActions.startTurn({
           environmentId: queuedMessage.environmentId,
           input: {
             commandId: queuedMessage.commandId,
@@ -311,7 +311,7 @@ export function useThreadComposerState() {
         return false;
       }
     },
-    [actions.threads, threads],
+    [threadActions, threads],
   );
 
   useQueueDrain({

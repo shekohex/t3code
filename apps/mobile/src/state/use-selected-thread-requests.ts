@@ -4,7 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { ApprovalRequestId, type ProviderApprovalDecision } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
-import { useMobileActions } from "../connection/useMobileEnvironmentData";
+import { useMobileThreadActions } from "../connection/mobileThreadEnvironment";
 import { scopedRequestKey } from "../lib/scopedEntities";
 import {
   buildPendingUserInputAnswers,
@@ -53,7 +53,7 @@ function setUserInputDraftCustomAnswer(
 }
 
 export function useSelectedThreadRequests() {
-  const actions = useMobileActions();
+  const threadActions = useMobileThreadActions();
   const { selectedThread: selectedThreadShell } = useThreadSelection();
   const selectedThread = useSelectedThreadDetail();
   const userInputDraftsByRequestKey = useAtomValue(userInputDraftsByRequestKeyAtom);
@@ -114,7 +114,7 @@ export function useSelectedThreadRequests() {
 
       setRespondingApprovalId(requestId);
       try {
-        await actions.threads.respondToApproval({
+        await threadActions.respondToApproval({
           environmentId: selectedThreadShell.environmentId,
           input: {
             threadId: selectedThreadShell.id,
@@ -126,7 +126,7 @@ export function useSelectedThreadRequests() {
         setRespondingApprovalId((current) => (current === requestId ? null : current));
       }
     },
-    [actions.threads, selectedThreadShell],
+    [threadActions, selectedThreadShell],
   );
 
   const onSubmitUserInput = useCallback(async () => {
@@ -136,7 +136,7 @@ export function useSelectedThreadRequests() {
 
     setRespondingUserInputId(activePendingUserInput.requestId);
     try {
-      await actions.threads.respondToUserInput({
+      await threadActions.respondToUserInput({
         environmentId: selectedThreadShell.environmentId,
         input: {
           threadId: selectedThreadShell.id,
@@ -149,7 +149,7 @@ export function useSelectedThreadRequests() {
         current === activePendingUserInput.requestId ? null : current,
       );
     }
-  }, [actions.threads, activePendingUserInput, activePendingUserInputAnswers, selectedThreadShell]);
+  }, [threadActions, activePendingUserInput, activePendingUserInputAnswers, selectedThreadShell]);
 
   return {
     activePendingApproval,

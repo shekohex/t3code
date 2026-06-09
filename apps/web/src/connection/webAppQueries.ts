@@ -19,7 +19,6 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { webEnvironmentData } from "./webConnectionRuntime";
 import {
   useWebEnvironmentThread,
   useWebFilesystemBrowse,
@@ -31,6 +30,7 @@ import {
   useWebVcsListRefs,
   useWebVcsStatus,
 } from "./useWebEnvironmentData";
+import { webVcsEnvironment } from "./webVcsEnvironment";
 
 const COMPOSER_PATH_SEARCH_DEBOUNCE_MS = 120;
 const COMPOSER_PATH_SEARCH_LIMIT = 80;
@@ -120,7 +120,7 @@ export function useWebPaginatedBranches(target: VcsRefTarget) {
     () =>
       target.environmentId !== null && target.cwd !== null
         ? cursors.map((cursor) =>
-            webEnvironmentData.queries.vcsListRefsAtom({
+            webVcsEnvironment.listRefs({
               environmentId: target.environmentId!,
               input: {
                 cwd: target.cwd!,

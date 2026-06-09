@@ -10,7 +10,7 @@ import { PlatformConnectionSource } from "./platformSource.ts";
 import { relayEnvironmentDiscoveryLayer } from "./relayDiscovery.ts";
 import { remoteEnvironmentAuthorizationLayer } from "./remoteAuthorization.ts";
 import { rpcSessionFactoryLayer } from "./rpcSession.ts";
-import { environmentRuntimeFactoryLayer } from "./runtime.ts";
+import { environmentServicesFactoryLayer } from "./runtime.ts";
 
 const brokerLayer = connectionBrokerLayer.pipe(Layer.provide(remoteEnvironmentAuthorizationLayer));
 
@@ -18,9 +18,9 @@ const driverLayer = connectionDriverLayer.pipe(
   Layer.provide(Layer.mergeAll(brokerLayer, rpcSessionFactoryLayer)),
 );
 
-const runtimeFactoryLayer = environmentRuntimeFactoryLayer.pipe(Layer.provide(driverLayer));
+const servicesFactoryLayer = environmentServicesFactoryLayer.pipe(Layer.provide(driverLayer));
 
-const registryLayer = environmentRegistryLayer.pipe(Layer.provide(runtimeFactoryLayer));
+const registryLayer = environmentRegistryLayer.pipe(Layer.provide(servicesFactoryLayer));
 
 const onboardingLayer = connectionOnboardingLayer.pipe(Layer.provide(registryLayer));
 

@@ -16,7 +16,8 @@ import {
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { useWebPaginatedBranches, useWebRepositoryStatus } from "../connection/webAppQueries";
-import { useWebActions } from "../connection/useWebEnvironmentData";
+import { useWebThreadActions } from "../connection/webThreadEnvironment";
+import { useWebVcsActions } from "../connection/webVcsEnvironment";
 import { cn } from "../lib/utils";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
@@ -87,7 +88,8 @@ export function BranchToolbarBranchSelector({
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
-  const actions = useWebActions();
+  const threadActions = useWebThreadActions();
+  const vcsActions = useWebVcsActions();
   // ---------------------------------------------------------------------------
   // Thread / project state (pushed down from parent to colocate with mutation)
   // ---------------------------------------------------------------------------
@@ -139,7 +141,7 @@ export function BranchToolbarBranchSelector({
     (branch: string | null, worktreePath: string | null) => {
       if (!activeThreadId || !activeProject) return;
       if (serverSession && worktreePath !== activeWorktreePath) {
-        void actions.threads
+        void threadActions
           .stopSession({
             environmentId,
             input: { threadId: activeThreadId },
@@ -147,7 +149,7 @@ export function BranchToolbarBranchSelector({
           .catch(() => undefined);
       }
       if (hasServerThread) {
-        void actions.threads.updateMetadata({
+        void threadActions.updateMetadata({
           environmentId,
           input: {
             threadId: activeThreadId,
@@ -176,7 +178,6 @@ export function BranchToolbarBranchSelector({
     [
       activeThreadId,
       activeProject,
-      actions.threads,
       serverSession,
       activeWorktreePath,
       hasServerThread,
@@ -187,6 +188,7 @@ export function BranchToolbarBranchSelector({
       threadRef,
       environmentId,
       effectiveEnvMode,
+      threadActions,
     ],
   );
 
@@ -331,7 +333,7 @@ export function BranchToolbarBranchSelector({
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(selectedBranchName);
       try {
-        const checkoutResult = await actions.vcs.switchRef({
+        const checkoutResult = await vcsActions.switchRef({
           environmentId,
           input: {
             cwd: selectionTarget.checkoutCwd,
@@ -367,7 +369,7 @@ export function BranchToolbarBranchSelector({
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(name);
       try {
-        const createBranchResult = await actions.vcs.createRef({
+        const createBranchResult = await vcsActions.createRef({
           environmentId,
           input: {
             cwd: branchCwd,

@@ -139,7 +139,10 @@ import {
   useWebKnownTerminalSessions,
   useWebThreadRunningTerminalIds,
 } from "../connection/webTerminalSessions";
-import { useWebActions } from "../connection/useWebEnvironmentData";
+import { useWebProjectActions } from "../connection/webProjectEnvironment";
+import { useWebServerActions } from "../connection/webServerEnvironment";
+import { useWebTerminalActions } from "../connection/webTerminalEnvironment";
+import { useWebThreadActions } from "../connection/webThreadEnvironment";
 import { useWebThreadDetail } from "../connection/webAppQueries";
 import {
   useWebEnvironmentActions,
@@ -541,7 +544,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   keybindings,
   onAddTerminalContext,
 }: PersistentThreadTerminalDrawerProps) {
-  const actions = useWebActions();
+  const terminalActions = useWebTerminalActions();
   const serverThread = useStore(useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]));
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
   const projectRef = serverThread
@@ -674,7 +677,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     bumpFocusRequestId();
     void (async () => {
       try {
-        await actions.terminal.open({
+        await terminalActions.open({
           environmentId: threadRef.environmentId,
           input: {
             threadId,
@@ -689,7 +692,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       }
     })();
   }, [
-    actions.terminal,
     bumpFocusRequestId,
     cwd,
     effectiveWorktreePath,
@@ -698,6 +700,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     storeSplitTerminal,
     threadId,
     threadRef,
+    terminalActions,
   ]);
 
   const createNewTerminal = useCallback(() => {
@@ -709,7 +712,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     bumpFocusRequestId();
     void (async () => {
       try {
-        await actions.terminal.open({
+        await terminalActions.open({
           environmentId: threadRef.environmentId,
           input: {
             threadId,
@@ -724,7 +727,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       }
     })();
   }, [
-    actions.terminal,
     bumpFocusRequestId,
     cwd,
     effectiveWorktreePath,
@@ -733,6 +735,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     storeNewTerminal,
     threadId,
     threadRef,
+    terminalActions,
   ]);
 
   const activateTerminal = useCallback(
@@ -747,7 +750,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     (terminalId: string) => {
       const isFinalTerminal = terminalUiState.terminalIds.length <= 1;
       const fallbackExitWrite = () =>
-        actions.terminal
+        terminalActions
           .write({
             environmentId: threadRef.environmentId,
             input: { threadId, terminalId, data: "exit\n" },
@@ -756,14 +759,14 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
 
       void (async () => {
         if (isFinalTerminal) {
-          await actions.terminal
+          await terminalActions
             .clear({
               environmentId: threadRef.environmentId,
               input: { threadId, terminalId },
             })
             .catch(() => undefined);
         }
-        await actions.terminal.close({
+        await terminalActions.close({
           environmentId: threadRef.environmentId,
           input: {
             threadId,
@@ -777,12 +780,12 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       bumpFocusRequestId();
     },
     [
-      actions.terminal,
       bumpFocusRequestId,
       storeCloseTerminal,
       terminalUiState.terminalIds,
       threadId,
       threadRef,
+      terminalActions,
     ],
   );
 
@@ -847,7 +850,10 @@ export default function ChatView(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
-  const actions = useWebActions();
+  const projectActions = useWebProjectActions();
+  const serverActions = useWebServerActions();
+  const terminalActions = useWebTerminalActions();
+  const threadActions = useWebThreadActions();
   const { environments } = useWebEnvironments();
   const primaryEnvironment = useWebPrimaryEnvironment();
   const { retryEnvironment } = useWebEnvironmentActions();
@@ -1993,7 +1999,7 @@ export default function ChatView(props: ChatViewProps) {
     setTerminalFocusRequestId((value) => value + 1);
     void (async () => {
       try {
-        await actions.terminal.open({
+        await terminalActions.open({
           environmentId,
           input: {
             threadId: activeThreadId,
@@ -2011,11 +2017,11 @@ export default function ChatView(props: ChatViewProps) {
       }
     })();
   }, [
-    actions.terminal,
     activeProject,
     activeKnownTerminalIds,
     activeThreadId,
     activeThreadRef,
+    terminalActions,
     activeThreadWorktreePath,
     environmentId,
     gitCwd,
@@ -2035,7 +2041,7 @@ export default function ChatView(props: ChatViewProps) {
     setTerminalFocusRequestId((value) => value + 1);
     void (async () => {
       try {
-        await actions.terminal.open({
+        await terminalActions.open({
           environmentId,
           input: {
             threadId: activeThreadId,
@@ -2053,11 +2059,11 @@ export default function ChatView(props: ChatViewProps) {
       }
     })();
   }, [
-    actions.terminal,
     activeProject,
     activeKnownTerminalIds,
     activeThreadId,
     activeThreadRef,
+    terminalActions,
     activeThreadWorktreePath,
     environmentId,
     gitCwd,
@@ -2068,7 +2074,7 @@ export default function ChatView(props: ChatViewProps) {
       if (!activeThreadId || !activeThreadRef) return;
       const isFinalTerminal = activeKnownTerminalIds.length <= 1;
       const fallbackExitWrite = () =>
-        actions.terminal
+        terminalActions
           .write({
             environmentId,
             input: { threadId: activeThreadId, terminalId, data: "exit\n" },
@@ -2076,14 +2082,14 @@ export default function ChatView(props: ChatViewProps) {
           .catch(() => undefined);
       void (async () => {
         if (isFinalTerminal) {
-          await actions.terminal
+          await terminalActions
             .clear({
               environmentId,
               input: { threadId: activeThreadId, terminalId },
             })
             .catch(() => undefined);
         }
-        await actions.terminal.close({
+        await terminalActions.close({
           environmentId,
           input: {
             threadId: activeThreadId,
@@ -2096,11 +2102,11 @@ export default function ChatView(props: ChatViewProps) {
       setTerminalFocusRequestId((value) => value + 1);
     },
     [
-      actions.terminal,
       activeThreadId,
       activeThreadRef,
       activeKnownTerminalIds,
       environmentId,
+      terminalActions,
       storeCloseTerminal,
     ],
   );
@@ -2176,8 +2182,8 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       try {
-        await actions.terminal.open({ environmentId, input: openTerminalInput });
-        await actions.terminal.write({
+        await terminalActions.open({ environmentId, input: openTerminalInput });
+        await terminalActions.write({
           environmentId,
           input: {
             threadId: activeThreadId,
@@ -2193,7 +2199,6 @@ export default function ChatView(props: ChatViewProps) {
       }
     },
     [
-      actions.terminal,
       activeProject,
       activeThread,
       activeThreadId,
@@ -2205,6 +2210,7 @@ export default function ChatView(props: ChatViewProps) {
       storeSetActiveTerminal,
       setLastInvokedScriptByProjectId,
       environmentId,
+      terminalActions,
       activeKnownTerminalIds,
       runningTerminalIds,
       terminalUiState.activeTerminalId,
@@ -2220,7 +2226,7 @@ export default function ChatView(props: ChatViewProps) {
       keybinding?: string | null;
       keybindingCommand: KeybindingCommand;
     }) => {
-      await actions.projects.update({
+      await projectActions.update({
         environmentId,
         input: {
           projectId: input.projectId,
@@ -2234,13 +2240,13 @@ export default function ChatView(props: ChatViewProps) {
       });
 
       if (isElectron && keybindingRule) {
-        await actions.server.upsertKeybinding({
+        await serverActions.upsertKeybinding({
           environmentId,
           input: keybindingRule,
         });
       }
     },
-    [actions.projects, actions.server, environmentId],
+    [environmentId, projectActions, serverActions],
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput) => {
@@ -2419,7 +2425,7 @@ export default function ChatView(props: ChatViewProps) {
           JSON.stringify(input.modelSelection.options ?? null) !==
             JSON.stringify(serverThread.modelSelection.options ?? null))
       ) {
-        await actions.threads.updateMetadata({
+        await threadActions.updateMetadata({
           environmentId,
           input: {
             threadId: input.threadId,
@@ -2429,7 +2435,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (input.runtimeMode !== serverThread.runtimeMode) {
-        await actions.threads.setRuntimeMode({
+        await threadActions.setRuntimeMode({
           environmentId,
           input: {
             threadId: input.threadId,
@@ -2440,7 +2446,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (input.interactionMode !== serverThread.interactionMode) {
-        await actions.threads.setInteractionMode({
+        await threadActions.setInteractionMode({
           environmentId,
           input: {
             threadId: input.threadId,
@@ -2450,7 +2456,7 @@ export default function ChatView(props: ChatViewProps) {
         });
       }
     },
-    [actions.threads, environmentId, serverThread],
+    [environmentId, serverThread, threadActions],
   );
 
   // Scroll helpers — LegendList handles auto-scroll via maintainScrollAtEnd.
@@ -2802,7 +2808,7 @@ export default function ChatView(props: ChatViewProps) {
       setIsRevertingCheckpoint(true);
       setThreadError(activeThread.id, null);
       try {
-        await actions.threads.revertCheckpoint({
+        await threadActions.revertCheckpoint({
           environmentId,
           input: {
             threadId: activeThread.id,
@@ -2818,7 +2824,6 @@ export default function ChatView(props: ChatViewProps) {
       setIsRevertingCheckpoint(false);
     },
     [
-      actions.threads,
       activeThread,
       activeEnvironmentUnavailable,
       activeEnvironmentUnavailableLabel,
@@ -2828,6 +2833,7 @@ export default function ChatView(props: ChatViewProps) {
       isSendBusy,
       phase,
       setThreadError,
+      threadActions,
     ],
   );
 
@@ -3026,7 +3032,7 @@ export default function ChatView(props: ChatViewProps) {
 
       // Auto-title from first message
       if (isFirstMessage && isServerThread) {
-        await actions.threads.updateMetadata({
+        await threadActions.updateMetadata({
           environmentId,
           input: {
             threadId: threadIdForSend,
@@ -3076,7 +3082,7 @@ export default function ChatView(props: ChatViewProps) {
             }
           : undefined;
       beginLocalDispatch({ preparingWorktree: false });
-      await actions.threads.startTurn({
+      await threadActions.startTurn({
         environmentId,
         input: {
           threadId: threadIdForSend,
@@ -3136,7 +3142,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const onInterrupt = async () => {
     if (!activeThread) return;
-    await actions.threads.interruptTurn({
+    await threadActions.interruptTurn({
       environmentId,
       input: {
         threadId: activeThread.id,
@@ -3151,7 +3157,7 @@ export default function ChatView(props: ChatViewProps) {
       setRespondingRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
-      await actions.threads
+      await threadActions
         .respondToApproval({
           environmentId,
           input: {
@@ -3168,7 +3174,7 @@ export default function ChatView(props: ChatViewProps) {
         });
       setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
     },
-    [actions.threads, activeThreadId, environmentId, setThreadError],
+    [activeThreadId, environmentId, setThreadError, threadActions],
   );
 
   const onRespondToUserInput = useCallback(
@@ -3178,7 +3184,7 @@ export default function ChatView(props: ChatViewProps) {
       setRespondingUserInputRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
-      await actions.threads
+      await threadActions
         .respondToUserInput({
           environmentId,
           input: {
@@ -3195,7 +3201,7 @@ export default function ChatView(props: ChatViewProps) {
         });
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
     },
-    [actions.threads, activeThreadId, environmentId, setThreadError],
+    [activeThreadId, environmentId, setThreadError, threadActions],
   );
 
   const setActivePendingUserInputQuestionIndex = useCallback(
@@ -3387,7 +3393,7 @@ export default function ChatView(props: ChatViewProps) {
           nextInteractionMode,
         );
 
-        await actions.threads.startTurn({
+        await threadActions.startTurn({
           environmentId,
           input: {
             threadId: threadIdForSend,
@@ -3433,7 +3439,6 @@ export default function ChatView(props: ChatViewProps) {
       }
     },
     [
-      actions.threads,
       activeThread,
       activeProposedPlan,
       beginLocalDispatch,
@@ -3442,6 +3447,7 @@ export default function ChatView(props: ChatViewProps) {
       isServerThread,
       persistThreadSettingsForNextTurn,
       resetLocalDispatch,
+      threadActions,
       runtimeMode,
       setComposerDraftInteractionMode,
       setThreadError,
@@ -3498,7 +3504,7 @@ export default function ChatView(props: ChatViewProps) {
       resetLocalDispatch();
     };
 
-    await actions.threads
+    await threadActions
       .create({
         environmentId,
         input: {
@@ -3514,7 +3520,7 @@ export default function ChatView(props: ChatViewProps) {
         },
       })
       .then(() => {
-        return actions.threads.startTurn({
+        return threadActions.startTurn({
           environmentId,
           input: {
             threadId: nextThreadId,
@@ -3551,7 +3557,7 @@ export default function ChatView(props: ChatViewProps) {
         });
       })
       .catch(async (err: unknown) => {
-        await actions.threads
+        await threadActions
           .delete({
             environmentId,
             input: {
@@ -3572,7 +3578,6 @@ export default function ChatView(props: ChatViewProps) {
       })
       .then(finish, finish);
   }, [
-    actions.threads,
     activeProject,
     activeProposedPlan,
     activeThreadBranch,

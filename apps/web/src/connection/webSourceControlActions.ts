@@ -23,11 +23,13 @@ import {
 } from "react";
 
 import {
-  useWebActions,
   useWebPullRequestResolution,
   useWebRunStackedGitActionState,
   useWebVcsStatus,
 } from "./useWebEnvironmentData";
+import { useWebGitActions } from "./webGitEnvironment";
+import { useWebSourceControlActions as useWebSourceControlMutations } from "./webSourceControlEnvironment";
+import { useWebVcsActions } from "./webVcsEnvironment";
 
 export type WebSourceControlActionKind =
   | "init"
@@ -152,19 +154,19 @@ export function useWebSourceControlActionRunning(
 }
 
 export function useWebVcsInitAction(scope: WebSourceControlActionScope) {
-  const actions = useWebActions();
+  const vcsActions = useWebVcsActions();
   const action = useCallback(async () => {
     const target = requireScope(scope, "Git init is unavailable.");
-    return actions.vcs.init({
+    return vcsActions.init({
       environmentId: target.environmentId,
       input: { cwd: target.cwd },
     });
-  }, [actions.vcs, scope]);
+  }, [scope, vcsActions]);
   return useAction({ kind: "init", scope, action });
 }
 
 export function useWebVcsPullAction(scope: WebSourceControlActionScope) {
-  const actions = useWebActions();
+  const vcsActions = useWebVcsActions();
   const status = useWebVcsStatus(
     scope.environmentId !== null && scope.cwd !== null
       ? {
@@ -175,11 +177,11 @@ export function useWebVcsPullAction(scope: WebSourceControlActionScope) {
   );
   const action = useCallback(async (): Promise<VcsPullResult> => {
     const target = requireScope(scope, "Git pull is unavailable.");
-    return actions.vcs.pull({
+    return vcsActions.pull({
       environmentId: target.environmentId,
       input: { cwd: target.cwd },
     });
-  }, [actions.vcs, scope]);
+  }, [scope, vcsActions]);
   return useAction({
     kind: "pull",
     scope,
@@ -189,7 +191,7 @@ export function useWebVcsPullAction(scope: WebSourceControlActionScope) {
 }
 
 export function useWebGitStackedAction(scope: WebSourceControlActionScope) {
-  const actions = useWebActions();
+  const gitActions = useWebGitActions();
   const progress = useWebRunStackedGitActionState();
   const status = useWebVcsStatus(
     scope.environmentId !== null && scope.cwd !== null
@@ -220,7 +222,7 @@ export function useWebGitStackedAction(scope: WebSourceControlActionScope) {
       const target = requireScope(scope, "Git action is unavailable.");
       progressListenerRef.current = input.onProgress ?? null;
       try {
-        const event = await actions.git.runStackedAction({
+        const event = await gitActions.runStackedAction({
           environmentId: target.environmentId,
           input: {
             actionId: input.actionId,
@@ -242,7 +244,7 @@ export function useWebGitStackedAction(scope: WebSourceControlActionScope) {
         progressListenerRef.current = null;
       }
     },
-    [actions.git, progressListenerRef, scope],
+    [gitActions, progressListenerRef, scope],
   );
 
   return useAction({
@@ -254,7 +256,7 @@ export function useWebGitStackedAction(scope: WebSourceControlActionScope) {
 }
 
 export function useWebSourceControlPublishRepositoryAction(scope: WebSourceControlActionScope) {
-  const actions = useWebActions();
+  const sourceControlActions = useWebSourceControlMutations();
   const status = useWebVcsStatus(
     scope.environmentId !== null && scope.cwd !== null
       ? {
@@ -272,7 +274,7 @@ export function useWebSourceControlPublishRepositoryAction(scope: WebSourceContr
       protocol: SourceControlCloneProtocol;
     }): Promise<SourceControlPublishRepositoryResult> => {
       const target = requireScope(scope, "Repository publishing is unavailable.");
-      return actions.sourceControl.publishRepository({
+      return sourceControlActions.publishRepository({
         environmentId: target.environmentId,
         input: {
           cwd: target.cwd,
@@ -280,7 +282,7 @@ export function useWebSourceControlPublishRepositoryAction(scope: WebSourceContr
         },
       });
     },
-    [actions.sourceControl, scope],
+    [scope, sourceControlActions],
   );
   return useAction({
     kind: "publishRepository",
@@ -291,11 +293,11 @@ export function useWebSourceControlPublishRepositoryAction(scope: WebSourceContr
 }
 
 export function useWebPreparePullRequestThreadAction(scope: WebSourceControlActionScope) {
-  const actions = useWebActions();
+  const gitActions = useWebGitActions();
   const action = useCallback(
     async (input: { reference: string; mode: "local" | "worktree"; threadId?: ThreadId }) => {
       const target = requireScope(scope, "Pull request thread preparation is unavailable.");
-      return actions.git.preparePullRequestThread({
+      return gitActions.preparePullRequestThread({
         environmentId: target.environmentId,
         input: {
           cwd: target.cwd,
@@ -305,7 +307,7 @@ export function useWebPreparePullRequestThreadAction(scope: WebSourceControlActi
         },
       });
     },
-    [actions.git, scope],
+    [gitActions, scope],
   );
   return useAction({ kind: "preparePullRequestThread", scope, action });
 }

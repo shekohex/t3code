@@ -91,7 +91,9 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 
 import { useThreadActions } from "../hooks/useThreadActions";
-import { useWebActions, useWebEnvironmentThread } from "../connection/useWebEnvironmentData";
+import { useWebEnvironmentThread } from "../connection/useWebEnvironmentData";
+import { useWebProjectActions } from "../connection/webProjectEnvironment";
+import { useWebThreadActions } from "../connection/webThreadEnvironment";
 import { useWebEnvironments, useWebPrimaryEnvironment } from "../connection/useWebEnvironments";
 import {
   buildThreadRouteParams,
@@ -954,7 +956,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     (settings) => settings.defaultThreadEnvMode,
   );
   const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
-  const actions = useWebActions();
+  const projectActions = useWebProjectActions();
+  const threadActions = useWebThreadActions();
   const { updateSettings } = useUpdateSettings();
   const sidebarThreadPreviewCount = useSettings<SidebarThreadPreviewCount>(
     (settings) => settings.sidebarThreadPreviewCount,
@@ -1309,7 +1312,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
       draftStore.clearProjectDraftThreadId(memberProjectRef);
 
-      await actions.projects.delete({
+      await projectActions.delete({
         environmentId: member.environmentId,
         input: {
           projectId: member.id,
@@ -1317,7 +1320,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         },
       });
     },
-    [actions.projects],
+    [projectActions],
   );
 
   const handleRemoveProject = useCallback(
@@ -1800,7 +1803,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return;
       }
       try {
-        await actions.threads.updateMetadata({
+        await threadActions.updateMetadata({
           environmentId: threadRef.environmentId,
           input: {
             threadId: threadRef.threadId,
@@ -1818,7 +1821,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
       finishRename();
     },
-    [actions.threads],
+    [threadActions],
   );
 
   const closeProjectRenameDialog = useCallback(() => {
@@ -1846,7 +1849,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     }
 
     try {
-      await actions.projects.update({
+      await projectActions.update({
         environmentId: projectRenameTarget.environmentId,
         input: {
           projectId: projectRenameTarget.id,
@@ -1863,7 +1866,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         }),
       );
     }
-  }, [actions.projects, closeProjectRenameDialog, projectRenameTarget, projectRenameTitle]);
+  }, [closeProjectRenameDialog, projectActions, projectRenameTarget, projectRenameTitle]);
 
   const closeProjectGroupingDialog = useCallback(() => {
     setProjectGroupingTarget(null);

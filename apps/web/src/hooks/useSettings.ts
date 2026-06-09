@@ -22,7 +22,7 @@ import { ensureLocalApi } from "~/localApi";
 import * as Struct from "effect/Struct";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { applySettingsUpdated, getServerConfig, useServerSettings } from "~/rpc/serverState";
-import { useWebActions } from "~/connection/useWebEnvironmentData";
+import { useWebServerActions } from "~/connection/webServerEnvironment";
 import { useWebPrimaryEnvironment } from "~/connection/useWebEnvironments";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
@@ -195,7 +195,7 @@ export function useSettings<T = UnifiedSettings>(selector?: (s: UnifiedSettings)
  * persisted via RPC. Client keys go through client persistence.
  */
 export function useUpdateSettings() {
-  const actions = useWebActions();
+  const serverActions = useWebServerActions();
   const primaryEnvironment = useWebPrimaryEnvironment();
   const updateSettings = useCallback(
     (patch: Partial<UnifiedSettings>) => {
@@ -207,7 +207,7 @@ export function useUpdateSettings() {
           applySettingsUpdated(applyServerSettingsPatch(currentServerConfig.settings, serverPatch));
         }
         if (primaryEnvironment) {
-          void actions.server.updateSettings({
+          void serverActions.updateSettings({
             environmentId: primaryEnvironment.environmentId,
             input: { patch: serverPatch },
           });
@@ -221,7 +221,7 @@ export function useUpdateSettings() {
         });
       }
     },
-    [actions.server, primaryEnvironment],
+    [primaryEnvironment, serverActions],
   );
 
   const resetSettings = useCallback(() => {
