@@ -48,7 +48,7 @@ export type AddProjectCloneFlow =
       readonly remoteUrl: string;
     };
 
-export const ADD_PROJECT_REMOTE_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
+const ADD_PROJECT_REMOTE_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
   "url",
   "github",
   "gitlab",
@@ -56,7 +56,7 @@ export const ADD_PROJECT_REMOTE_SOURCES: ReadonlyArray<AddProjectRemoteSource> =
   "azure-devops",
 ];
 
-export const ADD_PROJECT_REMOTE_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = [
+const ADD_PROJECT_REMOTE_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = [
   "github",
   "gitlab",
   "bitbucket",

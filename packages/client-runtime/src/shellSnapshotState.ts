@@ -13,7 +13,7 @@ export interface ShellSnapshotState {
   readonly isPending: boolean;
 }
 
-export interface ShellSnapshotTarget {
+interface ShellSnapshotTarget {
   readonly environmentId: EnvironmentId | null;
 }
 
@@ -48,7 +48,7 @@ export function getShellSnapshotTargetKey(target: ShellSnapshotTarget): string |
   return target.environmentId;
 }
 
-export interface ShellSnapshotManagerConfig {
+interface ShellSnapshotManagerConfig {
   readonly getRegistry: () => AtomRegistry.AtomRegistry;
 }
 
