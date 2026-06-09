@@ -24,6 +24,7 @@ import {
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
+  type ConnectionCatalogEntry,
   ConnectionCredentialStore,
   ConnectionProfileStore,
   SshConnectionProfile,
@@ -36,6 +37,7 @@ import {
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
+  type ConnectionTarget,
 } from "./model.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
@@ -50,6 +52,13 @@ const SSH_TARGET: DesktopSshEnvironmentTarget = {
   username: "developer",
   port: 22,
 };
+
+function catalogEntry(
+  target: ConnectionTarget,
+  profile: Option.Option<ConnectionProfile> = Option.none(),
+): ConnectionCatalogEntry {
+  return { target, profile };
+}
 
 function unsupported<A>(name: string): Effect.Effect<A> {
   return Effect.die(new Error(`Unexpected relay call: ${name}`));
@@ -189,7 +198,7 @@ describe("ConnectionBroker", () => {
         wsBaseUrl: "ws://127.0.0.1:3777",
       });
 
-      expect(yield* broker.prepare(target)).toEqual({
+      expect(yield* broker.prepare(catalogEntry(target))).toEqual({
         environmentId: ENVIRONMENT_ID,
         label: "Primary",
         httpBaseUrl: "http://127.0.0.1:3777",
@@ -199,7 +208,7 @@ describe("ConnectionBroker", () => {
     }),
   );
 
-  it.effect("keeps bearer profile metadata separate from the secret credential", () =>
+  it.effect("uses the registered bearer profile without re-reading the profile store", () =>
     Effect.gen(function* () {
       const bearerInputs = yield* Ref.make<ReadonlyArray<string>>([]);
       const target = new BearerConnectionTarget({
@@ -207,16 +216,14 @@ describe("ConnectionBroker", () => {
         label: "Saved",
         connectionId: "saved-1",
       });
+      const profile = new BearerConnectionProfile({
+        connectionId: "saved-1",
+        environmentId: ENVIRONMENT_ID,
+        label: "Saved",
+        httpBaseUrl: ENDPOINT.httpBaseUrl,
+        wsBaseUrl: ENDPOINT.wsBaseUrl,
+      });
       const brokerLayer = yield* makeDependencies({
-        profiles: [
-          new BearerConnectionProfile({
-            connectionId: "saved-1",
-            environmentId: ENVIRONMENT_ID,
-            label: "Saved",
-            httpBaseUrl: ENDPOINT.httpBaseUrl,
-            wsBaseUrl: ENDPOINT.wsBaseUrl,
-          }),
-        ],
         credentials: [["saved-1", new BearerConnectionCredential({ token: "secret-bearer" })]],
         authorizeBearer: (input) =>
           Ref.update(bearerInputs, (values) => [...values, input.bearerToken]).pipe(
@@ -230,7 +237,9 @@ describe("ConnectionBroker", () => {
       });
       const broker = yield* ConnectionBroker.pipe(Effect.provide(brokerLayer));
 
-      expect((yield* broker.prepare(target)).socketUrl).toContain("wsTicket=ticket");
+      expect(
+        (yield* broker.prepare(catalogEntry(target, Option.some(profile)))).socketUrl,
+      ).toContain("wsTicket=ticket");
       expect(yield* Ref.get(bearerInputs)).toEqual(["secret-bearer"]);
     }),
   );
@@ -281,7 +290,7 @@ describe("ConnectionBroker", () => {
       });
       const broker = yield* ConnectionBroker.pipe(Effect.provide(brokerLayer));
 
-      expect((yield* broker.prepare(target)).socketUrl).toContain("wsTicket=dpop");
+      expect((yield* broker.prepare(catalogEntry(target))).socketUrl).toContain("wsTicket=dpop");
       expect(yield* Ref.get(relayInputs)).toEqual([
         {
           clerkToken: "clerk-session",
@@ -316,7 +325,7 @@ describe("ConnectionBroker", () => {
       const broker = yield* ConnectionBroker.pipe(Effect.provide(brokerLayer));
 
       yield* broker
-        .prepare(target)
+        .prepare(catalogEntry(target))
         .pipe(
           Effect.provideService(RelayClientTracer, Option.some(collectingTracer(productSpans))),
           Effect.withTracer(collectingTracer(userSpans)),
@@ -337,15 +346,13 @@ describe("ConnectionBroker", () => {
         label: "SSH",
         connectionId: "ssh-1",
       });
+      const profile = new SshConnectionProfile({
+        connectionId: "ssh-1",
+        environmentId: ENVIRONMENT_ID,
+        label: "SSH",
+        target: SSH_TARGET,
+      });
       const brokerLayer = yield* makeDependencies({
-        profiles: [
-          new SshConnectionProfile({
-            connectionId: "ssh-1",
-            environmentId: ENVIRONMENT_ID,
-            label: "SSH",
-            target: SSH_TARGET,
-          }),
-        ],
         prepareSsh: (input) =>
           Ref.update(preparedTargets, (values) => [...values, input.target]).pipe(
             Effect.as({
@@ -361,7 +368,9 @@ describe("ConnectionBroker", () => {
       });
       const broker = yield* ConnectionBroker.pipe(Effect.provide(brokerLayer));
 
-      expect((yield* broker.prepare(target)).socketUrl).toContain("wsTicket=bearer");
+      expect(
+        (yield* broker.prepare(catalogEntry(target, Option.some(profile)))).socketUrl,
+      ).toContain("wsTicket=bearer");
       expect(yield* Ref.get(preparedTargets)).toEqual([SSH_TARGET]);
     }),
   );
@@ -384,7 +393,7 @@ describe("ConnectionBroker", () => {
           ),
       });
       const broker = yield* ConnectionBroker.pipe(Effect.provide(brokerLayer));
-      const error = yield* Effect.flip(broker.prepare(target));
+      const error = yield* Effect.flip(broker.prepare(catalogEntry(target)));
 
       expect(error).toBeInstanceOf(ConnectionTransientError);
       expect(error).toMatchObject({ reason: "timeout" });

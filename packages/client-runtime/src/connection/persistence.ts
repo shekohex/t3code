@@ -5,7 +5,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -74,3 +74,16 @@ export class EnvironmentCacheStore extends Context.Service<
     ) => Effect.Effect<void, ConnectionPersistenceError>;
   }
 >()("@t3tools/client-runtime/connection/persistence/EnvironmentCacheStore") {}
+
+export interface EnvironmentOwnedDataCleanupService {
+  readonly clear: (environmentId: EnvironmentId) => Effect.Effect<void>;
+}
+
+export class EnvironmentOwnedDataCleanup extends Context.Reference(
+  "@t3tools/client-runtime/connection/persistence/EnvironmentOwnedDataCleanup",
+  {
+    defaultValue: (): EnvironmentOwnedDataCleanupService => ({
+      clear: () => Effect.void,
+    }),
+  },
+) {}

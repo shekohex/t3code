@@ -106,77 +106,52 @@ export interface PreparedConnection {
   readonly target: ConnectionTarget;
 }
 
-export interface AvailableConnectionState {
-  readonly _tag: "Available";
-}
+export type SupervisorConnectionPhase =
+  | "available"
+  | "offline"
+  | "connecting"
+  | "backoff"
+  | "connected"
+  | "blocked";
 
-export interface OfflineConnectionState {
-  readonly _tag: "Offline";
-}
+export type ConnectionAttemptStage = "preparing" | "opening" | "synchronizing";
 
-export interface ResolvingConnectionState {
-  readonly _tag: "Resolving";
-  readonly attempt: number;
-}
-
-export interface ConnectingConnectionState {
-  readonly _tag: "Connecting";
-  readonly attempt: number;
-}
-
-export interface SynchronizingConnectionState {
-  readonly _tag: "Synchronizing";
-  readonly attempt: number;
-}
-
-export interface ReadyConnectionState {
-  readonly _tag: "Ready";
+export interface SupervisorConnectionState {
+  readonly desired: boolean;
+  readonly network: NetworkStatus;
+  readonly phase: SupervisorConnectionPhase;
+  readonly stage: ConnectionAttemptStage | null;
   readonly attempt: number;
   readonly generation: number;
+  readonly lastFailure: ConnectionAttemptError | null;
+  readonly retryAt: number | null;
 }
-
-export interface RetryWaitingConnectionState {
-  readonly _tag: "RetryWaiting";
-  readonly attempt: number;
-  readonly retryAt: number;
-  readonly error: ConnectionTransientError;
-}
-
-export interface BlockedConnectionState {
-  readonly _tag: "Blocked";
-  readonly error: ConnectionBlockedError;
-}
-
-export type SupervisorConnectionState =
-  | AvailableConnectionState
-  | OfflineConnectionState
-  | ResolvingConnectionState
-  | ConnectingConnectionState
-  | SynchronizingConnectionState
-  | ReadyConnectionState
-  | RetryWaitingConnectionState
-  | BlockedConnectionState;
 
 export type ConnectionProjectionPhase = "disconnected" | "synchronizing" | "ready";
 
 export function connectionProjectionPhase(
   state: SupervisorConnectionState,
 ): ConnectionProjectionPhase {
-  switch (state._tag) {
-    case "Resolving":
-    case "Connecting":
-    case "Synchronizing":
+  switch (state.phase) {
+    case "connecting":
       return "synchronizing";
-    case "Ready":
+    case "connected":
       return "ready";
-    case "Available":
-    case "Offline":
-    case "RetryWaiting":
-    case "Blocked":
+    case "available":
+    case "offline":
+    case "backoff":
+    case "blocked":
       return "disconnected";
   }
 }
 
-export const AVAILABLE_CONNECTION_STATE: AvailableConnectionState = Object.freeze({
-  _tag: "Available",
+export const AVAILABLE_CONNECTION_STATE: SupervisorConnectionState = Object.freeze({
+  desired: false,
+  network: "unknown",
+  phase: "available",
+  stage: null,
+  attempt: 0,
+  generation: 0,
+  lastFailure: null,
+  retryAt: null,
 });

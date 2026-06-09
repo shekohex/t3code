@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import * as Socket from "effect/unstable/socket/Socket";
 
 import {
@@ -246,5 +247,29 @@ describe("RpcSessionFactory", () => {
 
       expect(sockets[0]?.readyState).toBe(TestWebSocket.CLOSED);
     }),
+  );
+
+  it.effect("fails readiness when the websocket never opens", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+
+      const error = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const session = yield* factory.connect(PREPARED);
+          const readyFiber = yield* Effect.forkChild(Effect.flip(session.ready));
+          yield* awaitSocket(sockets);
+
+          yield* TestClock.adjust("15 seconds");
+          return yield* Fiber.join(readyFiber);
+        }),
+      );
+
+      expect(error).toBeInstanceOf(ConnectionTransientError);
+      expect(error).toMatchObject({
+        reason: "transport",
+        message: "Test environment could not establish a WebSocket connection.",
+      });
+      expect(sockets[0]?.readyState).toBe(TestWebSocket.CLOSED);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 });

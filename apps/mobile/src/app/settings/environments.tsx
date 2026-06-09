@@ -1,6 +1,7 @@
 import { useAuth } from "@clerk/expo";
 import { Stack, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
+import { connectionStatusText, type EnvironmentConnectionPhase } from "@t3tools/client-runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
 import {
@@ -131,9 +132,6 @@ function ConfiguredCloudEnvironmentRows(props: {
 }) {
   const { isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const controller = useMobileConnectionController();
-  const [connectingCloudEnvironmentId, setConnectingCloudEnvironmentId] = useState<string | null>(
-    null,
-  );
   const iconColor = useThemeColor("--color-icon");
   const availableCloudEnvironments = controller.availableRelayEnvironments;
   const [expandedErrorId, setExpandedErrorId] = useState<string | null>(null);
@@ -141,13 +139,8 @@ function ConfiguredCloudEnvironmentRows(props: {
     props.connectedCloudEnvironments.length > 0 || availableCloudEnvironments.length > 0;
 
   const handleConnectCloudEnvironment = useCallback(
-    async (entry: MobileRelayEnvironmentView) => {
-      setConnectingCloudEnvironmentId(entry.environment.environmentId);
-      try {
-        await controller.connectRelayEnvironment(entry.environment);
-      } finally {
-        setConnectingCloudEnvironmentId(null);
-      }
+    (entry: MobileRelayEnvironmentView) => {
+      void controller.connectRelayEnvironment(entry.environment);
     },
     [controller],
   );
@@ -203,7 +196,6 @@ function ConfiguredCloudEnvironmentRows(props: {
               key={environment.environment.environmentId}
               environment={environment}
               borderTop={props.connectedCloudEnvironments.length > 0 || index !== 0}
-              isConnecting={connectingCloudEnvironmentId === environment.environment.environmentId}
               onConnect={() => handleConnectCloudEnvironment(environment)}
               errorExpanded={expandedErrorId === environment.environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environment.environmentId)}
@@ -248,21 +240,12 @@ function ConnectedCloudEnvironmentRow(props: {
   readonly onDisconnect: () => void;
   readonly onToggleError: () => void;
 }) {
-  const isAvailable =
-    props.environment.connectionError === null &&
-    (props.environment.connectionState === "idle" ||
-      props.environment.connectionState === "disconnected");
-  const isConnected =
-    props.environment.connectionState === "ready" ||
-    props.environment.connectionState === "connecting" ||
-    props.environment.connectionState === "reconnecting";
-
   return (
     <CloudEnvironmentRowShell
       borderTop={props.borderTop}
       connectionError={props.environment.connectionError}
       connectionErrorTraceId={props.environment.connectionErrorTraceId}
-      connectionState={isAvailable ? "available" : props.environment.connectionState}
+      connectionState={props.environment.connectionState}
       errorExpanded={props.errorExpanded}
       label={props.environment.environmentLabel}
       onValueChange={(enabled) => {
@@ -273,8 +256,7 @@ function ConnectedCloudEnvironmentRow(props: {
         props.onDisconnect();
       }}
       onToggleError={props.onToggleError}
-      statusText={isAvailable ? "Available · Relay status unknown" : undefined}
-      value={isConnected}
+      value={props.environment.connectionState !== "available"}
     />
   );
 }
@@ -283,13 +265,10 @@ function CloudEnvironmentRow(props: {
   readonly environment: MobileRelayEnvironmentView;
   readonly borderTop: boolean;
   readonly errorExpanded: boolean;
-  readonly isConnecting: boolean;
   readonly onConnect: () => void;
   readonly onToggleError: () => void;
 }) {
-  const disabled = props.isConnecting;
   const presentation = availableCloudEnvironmentPresentation({
-    isConnecting: props.isConnecting,
     isStatusPending: props.environment.availability === "checking",
     status: props.environment.status,
     statusError: props.environment.error,
@@ -302,7 +281,6 @@ function CloudEnvironmentRow(props: {
       connectionError={presentation.connectionError}
       connectionErrorTraceId={presentation.connectionErrorTraceId}
       connectionState={presentation.connectionState}
-      disabled={disabled}
       errorExpanded={props.errorExpanded}
       label={props.environment.environment.label}
       onValueChange={(enabled) => {
@@ -312,7 +290,7 @@ function CloudEnvironmentRow(props: {
       }}
       onToggleError={props.onToggleError}
       statusText={presentation.statusText}
-      value={props.isConnecting}
+      value={false}
     />
   );
 }
@@ -321,7 +299,7 @@ function CloudEnvironmentRowShell(props: {
   readonly borderTop: boolean;
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
-  readonly connectionState: ConnectedEnvironmentSummary["connectionState"] | "available";
+  readonly connectionState: EnvironmentConnectionPhase;
   readonly disabled?: boolean;
   readonly errorExpanded: boolean;
   readonly label: string;
@@ -333,12 +311,16 @@ function CloudEnvironmentRowShell(props: {
   const activeTrack = String(useThemeColor("--color-switch-active"));
   const track = String(useThemeColor("--color-secondary-border"));
   const chevron = useThemeColor("--color-chevron");
-  const visualConnectionState = props.connectionError ? "disconnected" : props.connectionState;
-  const shouldPulse =
-    props.connectionError === null &&
-    (props.connectionState === "connecting" || props.connectionState === "reconnecting");
+  const isRetrying =
+    props.connectionState === "connecting" || props.connectionState === "reconnecting";
+  const shouldPulse = isRetrying;
   const statusText =
-    props.statusText ?? props.connectionError ?? cloudConnectionStatusLabel(props.connectionState);
+    props.statusText ??
+    connectionStatusText({
+      phase: props.connectionState,
+      error: props.connectionError,
+      traceId: props.connectionErrorTraceId,
+    });
   const statusClassName = props.connectionError
     ? "text-rose-500 dark:text-rose-400"
     : "text-foreground-muted";
@@ -378,7 +360,7 @@ function CloudEnvironmentRowShell(props: {
     >
       <View className="min-w-0 flex-1 gap-0.5">
         <View className="min-w-0 flex-row items-center gap-2">
-          <ConnectionStatusDot state={visualConnectionState} pulse={shouldPulse} size={7} />
+          <ConnectionStatusDot state={props.connectionState} pulse={shouldPulse} size={7} />
           <Text
             className="min-w-0 flex-shrink text-[16px] font-t3-bold leading-[21px] text-foreground"
             numberOfLines={1}
@@ -468,23 +450,4 @@ function CopyTraceIdButton(props: { readonly traceId: string }) {
       <Text className="text-[12px] font-t3-bold text-foreground">Copy trace ID</Text>
     </Pressable>
   );
-}
-
-function cloudConnectionStatusLabel(
-  connectionState: ConnectedEnvironmentSummary["connectionState"] | "available",
-): string {
-  switch (connectionState) {
-    case "available":
-      return "Available";
-    case "ready":
-      return "Connected";
-    case "connecting":
-      return "Connecting...";
-    case "reconnecting":
-      return "Reconnecting...";
-    case "disconnected":
-      return "Disconnected";
-    case "idle":
-      return "Disconnected";
-  }
 }

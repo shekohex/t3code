@@ -7,20 +7,12 @@ import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 
 import type { MobileEnvironmentPresentation } from "./useMobileEnvironments";
 
-export type MobileWorkspaceConnectionState =
-  | "idle"
-  | "connecting"
-  | "ready"
-  | "reconnecting"
-  | "disconnected";
-
 export interface MobileWorkspaceEnvironment {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly displayUrl: string;
   readonly isRelayManaged: boolean;
-  readonly connectionState: MobileWorkspaceConnectionState;
-  readonly connectionPhase: EnvironmentConnectionPhase;
+  readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
 }
@@ -33,28 +25,11 @@ export interface MobileWorkspaceState {
   readonly hasReadyEnvironment: boolean;
   readonly hasConnectingEnvironment: boolean;
   readonly connectingEnvironments: ReadonlyArray<MobileWorkspaceEnvironment>;
-  readonly connectionState: MobileWorkspaceConnectionState;
+  readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
   readonly shellSnapshotError: string | null;
-  readonly isUsingCachedData: boolean;
   readonly latestCachedSnapshotReceivedAt: string | null;
   readonly networkStatus: NetworkStatus;
-}
-
-function legacyConnectionState(phase: EnvironmentConnectionPhase): MobileWorkspaceConnectionState {
-  switch (phase) {
-    case "available":
-      return "idle";
-    case "connecting":
-      return "connecting";
-    case "reconnecting":
-      return "reconnecting";
-    case "connected":
-      return "ready";
-    case "offline":
-    case "error":
-      return "disconnected";
-  }
 }
 
 export function projectMobileWorkspaceEnvironment(
@@ -65,8 +40,7 @@ export function projectMobileWorkspaceEnvironment(
     environmentLabel: environment.label,
     displayUrl: environment.displayUrl ?? "",
     isRelayManaged: environment.relayManaged,
-    connectionState: legacyConnectionState(environment.connection.phase),
-    connectionPhase: environment.connection.phase,
+    connectionState: environment.connection.phase,
     connectionError: environment.connection.error,
     connectionErrorTraceId: environment.connection.traceId,
   };
@@ -75,15 +49,15 @@ export function projectMobileWorkspaceEnvironment(
 function overallConnectionState(
   environments: ReadonlyArray<MobileWorkspaceEnvironment>,
   networkStatus: NetworkStatus,
-): MobileWorkspaceConnectionState {
+): EnvironmentConnectionPhase {
   if (environments.length === 0) {
-    return "idle";
+    return "available";
   }
   if (networkStatus === "offline") {
-    return "disconnected";
+    return "offline";
   }
-  if (environments.some((environment) => environment.connectionState === "ready")) {
-    return "ready";
+  if (environments.some((environment) => environment.connectionState === "connected")) {
+    return "connected";
   }
   if (environments.some((environment) => environment.connectionState === "reconnecting")) {
     return "reconnecting";
@@ -91,7 +65,13 @@ function overallConnectionState(
   if (environments.some((environment) => environment.connectionState === "connecting")) {
     return "connecting";
   }
-  return "disconnected";
+  if (environments.some((environment) => environment.connectionState === "error")) {
+    return "error";
+  }
+  if (environments.some((environment) => environment.connectionState === "offline")) {
+    return "offline";
+  }
+  return "available";
 }
 
 export function projectMobileWorkspaceState(input: {
@@ -113,9 +93,9 @@ export function projectMobileWorkspaceState(input: {
     hasPendingShellSnapshot: [...input.readModel.shellStatusByEnvironmentId.values()].some(
       (status) => status === "synchronizing",
     ),
-    hasReadyEnvironment: input.environments.some(
-      (environment) => environment.connectionState === "ready",
-    ),
+    hasReadyEnvironment:
+      input.networkStatus !== "offline" &&
+      input.environments.some((environment) => environment.connectionState === "connected"),
     hasConnectingEnvironment: connectingEnvironments.length > 0,
     connectingEnvironments,
     connectionState: overallConnectionState(input.environments, input.networkStatus),
@@ -123,7 +103,6 @@ export function projectMobileWorkspaceState(input: {
       input.environments.find((environment) => environment.connectionError !== null)
         ?.connectionError ?? null,
     shellSnapshotError: input.readModel.shellErrorByEnvironmentId.values().next().value ?? null,
-    isUsingCachedData: input.readModel.hasCachedData,
     latestCachedSnapshotReceivedAt: input.readModel.latestSnapshotUpdatedAt,
     networkStatus: input.networkStatus,
   };

@@ -15,22 +15,17 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { RpcClientError } from "effect/unstable/rpc";
 
 import { applyShellStreamEvent } from "../shellSnapshotReducer.ts";
 import type { WsRpcProtocolClient } from "../wsRpcProtocol.ts";
-import { ConnectionBroker } from "./broker.ts";
+import type { ConnectionCatalogEntry } from "./catalog.ts";
 import { Connectivity } from "./connectivity.ts";
+import { ConnectionDriver } from "./driver.ts";
 import { connectionProjectionPhase } from "./model.ts";
-import type {
-  ConnectionAttemptError,
-  ConnectionTarget,
-  SupervisorConnectionState,
-} from "./model.ts";
+import type { ConnectionAttemptError, ConnectionTarget } from "./model.ts";
 import { makeEnvironmentCommands, type EnvironmentCommandsService } from "./commands.ts";
 import { makeEnvironmentOperations, type EnvironmentOperationsService } from "./operations.ts";
 import { EnvironmentCacheStore } from "./persistence.ts";
-import { RpcSessionFactory } from "./rpcSession.ts";
 import { type EnvironmentSupervisorService, makeEnvironmentSupervisor } from "./supervisor.ts";
 import { makeEnvironmentThreads, type EnvironmentThreadsService } from "./threads.ts";
 import { ConnectionWakeups } from "./wakeups.ts";
@@ -130,7 +125,6 @@ export class EnvironmentShell extends Context.Service<EnvironmentShell, Environm
 export interface EnvironmentRuntimeService {
   readonly target: ConnectionTarget;
   readonly supervisor: EnvironmentSupervisorService;
-  readonly state: SubscriptionRef.SubscriptionRef<SupervisorConnectionState>;
   readonly config: SubscriptionRef.SubscriptionRef<Option.Option<ServerConfig>>;
   readonly rpc: EnvironmentRpcService;
   readonly operations: EnvironmentOperationsService;
@@ -146,7 +140,7 @@ export class EnvironmentRuntime extends Context.Service<
 
 export interface EnvironmentRuntimeFactoryService {
   readonly make: (
-    target: ConnectionTarget,
+    entry: ConnectionCatalogEntry,
   ) => Effect.Effect<EnvironmentRuntimeService, never, Scope.Scope>;
 }
 
@@ -164,34 +158,6 @@ function shellStatusForSnapshot(
 export const makeEnvironmentRpc = Effect.fn("EnvironmentRpc.make")((
   supervisor: EnvironmentSupervisorService,
 ) => {
-  const isRpcClientError = Schema.is(RpcClientError.RpcClientError);
-  const isSocketTransportCause = (cause: Cause.Cause<unknown>): boolean => {
-    const failures = cause.reasons.filter(Cause.isFailReason);
-    return (
-      failures.length > 0 &&
-      failures.every(
-        ({ error }) =>
-          isRpcClientError(error) &&
-          (error.reason._tag === "SocketReadError" ||
-            error.reason._tag === "SocketWriteError" ||
-            error.reason._tag === "SocketOpenError" ||
-            error.reason._tag === "SocketCloseError"),
-      )
-    );
-  };
-  const reconnect = (tag: EnvironmentSubscriptionRpcTag) =>
-    Stream.concat(
-      Stream.fromEffect(
-        Effect.logWarning("RPC subscription transport ended; reconnecting environment.").pipe(
-          Effect.annotateLogs({
-            environmentId: supervisor.target.environmentId,
-            rpcMethod: tag,
-          }),
-          Effect.andThen(supervisor.retryNow),
-        ),
-      ).pipe(Stream.drain),
-      Stream.never,
-    );
   const currentSession = SubscriptionRef.get(supervisor.session).pipe(
     Effect.flatMap(
       Option.match({
@@ -250,16 +216,7 @@ export const makeEnvironmentRpc = Effect.fn("EnvironmentRpc.make")((
             const method = session.client[tag] as (
               input: EnvironmentRpcInput<TTag>,
             ) => Stream.Stream<EnvironmentRpcStreamValue<TTag>, EnvironmentRpcStreamFailure<TTag>>;
-            return method(input).pipe(
-              Stream.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Stream.failCause(cause)
-                  : isSocketTransportCause(cause)
-                    ? reconnect(tag)
-                    : Stream.failCause(cause),
-              ),
-              Stream.concat(reconnect(tag)),
-            );
+            return method(input);
           },
         }),
       ),
@@ -393,46 +350,6 @@ export const makeEnvironmentShell = Effect.fn("EnvironmentShell.make")(function*
   return EnvironmentShell.of({ state });
 });
 
-function deriveRuntimeConnectionState(
-  supervisorState: SupervisorConnectionState,
-  shellState: EnvironmentShellState,
-): SupervisorConnectionState {
-  if (supervisorState._tag !== "Ready" || shellState.status === "live") {
-    return supervisorState;
-  }
-  return {
-    _tag: "Synchronizing",
-    attempt: supervisorState.attempt,
-  };
-}
-
-const makeRuntimeConnectionState = Effect.fn("EnvironmentRuntimeState.make")(function* (
-  supervisor: EnvironmentSupervisorService,
-  shell: EnvironmentShellService,
-) {
-  const initialSupervisorState = yield* SubscriptionRef.get(supervisor.state);
-  const initialShellState = yield* SubscriptionRef.get(shell.state);
-  const state = yield* SubscriptionRef.make(
-    deriveRuntimeConnectionState(initialSupervisorState, initialShellState),
-  );
-
-  const refresh = Effect.fn("EnvironmentRuntimeState.refresh")(function* () {
-    const supervisorState = yield* SubscriptionRef.get(supervisor.state);
-    const shellState = yield* SubscriptionRef.get(shell.state);
-    yield* SubscriptionRef.set(state, deriveRuntimeConnectionState(supervisorState, shellState));
-  });
-
-  yield* Stream.merge(
-    SubscriptionRef.changes(supervisor.state),
-    SubscriptionRef.changes(shell.state),
-  ).pipe(
-    Stream.runForEach(() => refresh()),
-    Effect.forkScoped,
-  );
-
-  return state;
-});
-
 const makeEnvironmentConfig = Effect.fn("EnvironmentConfig.make")(function* (
   supervisor: EnvironmentSupervisorService,
 ) {
@@ -455,25 +372,21 @@ const makeEnvironmentConfig = Effect.fn("EnvironmentConfig.make")(function* (
 });
 
 export function environmentRuntimeLayer(
-  target: ConnectionTarget,
+  entry: ConnectionCatalogEntry,
 ): Layer.Layer<
   EnvironmentRuntime,
   never,
-  | EnvironmentCacheStore
-  | Connectivity
-  | ConnectionWakeups
-  | ConnectionBroker
-  | RpcSessionFactory
-  | Crypto.Crypto
+  EnvironmentCacheStore | Connectivity | ConnectionWakeups | ConnectionDriver | Crypto.Crypto
 > {
-  return Layer.effect(EnvironmentRuntime, makeEnvironmentRuntime(target));
+  return Layer.effect(EnvironmentRuntime, makeEnvironmentRuntime(entry));
 }
 
 export const makeEnvironmentRuntime = Effect.fn("EnvironmentRuntime.make")(function* (
-  target: ConnectionTarget,
+  entry: ConnectionCatalogEntry,
 ) {
+  const target = entry.target;
   const cache = yield* EnvironmentCacheStore;
-  const supervisor = yield* makeEnvironmentSupervisor(target, {
+  const supervisor = yield* makeEnvironmentSupervisor(entry, {
     initiallyDesired: false,
   });
   const rpc = yield* makeEnvironmentRpc(supervisor);
@@ -481,12 +394,10 @@ export const makeEnvironmentRuntime = Effect.fn("EnvironmentRuntime.make")(funct
   const commands = yield* makeEnvironmentCommands(operations);
   const shell = yield* makeEnvironmentShell(supervisor, rpc, cache);
   const threads = yield* makeEnvironmentThreads(supervisor, rpc);
-  const state = yield* makeRuntimeConnectionState(supervisor, shell);
   const config = yield* makeEnvironmentConfig(supervisor);
   return EnvironmentRuntime.of({
     target,
     supervisor,
-    state,
     config,
     rpc,
     operations,
@@ -500,15 +411,10 @@ export const environmentRuntimeFactoryLayer = Layer.effect(
   EnvironmentRuntimeFactory,
   Effect.gen(function* () {
     const dependencies = yield* Effect.context<
-      | EnvironmentCacheStore
-      | Connectivity
-      | ConnectionWakeups
-      | ConnectionBroker
-      | RpcSessionFactory
-      | Crypto.Crypto
+      EnvironmentCacheStore | Connectivity | ConnectionWakeups | ConnectionDriver | Crypto.Crypto
     >();
     return EnvironmentRuntimeFactory.of({
-      make: (target) => makeEnvironmentRuntime(target).pipe(Effect.provide(dependencies)),
+      make: (entry) => makeEnvironmentRuntime(entry).pipe(Effect.provide(dependencies)),
     });
   }),
 );

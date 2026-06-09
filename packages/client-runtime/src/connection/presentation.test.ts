@@ -3,10 +3,15 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 
 import { BearerConnectionProfile, type ConnectionCatalogEntry } from "./catalog.ts";
-import { BearerConnectionTarget, ConnectionTransientError } from "./model.ts";
+import {
+  BearerConnectionTarget,
+  ConnectionTransientError,
+  type SupervisorConnectionState,
+} from "./model.ts";
 import {
   connectionCatalogDisplayUrl,
   connectionPhaseMessage,
+  connectionStatusText,
   presentEnvironmentConnection,
   presentConnectionState,
 } from "./presentation.ts";
@@ -30,29 +35,86 @@ const ENTRY: ConnectionCatalogEntry = {
   ),
 };
 
+function supervisorState(overrides: Partial<SupervisorConnectionState>): SupervisorConnectionState {
+  return {
+    desired: true,
+    network: "online",
+    phase: "connecting",
+    stage: "preparing",
+    attempt: 1,
+    generation: 0,
+    lastFailure: null,
+    retryAt: null,
+    ...overrides,
+  };
+}
+
 describe("connection presentation", () => {
   it("preserves profile display information without exposing credentials", () => {
     expect(connectionCatalogDisplayUrl(ENTRY)).toBe("https://environment.example.test");
   });
 
   it("distinguishes initial connection, reconnect, and retry errors", () => {
-    expect(presentConnectionState({ _tag: "Connecting", attempt: 1 }).phase).toBe("connecting");
-    expect(presentConnectionState({ _tag: "Connecting", attempt: 2 }).phase).toBe("reconnecting");
+    expect(presentConnectionState(supervisorState({ phase: "connecting", attempt: 1 }))).toEqual({
+      phase: "connecting",
+      error: null,
+      traceId: null,
+    });
     expect(
-      presentConnectionState({
-        _tag: "RetryWaiting",
-        attempt: 2,
-        retryAt: 1,
-        error: new ConnectionTransientError({
-          reason: "transport",
-          message: "Disconnected.",
-          traceId: "trace-1",
+      presentConnectionState(
+        supervisorState({
+          phase: "connecting",
+          attempt: 2,
+          lastFailure: new ConnectionTransientError({
+            reason: "transport",
+            message: "Socket closed.",
+            traceId: "trace-previous",
+          }),
         }),
-      }),
+      ),
     ).toEqual({
-      phase: "error",
+      phase: "reconnecting",
+      error: "Socket closed.",
+      traceId: "trace-previous",
+    });
+    expect(
+      presentConnectionState(
+        supervisorState({
+          phase: "backoff",
+          attempt: 2,
+          retryAt: 1,
+          lastFailure: new ConnectionTransientError({
+            reason: "transport",
+            message: "Disconnected.",
+            traceId: "trace-1",
+          }),
+        }),
+      ),
+    ).toEqual({
+      phase: "reconnecting",
       error: "Disconnected.",
       traceId: "trace-1",
+    });
+  });
+
+  it("preserves the latest failure while the next attempt is active", () => {
+    expect(
+      presentEnvironmentConnection(
+        supervisorState({
+          phase: "connecting",
+          stage: "opening",
+          attempt: 2,
+          lastFailure: new ConnectionTransientError({
+            reason: "transport",
+            message: "Relay connection timed out.",
+            traceId: "trace-retry",
+          }),
+        }),
+      ),
+    ).toEqual({
+      phase: "reconnecting",
+      error: "Relay connection timed out.",
+      traceId: "trace-retry",
     });
   });
 
@@ -60,19 +122,62 @@ describe("connection presentation", () => {
     expect(connectionPhaseMessage("connected", TARGET.label, "offline")).toBe("You are offline");
   });
 
-  it("surfaces a shell synchronization failure without claiming to reconnect", () => {
+  it("combines reconnect progress with the latest failure", () => {
+    expect(
+      connectionStatusText({
+        phase: "reconnecting",
+        error: "Relay request timed out.",
+        traceId: "trace-retry",
+      }),
+    ).toBe("Failed to connect. Reconnecting... Reason: Relay request timed out.");
+  });
+
+  it("presents the supervisor's offline state without consulting shell state", () => {
     expect(
       presentEnvironmentConnection(
-        { _tag: "Synchronizing", attempt: 1 },
-        {
-          snapshot: Option.none(),
-          status: "empty",
-          error: Option.some("Could not synchronize environment data."),
-        },
+        supervisorState({
+          network: "offline",
+          phase: "offline",
+          stage: null,
+        }),
       ),
     ).toEqual({
-      phase: "error",
-      error: "Could not synchronize environment data.",
+      phase: "offline",
+      error: null,
+      traceId: null,
+    });
+  });
+
+  it("presents a connected supervisor snapshot as connected", () => {
+    expect(
+      presentEnvironmentConnection(
+        supervisorState({
+          phase: "connected",
+          stage: null,
+          generation: 1,
+        }),
+      ),
+    ).toEqual({
+      phase: "connected",
+      error: null,
+      traceId: null,
+    });
+  });
+
+  it("preserves an explicitly available environment while offline", () => {
+    expect(
+      presentEnvironmentConnection(
+        supervisorState({
+          desired: false,
+          network: "offline",
+          phase: "available",
+          stage: null,
+          attempt: 0,
+        }),
+      ),
+    ).toEqual({
+      phase: "available",
+      error: null,
       traceId: null,
     });
   });

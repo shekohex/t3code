@@ -30,7 +30,7 @@ import {
   type DesktopServerExposureState,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { findErrorTraceId } from "@t3tools/client-runtime";
+import { connectionStatusText, findErrorTraceId } from "@t3tools/client-runtime";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -1414,7 +1414,6 @@ function NetworkAccessDescription({
 
 type SavedBackendListRowProps = {
   environment: WebEnvironmentPresentation;
-  reconnectingEnvironmentId: EnvironmentId | null;
   removingEnvironmentId: EnvironmentId | null;
   onConnect: (environmentId: EnvironmentId) => void;
   onRemove: (environmentId: EnvironmentId) => void;
@@ -1422,7 +1421,6 @@ type SavedBackendListRowProps = {
 
 function SavedBackendListRow({
   environment,
-  reconnectingEnvironmentId,
   removingEnvironmentId,
   onConnect,
   onRemove,
@@ -1430,10 +1428,7 @@ function SavedBackendListRow({
   const environmentId = environment.environmentId;
   const connectionState = environment.connection.phase;
   const isConnected = connectionState === "connected";
-  const isConnecting =
-    connectionState === "connecting" ||
-    connectionState === "reconnecting" ||
-    reconnectingEnvironmentId === environmentId;
+  const isConnecting = connectionState === "connecting" || connectionState === "reconnecting";
   const stateDotClassName =
     connectionState === "connected"
       ? "bg-success"
@@ -1442,18 +1437,7 @@ function SavedBackendListRow({
         : connectionState === "error"
           ? "bg-destructive"
           : "bg-muted-foreground/40";
-  const statusTooltip =
-    connectionState === "connected"
-      ? "Connected"
-      : connectionState === "connecting"
-        ? "Connecting"
-        : connectionState === "reconnecting"
-          ? "Reconnecting"
-          : connectionState === "offline"
-            ? "Offline"
-            : connectionState === "error"
-              ? environment.connection.error
-              : "Available";
+  const statusTooltip = connectionStatusText(environment.connection);
   const errorTraceId = environment.connection.traceId;
   const versionMismatch = resolveServerConfigVersionMismatch(environment.serverConfig);
   const sshTarget =
@@ -1493,9 +1477,9 @@ function SavedBackendListRow({
               {versionMismatch.serverVersion}.
             </p>
           ) : null}
-          {connectionState === "error" && environment.connection.error ? (
+          {environment.connection.error ? (
             <p className="flex min-w-0 items-center gap-2 text-destructive text-xs">
-              <span className="truncate">{environment.connection.error}</span>
+              <span className="truncate">{connectionStatusText(environment.connection)}</span>
               {errorTraceId ? (
                 <button
                   type="button"
@@ -1980,8 +1964,6 @@ export function ConnectionsSettings() {
       }),
     [discoveredSshHosts, savedDesktopSshEnvironmentKeys],
   );
-  const [reconnectingSavedEnvironmentId, setReconnectingSavedEnvironmentId] =
-    useState<EnvironmentId | null>(null);
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const [isUpdatingDesktopServerExposure, setIsUpdatingDesktopServerExposure] = useState(false);
@@ -2285,7 +2267,6 @@ export function ConnectionsSettings() {
 
   const handleConnectSavedBackend = useCallback(
     async (environmentId: EnvironmentId) => {
-      setReconnectingSavedEnvironmentId(environmentId);
       setSavedBackendError(null);
       try {
         await retryEnvironment(environmentId);
@@ -2299,8 +2280,6 @@ export function ConnectionsSettings() {
             description: message,
           }),
         );
-      } finally {
-        setReconnectingSavedEnvironmentId(null);
       }
     },
     [retryEnvironment],
@@ -3181,7 +3160,6 @@ export function ConnectionsSettings() {
           <SavedBackendListRow
             key={environment.environmentId}
             environment={environment}
-            reconnectingEnvironmentId={reconnectingSavedEnvironmentId}
             removingEnvironmentId={removingSavedEnvironmentId}
             onConnect={handleConnectSavedBackend}
             onRemove={handleRemoveSavedBackend}

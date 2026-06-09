@@ -11,15 +11,12 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
-import {
-  consumeCloudReplayGuards,
-  reconcileDesiredCloudLink,
-  traceRelayBrokerHandler,
-} from "./http.ts";
+import { consumeCloudReplayGuards, reconcileDesiredCloudLink } from "./http.ts";
 import {
   CloudManagedEndpointRuntime,
   type CloudManagedEndpointRuntimeShape,
 } from "./ManagedEndpointRuntime.ts";
+import { traceRelayRequest } from "./traceRelayRequest.ts";
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
   new ServerSecretStore.SecretStoreError({
@@ -94,7 +91,7 @@ describe("traceRelayBrokerHandler", () => {
         }),
       );
 
-      yield* traceRelayBrokerHandler(Effect.void.pipe(Effect.withSpan("relay.mint.handler"))).pipe(
+      yield* traceRelayRequest(Effect.void.pipe(Effect.withSpan("relay.mint.handler"))).pipe(
         Effect.provideService(HttpServerRequest.HttpServerRequest, request),
         Effect.provideService(RelayClientTracer, Option.some(productTracer)),
       );

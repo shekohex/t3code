@@ -25,7 +25,6 @@ describe("available cloud environment presentation", () => {
   it("presents an online unsaved environment as available, not connected", () => {
     expect(
       availableCloudEnvironmentPresentation({
-        isConnecting: false,
         isStatusPending: false,
         status: relayStatus("online"),
         statusError: null,
@@ -42,7 +41,6 @@ describe("available cloud environment presentation", () => {
   it("keeps relay status checks distinct from connection attempts", () => {
     expect(
       availableCloudEnvironmentPresentation({
-        isConnecting: false,
         isStatusPending: true,
         status: null,
         statusError: null,
@@ -56,27 +54,9 @@ describe("available cloud environment presentation", () => {
     });
   });
 
-  it("shows connecting only after the user starts connecting", () => {
-    expect(
-      availableCloudEnvironmentPresentation({
-        isConnecting: true,
-        isStatusPending: true,
-        status: null,
-        statusError: null,
-        statusErrorTraceId: null,
-      }),
-    ).toEqual({
-      connectionError: null,
-      connectionErrorTraceId: null,
-      connectionState: "connecting",
-      statusText: "Connecting...",
-    });
-  });
-
   it("surfaces an offline relay as an error", () => {
     expect(
       availableCloudEnvironmentPresentation({
-        isConnecting: false,
         isStatusPending: false,
         status: relayStatus("offline", "Tunnel is unavailable."),
         statusError: null,
@@ -85,7 +65,7 @@ describe("available cloud environment presentation", () => {
     ).toEqual({
       connectionError: "Tunnel is unavailable.",
       connectionErrorTraceId: null,
-      connectionState: "disconnected",
+      connectionState: "error",
       statusText: "Tunnel is unavailable.",
     });
   });
@@ -93,7 +73,6 @@ describe("available cloud environment presentation", () => {
   it("preserves trace metadata for relay request failures", () => {
     expect(
       availableCloudEnvironmentPresentation({
-        isConnecting: false,
         isStatusPending: false,
         status: null,
         statusError: "Could not get relay environment status.",

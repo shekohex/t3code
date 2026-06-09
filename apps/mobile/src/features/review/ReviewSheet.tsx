@@ -16,8 +16,13 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
+import {
+  useMobileEnvironmentConnectionActions,
+  useMobileEnvironmentPresentation,
+} from "../../connection/useMobileEnvironmentData";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
+import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useReviewCacheForThread } from "./reviewState";
 import { resolveNativeReviewDiffView } from "../diffs/nativeReviewDiffSurface";
 import {
@@ -114,6 +119,9 @@ export function ReviewSheet() {
     environmentId: EnvironmentId;
     threadId: ThreadId;
   }>();
+  const environment = useMobileEnvironmentPresentation(environmentId);
+  const environmentActions = useMobileEnvironmentConnectionActions();
+  const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const { draftMessage } = useThreadDraftForThread({ environmentId, threadId });
   const reviewCache = useReviewCacheForThread({ environmentId, threadId });
   const selectedTheme = colorScheme === "dark" ? "dark" : "light";
@@ -126,7 +134,12 @@ export function ReviewSheet() {
     selectedSection,
     refreshSelectedSection,
     selectSection,
-  } = useReviewSections({ environmentId, threadId, reviewCache });
+  } = useReviewSections({
+    enabled: isEnvironmentReady,
+    environmentId,
+    threadId,
+    reviewCache,
+  });
   const { headerDiffSummary, nativeReviewDiffData, parsedDiff, pendingReviewCommentCount } =
     useReviewDiffData({
       threadKey: reviewCache.threadKey,
@@ -187,6 +200,11 @@ export function ReviewSheet() {
 
   const parsedDiffNotice =
     parsedDiff.kind === "files" || parsedDiff.kind === "raw" ? parsedDiff.notice : null;
+  const hasCachedSelectedDiff = selectedSection?.diff != null;
+  const showConnectionNotice = environment.isReady && !isEnvironmentReady && !hasCachedSelectedDiff;
+  const handleRetryEnvironment = useCallback(() => {
+    void environmentActions.retryNow(environmentId);
+  }, [environmentActions, environmentId]);
 
   const listHeader = useMemo(() => {
     const children: ReactElement[] = [];
@@ -312,34 +330,51 @@ export function ReviewSheet() {
         }}
       />
 
-      <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Menu icon="ellipsis.circle" title="Select diff" separateBackground>
-          {reviewSections.map((section) => (
+      {showConnectionNotice ? null : (
+        <Stack.Toolbar placement="right">
+          <Stack.Toolbar.Menu icon="ellipsis.circle" title="Select diff" separateBackground>
+            {reviewSections.map((section) => (
+              <Stack.Toolbar.MenuAction
+                key={section.id}
+                icon={section.id === selectedSection?.id ? "checkmark" : "circle"}
+                onPress={() => selectSection(section.id)}
+                subtitle={section.subtitle ?? undefined}
+              >
+                <Stack.Toolbar.Label>{section.title}</Stack.Toolbar.Label>
+              </Stack.Toolbar.MenuAction>
+            ))}
             <Stack.Toolbar.MenuAction
-              key={section.id}
-              icon={section.id === selectedSection?.id ? "checkmark" : "circle"}
-              onPress={() => selectSection(section.id)}
-              subtitle={section.subtitle ?? undefined}
+              icon="arrow.clockwise"
+              disabled={
+                loadingGitDiffs ||
+                (selectedSection?.kind === "turn" && loadingTurnIds[selectedSection.id] === true)
+              }
+              onPress={() => void refreshSelectedSection()}
+              subtitle="Reload current diff"
             >
-              <Stack.Toolbar.Label>{section.title}</Stack.Toolbar.Label>
+              <Stack.Toolbar.Label>Refresh</Stack.Toolbar.Label>
             </Stack.Toolbar.MenuAction>
-          ))}
-          <Stack.Toolbar.MenuAction
-            icon="arrow.clockwise"
-            disabled={
-              loadingGitDiffs ||
-              (selectedSection?.kind === "turn" && loadingTurnIds[selectedSection.id] === true)
-            }
-            onPress={() => void refreshSelectedSection()}
-            subtitle="Reload current diff"
-          >
-            <Stack.Toolbar.Label>Refresh</Stack.Toolbar.Label>
-          </Stack.Toolbar.MenuAction>
-        </Stack.Toolbar.Menu>
-      </Stack.Toolbar>
+          </Stack.Toolbar.Menu>
+        </Stack.Toolbar>
+      )}
 
       <View className="flex-1 bg-sheet">
-        {selectedSection && parsedDiff.kind === "files" ? (
+        {showConnectionNotice ? (
+          <View style={{ flex: 1, paddingTop: topContentInset }}>
+            <EnvironmentConnectionNotice
+              environmentLabel={environment.presentation?.entry.target.label ?? "Environment"}
+              connection={
+                environment.presentation?.connection ?? {
+                  phase: "available",
+                  error: null,
+                  traceId: null,
+                }
+              }
+              resourceName="review"
+              onRetry={handleRetryEnvironment}
+            />
+          </View>
+        ) : selectedSection && parsedDiff.kind === "files" ? (
           <View
             className="flex-1"
             style={{

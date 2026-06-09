@@ -5,6 +5,7 @@ import {
   ConnectionTransientError,
   ConnectionWakeups,
   Connectivity,
+  EnvironmentOwnedDataCleanup,
   fetchRemoteEnvironmentDescriptor,
   managedRelaySessionAtom,
   mapRemoteEnvironmentError,
@@ -26,6 +27,7 @@ import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
 import { primaryEnvironmentRequestInit } from "../environments/primary/requestInit";
 import { readPrimaryEnvironmentTarget } from "../environments/primary/target";
+import { clearComposerDraftsEnvironment } from "../composerDraftStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { webConnectionStorageLayer } from "./webConnectionStorage";
 
@@ -304,10 +306,21 @@ const webPlatformConnectionSourceLayer = Layer.effect(
   }),
 );
 
+const webEnvironmentOwnedDataCleanupLayer = Layer.succeed(
+  EnvironmentOwnedDataCleanup,
+  EnvironmentOwnedDataCleanup.of({
+    clear: (environmentId) =>
+      Effect.sync(() => {
+        clearComposerDraftsEnvironment(environmentId);
+      }),
+  }),
+);
+
 export const webConnectionPlatformLayer = Layer.mergeAll(
   webConnectionStorageLayer,
   webConnectivityLayer,
   webWakeupsLayer,
   webCapabilitiesLayer,
   webPlatformConnectionSourceLayer,
+  webEnvironmentOwnedDataCleanupLayer,
 );

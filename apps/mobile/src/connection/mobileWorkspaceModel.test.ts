@@ -4,7 +4,7 @@ import {
   BearerConnectionTarget,
   type EnvironmentCatalogReadModel,
 } from "@t3tools/client-runtime";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type OrchestrationShellSnapshot } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import {
@@ -62,12 +62,27 @@ const EMPTY_READ_MODEL: EnvironmentCatalogReadModel = {
   hasRemoteActivity: false,
 };
 
+const CACHED_READ_MODEL: EnvironmentCatalogReadModel = {
+  ...EMPTY_READ_MODEL,
+  snapshotByEnvironmentId: new Map<EnvironmentId, OrchestrationShellSnapshot>([
+    [
+      ENVIRONMENT_ID,
+      {
+        snapshotSequence: 1,
+        projects: [],
+        threads: [],
+        updatedAt: "2026-06-07T00:00:00.000Z",
+      },
+    ],
+  ]),
+  shellStatusByEnvironmentId: new Map([[ENVIRONMENT_ID, "synchronizing"]]),
+};
+
 describe("mobile workspace projection", () => {
   it("preserves explicit offline state without presenting it as a connection error", () => {
     const projected = projectMobileWorkspaceEnvironment(environment("offline"));
 
-    expect(projected.connectionState).toBe("disconnected");
-    expect(projected.connectionPhase).toBe("offline");
+    expect(projected.connectionState).toBe("offline");
     expect(projected.connectionError).toBeNull();
   });
 
@@ -80,9 +95,9 @@ describe("mobile workspace projection", () => {
       readModel: EMPTY_READ_MODEL,
     });
 
-    expect(state.connectionState).toBe("disconnected");
+    expect(state.connectionState).toBe("offline");
     expect(state.networkStatus).toBe("offline");
-    expect(state.hasReadyEnvironment).toBe(true);
+    expect(state.hasReadyEnvironment).toBe(false);
   });
 
   it("projects reconnecting environments dynamically from active phases", () => {
@@ -101,6 +116,23 @@ describe("mobile workspace projection", () => {
     });
 
     expect(state.connectingEnvironments).toHaveLength(1);
-    expect(state.connectingEnvironments[0]?.connectionPhase).toBe("reconnecting");
+    expect(state.connectingEnvironments[0]?.connectionState).toBe("reconnecting");
+    expect(state.hasConnectingEnvironment).toBe(true);
+    expect(state.hasReadyEnvironment).toBe(true);
+  });
+
+  it("keeps retained snapshots visible while reconnecting without claiming readiness", () => {
+    const environments = [projectMobileWorkspaceEnvironment(environment("reconnecting"))];
+    const state = projectMobileWorkspaceState({
+      isReady: true,
+      networkStatus: "online",
+      environments,
+      readModel: CACHED_READ_MODEL,
+    });
+
+    expect(state.hasLoadedShellSnapshot).toBe(true);
+    expect(state.hasPendingShellSnapshot).toBe(true);
+    expect(state.hasReadyEnvironment).toBe(false);
+    expect(state.connectionState).toBe("reconnecting");
   });
 });

@@ -1,8 +1,9 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime";
 import type {
   ApprovalRequestId,
   EnvironmentId,
   ModelSelection,
-  OrchestrationThread,
+  OrchestrationThreadShell,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   RuntimeMode,
@@ -37,9 +38,11 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
+import type { ThreadContentPresentation } from "./threadContentPresentation";
 
 export interface ThreadDetailScreenProps {
-  readonly selectedThread: OrchestrationThread;
+  readonly selectedThread: OrchestrationThreadShell;
+  readonly contentPresentation: ThreadContentPresentation;
   readonly screenTone: StatusTone;
   readonly connectionError: string | null;
   readonly environmentLabel: string | null;
@@ -55,7 +58,7 @@ export interface ThreadDetailScreenProps {
   readonly respondingUserInputId: ApprovalRequestId | null;
   readonly draftMessage: string;
   readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
-  readonly connectionStateLabel: "ready" | "connecting" | "reconnecting" | "disconnected" | "idle";
+  readonly connectionStateLabel: EnvironmentConnectionPhase;
   readonly activeThreadBusy: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
@@ -69,7 +72,7 @@ export interface ThreadDetailScreenProps {
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => Promise<void>;
-  readonly onSendMessage: () => void;
+  readonly onSendMessage: () => Promise<void>;
   readonly onReconnectEnvironment: () => void;
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => Promise<void>;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => Promise<void>;
@@ -254,6 +257,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           <ThreadFeed
             threadId={props.selectedThread.id}
             feed={props.selectedThreadFeed}
+            contentPresentation={props.contentPresentation}
             httpBaseUrl={props.httpBaseUrl}
             bearerToken={props.bearerToken}
             agentLabel={agentLabel}

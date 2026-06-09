@@ -8,6 +8,7 @@ import {
 import * as Effect from "effect/Effect";
 import { type ReactNode, useEffect, useRef } from "react";
 
+import { mobileEnvironmentReact } from "../../connection/mobileConnectionRuntime";
 import { mobileRuntime } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import {
@@ -24,27 +25,60 @@ function resetManagedRelayTokenCache(): Promise<void> {
 
 function CloudAuthBridge(props: { readonly children: ReactNode }) {
   const { getToken, isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
+  const { removeRelayEnvironments } = mobileEnvironmentReact.useConnectionActions();
   const previousTokenProviderRef = useRef<{
     readonly userId: string;
     readonly provider: () => Promise<string | null>;
   } | null>(null);
+  const observedAccountRef = useRef<string | null | undefined>(undefined);
+  const accountTransitionRef = useRef(Promise.resolve());
 
   useEffect(() => {
     let cancelled = false;
     if (!isLoaded) {
       return;
     }
+
+    const previousObservedAccount = observedAccountRef.current;
+    const nextAccount = isSignedIn && userId ? userId : null;
+    observedAccountRef.current = nextAccount;
+
+    const queueAccountCleanup = (
+      previous: {
+        readonly userId: string;
+        readonly provider: () => Promise<string | null>;
+      } | null,
+    ) => {
+      accountTransitionRef.current = accountTransitionRef.current.then(async () => {
+        const cleanup = [
+          resetManagedRelayTokenCache(),
+          removeRelayEnvironments(),
+          ...(previous
+            ? [
+                mobileRuntime.runPromise(
+                  unregisterAgentAwarenessDeviceForCurrentUser(previous.provider),
+                ),
+              ]
+            : []),
+        ];
+        const results = await Promise.allSettled(cleanup);
+        for (const result of results) {
+          if (result.status === "rejected") {
+            console.warn("[t3-cloud] cloud account cleanup failed", result.reason);
+          }
+        }
+      });
+      return accountTransitionRef.current;
+    };
+
     if (!isSignedIn || !userId) {
       const previous = previousTokenProviderRef.current;
       previousTokenProviderRef.current = null;
-      if (previous) {
-        void mobileRuntime
-          .runPromise(unregisterAgentAwarenessDeviceForCurrentUser(previous.provider))
-          .catch(() => undefined);
-        void resetManagedRelayTokenCache();
-      }
       setAgentAwarenessRelayTokenProvider(null);
       setManagedRelaySession(appAtomRegistry, null);
+      if (previousObservedAccount !== null) {
+        void queueAccountCleanup(previous);
+      }
       return;
     }
 
@@ -64,22 +98,23 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
         }),
       );
     };
-    if (previous && previous.userId !== userId) {
+    if (
+      previousObservedAccount !== undefined &&
+      previousObservedAccount !== null &&
+      previousObservedAccount !== userId
+    ) {
       previousTokenProviderRef.current = null;
       setAgentAwarenessRelayTokenProvider(null);
       setManagedRelaySession(appAtomRegistry, null);
-      void mobileRuntime
-        .runPromise(unregisterAgentAwarenessDeviceForCurrentUser(previous.provider))
-        .catch(() => undefined);
-      void resetManagedRelayTokenCache().then(activateSession);
+      void queueAccountCleanup(previous).then(activateSession);
     } else {
-      activateSession();
+      void accountTransitionRef.current.then(activateSession);
     }
 
     return () => {
       cancelled = true;
     };
-  }, [getToken, isLoaded, isSignedIn, userId]);
+  }, [getToken, isLoaded, isSignedIn, removeRelayEnvironments, userId]);
 
   useEffect(
     () => () => {

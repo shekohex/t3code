@@ -12,6 +12,7 @@ import {
   type PartialMarkdownTheme,
 } from "react-native-nitro-markdown";
 import {
+  ActivityIndicator,
   Image,
   Pressable,
   ScrollView,
@@ -28,7 +29,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
-import { EmptyState } from "../../components/EmptyState";
 import {
   parseReviewCommentMessageSegments,
   type ReviewInlineComment,
@@ -47,10 +47,12 @@ import type { MobileLayoutVariant } from "../../lib/mobileLayout";
 import type { ThreadFeedEntry } from "../../lib/threadActivity";
 import { relativeTime } from "../../lib/time";
 import { messageImageUrl } from "./threadPresentation";
+import type { ThreadContentPresentation } from "./threadContentPresentation";
 
 export interface ThreadFeedProps {
   readonly threadId: ThreadId;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
+  readonly contentPresentation: ThreadContentPresentation;
   readonly httpBaseUrl: string | null;
   readonly bearerToken: string | null;
   readonly agentLabel: string;
@@ -821,6 +823,37 @@ function compactFileName(filePath: string): string {
 
 const IOS_NAV_BAR_HEIGHT = 44;
 
+function ThreadFeedPlaceholder(props: {
+  readonly bottomInset: number;
+  readonly detail: string;
+  readonly horizontalPadding: number;
+  readonly loading?: boolean;
+  readonly title: string;
+  readonly topInset: number;
+}) {
+  return (
+    <View
+      style={{
+        flex: 1,
+        flexGrow: 1,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingTop: props.topInset,
+        paddingBottom: props.bottomInset,
+        paddingHorizontal: props.horizontalPadding + 24,
+      }}
+    >
+      <View className="max-w-[320px] items-center gap-2">
+        {props.loading ? <ActivityIndicator style={{ marginBottom: 6 }} /> : null}
+        <Text className="text-center font-t3-bold text-lg text-foreground">{props.title}</Text>
+        <Text className="text-center text-sm leading-5 text-foreground-secondary">
+          {props.detail}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const listRef = useRef<LegendListRef>(null);
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -912,24 +945,40 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     ],
   );
 
+  if (props.contentPresentation.kind === "loading") {
+    return (
+      <ThreadFeedPlaceholder
+        title="Loading conversation"
+        detail="Fetching the latest messages from this environment."
+        loading
+        topInset={topContentInset}
+        bottomInset={bottomContentInset}
+        horizontalPadding={horizontalPadding}
+      />
+    );
+  }
+
+  if (props.contentPresentation.kind === "unavailable") {
+    return (
+      <ThreadFeedPlaceholder
+        title={props.contentPresentation.title}
+        detail={props.contentPresentation.detail}
+        topInset={topContentInset}
+        bottomInset={bottomContentInset}
+        horizontalPadding={horizontalPadding}
+      />
+    );
+  }
+
   if (props.feed.length === 0) {
     return (
-      <ScrollView
-        style={{ flex: 1 }}
-        contentInsetAdjustmentBehavior="never"
-        contentInset={{ top: topContentInset, bottom: bottomContentInset }}
-        contentOffset={{ x: 0, y: -topContentInset }}
-        scrollIndicatorInsets={{ top: topContentInset, bottom: bottomContentInset }}
-        contentContainerStyle={{
-          flexGrow: 1,
-          paddingHorizontal: horizontalPadding,
-        }}
-      >
-        <EmptyState
-          title="No conversation yet"
-          detail="Ask the agent to inspect the repo, run a command, or continue the active thread."
-        />
-      </ScrollView>
+      <ThreadFeedPlaceholder
+        title="No conversation yet"
+        detail="Ask the agent to inspect the repo, run a command, or continue the active thread."
+        topInset={topContentInset}
+        bottomInset={bottomContentInset}
+        horizontalPadding={horizontalPadding}
+      />
     );
   }
 

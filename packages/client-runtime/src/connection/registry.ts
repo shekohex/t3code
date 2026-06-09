@@ -30,6 +30,7 @@ import {
   ConnectionRegistrationStore,
   ConnectionTargetStore,
   EnvironmentCacheStore,
+  EnvironmentOwnedDataCleanup,
 } from "./persistence.ts";
 import {
   type EnvironmentRpcFailure,
@@ -84,9 +85,11 @@ export interface EnvironmentRegistryService {
     | EnvironmentNotRegisteredError
     | PlatformEnvironmentRemovalError
   >;
-  readonly retryNow: (
-    environmentId: EnvironmentId,
-  ) => Effect.Effect<void, EnvironmentNotRegisteredError>;
+  readonly removeRelayEnvironments: () => Effect.Effect<
+    void,
+    ConnectionPersistenceError | ConnectionAttemptError | PlatformEnvironmentRemovalError
+  >;
+  readonly retryNow: (environmentId: EnvironmentId) => Effect.Effect<void>;
   readonly state: (
     environmentId: EnvironmentId,
   ) => Effect.Effect<SupervisorConnectionState, EnvironmentNotRegisteredError>;
@@ -159,6 +162,7 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
   const storage = yield* ConnectionTargetStore;
   const registrations = yield* ConnectionRegistrationStore;
   const cache = yield* EnvironmentCacheStore;
+  const ownedDataCleanup = yield* EnvironmentOwnedDataCleanup;
   const profiles = yield* ConnectionProfileStore;
   const connectivity = yield* Connectivity;
   const ssh = yield* SshEnvironmentGateway;
@@ -238,7 +242,7 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
   ) {
     const environmentId = entry.target.environmentId;
     const scope = yield* Scope.make();
-    const runtime = yield* runtimeFactory.make(entry.target).pipe(
+    const runtime = yield* runtimeFactory.make(entry).pipe(
       Scope.provide(scope),
       Effect.onError(() => Scope.close(scope, Exit.void)),
     );
@@ -378,10 +382,17 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
           );
         }
 
-        yield* Effect.all([registrations.remove(target), cache.clear(environmentId)], {
-          concurrency: "unbounded",
-          discard: true,
-        });
+        yield* Effect.all(
+          [
+            registrations.remove(target),
+            cache.clear(environmentId),
+            ownedDataCleanup.clear(environmentId),
+          ],
+          {
+            concurrency: "unbounded",
+            discard: true,
+          },
+        );
         yield* SubscriptionRef.update(entries, (current) => {
           const next = new Map(current);
           next.delete(environmentId);
@@ -391,15 +402,37 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
     );
   });
 
+  const removeRelayEnvironments = Effect.fn("EnvironmentRegistry.removeRelayEnvironments")(
+    function* () {
+      const relayEnvironmentIds = [...(yield* SubscriptionRef.get(entries)).values()]
+        .filter((entry) => entry.target._tag === "RelayConnectionTarget")
+        .map((entry) => entry.target.environmentId);
+
+      yield* Effect.forEach(
+        relayEnvironmentIds,
+        (environmentId) =>
+          remove(environmentId).pipe(
+            Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+          ),
+        {
+          concurrency: "unbounded",
+          discard: true,
+        },
+      );
+    },
+  );
+
   const retryNow = (environmentId: EnvironmentId) =>
-    withRuntime(environmentId, (runtime) => runtime.supervisor.retryNow);
+    withRuntime(environmentId, (runtime) => runtime.supervisor.retryNow).pipe(
+      Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+    );
   const state = (environmentId: EnvironmentId) =>
-    withRuntime(environmentId, (runtime) => SubscriptionRef.get(runtime.state));
+    withRuntime(environmentId, (runtime) => SubscriptionRef.get(runtime.supervisor.state));
   const stateChanges = (environmentId: EnvironmentId) =>
     Stream.unwrap(
       Effect.gen(function* () {
         const runtime = yield* acquireRuntime(environmentId);
-        return SubscriptionRef.changes(runtime.state);
+        return SubscriptionRef.changes(runtime.supervisor.state);
       }),
     );
   const rpcGenerationChanges = (environmentId: EnvironmentId) =>
@@ -411,7 +444,7 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
           SubscriptionRef.changes(runtime.supervisor.state),
         ).pipe(
           Stream.filterMap((state) =>
-            state._tag === "Ready" ? Result.succeed(state.generation) : Result.failVoid,
+            state.phase === "connected" ? Result.succeed(state.generation) : Result.failVoid,
           ),
           Stream.changes,
         );
@@ -483,6 +516,7 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
     register,
     registerPlatform,
     remove,
+    removeRelayEnvironments,
     retryNow,
     state,
     stateChanges,

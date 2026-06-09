@@ -33,7 +33,12 @@ function deriveProjectEmptyState(catalogState: RemoteCatalogState): {
     };
   }
 
-  if (catalogState.connectionState === "disconnected" && !catalogState.hasLoadedShellSnapshot) {
+  if (
+    (catalogState.connectionState === "available" ||
+      catalogState.connectionState === "offline" ||
+      catalogState.connectionState === "error") &&
+    !catalogState.hasLoadedShellSnapshot
+  ) {
     return {
       title: "Environment unavailable",
       detail:
