@@ -22,14 +22,19 @@ import {
 } from "./reviewState";
 
 export function useReviewSections(input: {
+  readonly enabled?: boolean;
   readonly environmentId?: EnvironmentId;
   readonly threadId?: ThreadId;
   readonly reviewCache: ReviewCacheForThread;
 }) {
   const { environmentId, reviewCache, threadId } = input;
+  const enabled = input.enabled ?? true;
   const selectedThread = useSelectedThreadDetail();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
-  const diffPreview = useReviewDiffPreview({ environmentId, cwd: selectedThreadCwd });
+  const diffPreview = useReviewDiffPreview({
+    environmentId: enabled ? environmentId : undefined,
+    cwd: enabled ? selectedThreadCwd : null,
+  });
   const { loadingTurnIds } = reviewCache.asyncState;
 
   useEffect(() => {
@@ -112,10 +117,11 @@ export function useReviewSections(input: {
     ? getReviewSectionIdForCheckpoint(activeCheckpoint)
     : null;
   const activeTurnDiff = useMobileCheckpointDiff({
-    environmentId: environmentId ?? null,
-    threadId: threadId ?? null,
-    fromTurnCount: activeCheckpoint ? Math.max(0, activeCheckpoint.checkpointTurnCount - 1) : null,
-    toTurnCount: activeCheckpoint?.checkpointTurnCount ?? null,
+    environmentId: enabled ? (environmentId ?? null) : null,
+    threadId: enabled ? (threadId ?? null) : null,
+    fromTurnCount:
+      enabled && activeCheckpoint ? Math.max(0, activeCheckpoint.checkpointTurnCount - 1) : null,
+    toTurnCount: enabled ? (activeCheckpoint?.checkpointTurnCount ?? null) : null,
     ignoreWhitespace: false,
   });
 
@@ -141,12 +147,15 @@ export function useReviewSections(input: {
   }, [activeTurnDiff.error, reviewCache.threadKey]);
 
   const refreshSelectedSection = useCallback(async () => {
+    if (!enabled) {
+      return;
+    }
     if (selectedSection?.kind === "turn") {
       activeTurnDiff.refresh();
       return;
     }
     diffPreview.refresh();
-  }, [activeTurnDiff, diffPreview, selectedSection?.kind]);
+  }, [activeTurnDiff, diffPreview, enabled, selectedSection?.kind]);
 
   const selectSection = useCallback(
     (sectionId: string) => {

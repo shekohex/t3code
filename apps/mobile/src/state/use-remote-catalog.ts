@@ -1,4 +1,4 @@
-import type { EnvironmentConnectionState } from "@t3tools/client-runtime";
+import type { EnvironmentConnectionPhase, NetworkStatus } from "@t3tools/client-runtime";
 
 import type { MobileWorkspaceState } from "../connection/mobileWorkspaceModel";
 import { useMobileWorkspace } from "../connection/useMobileWorkspace";
@@ -11,11 +11,11 @@ export interface RemoteCatalogState {
   readonly hasReadyEnvironment: boolean;
   readonly hasConnectingEnvironment: boolean;
   readonly connectingEnvironments: MobileWorkspaceState["connectingEnvironments"];
-  readonly connectionState: EnvironmentConnectionState;
+  readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
   readonly shellSnapshotError: string | null;
-  readonly isUsingCachedData: boolean;
   readonly latestCachedSnapshotReceivedAt: string | null;
+  readonly networkStatus: NetworkStatus;
 }
 
 export function useRemoteCatalog() {
@@ -31,8 +31,8 @@ export function useRemoteCatalog() {
     connectionState: workspace.state.connectionState,
     connectionError: workspace.state.connectionError,
     shellSnapshotError: workspace.state.shellSnapshotError,
-    isUsingCachedData: workspace.state.isUsingCachedData,
     latestCachedSnapshotReceivedAt: workspace.state.latestCachedSnapshotReceivedAt,
+    networkStatus: workspace.state.networkStatus,
   };
 
   return {

@@ -12,26 +12,9 @@ export interface EnvironmentSections {
   readonly availableCloudEnvironments: ReadonlyArray<RelayClientEnvironmentRecord>;
 }
 
-function isActiveOrFailedCloudConnection(environment: ConnectedEnvironmentSummary): boolean {
-  return (
-    environment.connectionError !== null ||
-    (environment.connectionState !== "idle" && environment.connectionState !== "disconnected")
-  );
-}
-
 export function splitEnvironmentSections(input: EnvironmentSectionsInput): EnvironmentSections {
-  const advertisedCloudEnvironmentIds = new Set(
-    (input.cloudEnvironments ?? []).map((environment) => environment.environmentId),
-  );
   const savedEnvironmentIds = new Set(
-    input.connectedEnvironments
-      .filter(
-        (environment) =>
-          !environment.isRelayManaged ||
-          isActiveOrFailedCloudConnection(environment) ||
-          !advertisedCloudEnvironmentIds.has(environment.environmentId),
-      )
-      .map((environment) => environment.environmentId),
+    input.connectedEnvironments.map((environment) => environment.environmentId),
   );
 
   return {
@@ -39,10 +22,7 @@ export function splitEnvironmentSections(input: EnvironmentSectionsInput): Envir
       (environment) => !environment.isRelayManaged,
     ),
     connectedCloudEnvironments: input.connectedEnvironments.filter(
-      (environment) =>
-        environment.isRelayManaged &&
-        (isActiveOrFailedCloudConnection(environment) ||
-          !advertisedCloudEnvironmentIds.has(environment.environmentId)),
+      (environment) => environment.isRelayManaged,
     ),
     availableCloudEnvironments: (input.cloudEnvironments ?? []).filter(
       (environment) => !savedEnvironmentIds.has(environment.environmentId),

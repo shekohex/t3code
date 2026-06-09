@@ -1,37 +1,87 @@
+import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as Tracer from "effect/Tracer";
 
+import type { ConnectionCatalogEntry } from "./catalog.ts";
 import { Connectivity } from "./connectivity.ts";
-import { ConnectionBroker } from "./broker.ts";
 import {
-  AVAILABLE_CONNECTION_STATE,
+  ConnectionDriver,
+  type ConnectionDriverProgress,
+  type EnvironmentConnectionLease,
+} from "./driver.ts";
+import {
   type ConnectionAttemptError,
   type ConnectionTarget,
   ConnectionTransientError,
+  type NetworkStatus,
   type PreparedConnection,
   type SupervisorConnectionState,
 } from "./model.ts";
-import { RpcSessionFactory, type RpcSession } from "./rpcSession.ts";
+import type { RpcSession } from "./rpcSession.ts";
 import { type ConnectionWakeup, ConnectionWakeups } from "./wakeups.ts";
 
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
-const CONNECTION_READY_TIMEOUT = "15 seconds";
+const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
+
+interface SupervisorIntent {
+  readonly desired: boolean;
+  readonly network: NetworkStatus;
+}
 
 type SupervisorSignal =
   | { readonly _tag: "ConnectRequested" }
   | { readonly _tag: "DisconnectRequested" }
   | { readonly _tag: "RetryRequested" }
-  | { readonly _tag: "ConnectivityChanged" }
+  | { readonly _tag: "NetworkChanged"; readonly network: NetworkStatus }
   | { readonly _tag: "Wakeup"; readonly reason: ConnectionWakeup };
+
+interface PendingRetryTrace {
+  readonly previousAttempt: Tracer.Span;
+  readonly failureCount: number;
+  readonly delayMs: number;
+  readonly reason: ConnectionAttemptError["reason"];
+}
+
+interface TracedAttemptFailure {
+  readonly error: ConnectionAttemptError;
+  readonly attemptSpan: Option.Option<Tracer.Span>;
+}
+
+type AttemptOutcome =
+  | {
+      readonly _tag: "Interrupted";
+      readonly established: boolean;
+    }
+  | {
+      readonly _tag: "Failure";
+      readonly established: boolean;
+      readonly failure: TracedAttemptFailure;
+    };
+
+type EstablishmentEvent =
+  | {
+      readonly _tag: "Completed";
+      readonly exit: Exit.Exit<
+        {
+          readonly attemptSpan: Option.Option<Tracer.Span>;
+          readonly lease: EnvironmentConnectionLease;
+        },
+        TracedAttemptFailure
+      >;
+    }
+  | { readonly _tag: "Interrupted" }
+  | { readonly _tag: "TimedOut" };
 
 export interface EnvironmentSupervisorOptions {
   readonly initiallyDesired?: boolean;
@@ -59,46 +109,135 @@ function annotateTarget(target: ConnectionTarget) {
   });
 }
 
+function availableState(intent: SupervisorIntent, generation: number): SupervisorConnectionState {
+  return {
+    desired: false,
+    network: intent.network,
+    phase: "available",
+    stage: null,
+    attempt: 0,
+    generation,
+    lastFailure: null,
+    retryAt: null,
+  };
+}
+
+function offlineState(
+  intent: SupervisorIntent,
+  generation: number,
+  attempt: number,
+  lastFailure: ConnectionAttemptError | null,
+): SupervisorConnectionState {
+  return {
+    desired: true,
+    network: intent.network,
+    phase: "offline",
+    stage: null,
+    attempt,
+    generation,
+    lastFailure,
+    retryAt: null,
+  };
+}
+
+function connectingState(
+  intent: SupervisorIntent,
+  generation: number,
+  attempt: number,
+  lastFailure: ConnectionAttemptError | null,
+  stage: SupervisorConnectionState["stage"] = "preparing",
+): SupervisorConnectionState {
+  return {
+    desired: true,
+    network: intent.network,
+    phase: "connecting",
+    stage,
+    attempt,
+    generation,
+    lastFailure,
+    retryAt: null,
+  };
+}
+
+function failureFromExit<A>(
+  target: ConnectionTarget,
+  exit: Exit.Exit<A, TracedAttemptFailure>,
+  established: boolean,
+): AttemptOutcome {
+  if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) {
+    return { _tag: "Interrupted", established };
+  }
+  const typedFailure = exit.cause.reasons.find(Cause.isFailReason);
+  if (typedFailure) {
+    return {
+      _tag: "Failure",
+      established,
+      failure: typedFailure.error,
+    };
+  }
+  return {
+    _tag: "Failure",
+    established,
+    failure: {
+      error: new ConnectionTransientError({
+        reason: "transport",
+        message: `${target.label} connection failed unexpectedly.`,
+      }),
+      attemptSpan: Option.none(),
+    },
+  };
+}
+
 export class EnvironmentSupervisor extends Context.Service<
   EnvironmentSupervisor,
   EnvironmentSupervisorService
 >()("@t3tools/client-runtime/connection/supervisor/EnvironmentSupervisor") {
   static layer(
-    target: ConnectionTarget,
+    entry: ConnectionCatalogEntry,
     options?: EnvironmentSupervisorOptions,
   ): Layer.Layer<
     EnvironmentSupervisor,
     never,
-    Connectivity | ConnectionBroker | RpcSessionFactory | ConnectionWakeups
+    Connectivity | ConnectionDriver | ConnectionWakeups
   > {
-    return Layer.effect(EnvironmentSupervisor, makeEnvironmentSupervisor(target, options));
+    return Layer.effect(EnvironmentSupervisor, makeEnvironmentSupervisor(entry, options));
   }
 }
 
 export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")(function* (
-  target: ConnectionTarget,
+  entry: ConnectionCatalogEntry,
   options?: EnvironmentSupervisorOptions,
 ): Effect.fn.Return<
   EnvironmentSupervisorService,
   never,
-  Connectivity | ConnectionBroker | RpcSessionFactory | Scope.Scope | ConnectionWakeups
+  Connectivity | ConnectionDriver | Scope.Scope | ConnectionWakeups
 > {
+  const target = entry.target;
   yield* annotateTarget(target);
 
   const connectivity = yield* Connectivity;
+  const driver = yield* ConnectionDriver;
   const wakeups = yield* ConnectionWakeups;
-  const observedNetworkStatus = yield* Ref.make(yield* connectivity.status);
-  const broker = yield* ConnectionBroker;
-  const sessionFactory = yield* RpcSessionFactory;
-  const state = yield* SubscriptionRef.make<SupervisorConnectionState>(AVAILABLE_CONNECTION_STATE);
+  const initialIntent: SupervisorIntent = {
+    desired: options?.initiallyDesired ?? false,
+    network: yield* connectivity.status,
+  };
+  const intent = yield* Ref.make(initialIntent);
+  const signals = yield* Queue.unbounded<SupervisorSignal>();
+  const state = yield* SubscriptionRef.make<SupervisorConnectionState>(
+    !initialIntent.desired
+      ? availableState(initialIntent, 0)
+      : initialIntent.network === "offline"
+        ? offlineState(initialIntent, 0, 0, null)
+        : connectingState(initialIntent, 0, 1, null),
+  );
   const session = yield* SubscriptionRef.make<Option.Option<RpcSession>>(Option.none());
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none());
-  const desired = yield* Ref.make(options?.initiallyDesired ?? false);
-  const signals = yield* Queue.unbounded<SupervisorSignal>();
 
-  const signal = Effect.fn("EnvironmentSupervisor.signal")(function* (next: SupervisorSignal) {
-    yield* Queue.offer(signals, next);
-  });
+  const clearLease = Effect.all(
+    [SubscriptionRef.set(session, Option.none()), SubscriptionRef.set(prepared, Option.none())],
+    { discard: true },
+  );
 
   const setState = Effect.fn("EnvironmentSupervisor.setState")(function* (
     next: SupervisorConnectionState,
@@ -106,160 +245,349 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
     yield* SubscriptionRef.set(state, next);
   });
 
-  const waitForSignal = Queue.take(signals);
-
-  const drainSignals = Effect.fn("EnvironmentSupervisor.drainSignals")(function* () {
-    while (Option.isSome(yield* Queue.poll(signals))) {
-      // Drain stale wakeups before beginning the next connection attempt.
-    }
+  const signal = Effect.fn("EnvironmentSupervisor.signal")(function* (next: SupervisorSignal) {
+    yield* Queue.offer(signals, next);
   });
 
-  const waitForAttemptInterrupt = Effect.fn("EnvironmentSupervisor.waitForAttemptInterrupt")(
-    function* () {
-      for (;;) {
-        const next = yield* waitForSignal;
-        switch (next._tag) {
-          case "DisconnectRequested":
-          case "RetryRequested":
-            return;
-          case "ConnectivityChanged":
-            if ((yield* connectivity.status) === "offline") {
-              return;
-            }
-            break;
-          case "Wakeup":
-            const activeSession = yield* SubscriptionRef.get(session);
-            if (Option.isNone(activeSession)) {
-              return;
-            }
+  const reportProgress = Effect.fn("EnvironmentSupervisor.reportProgress")(function* (
+    attempt: number,
+    generation: number,
+    lastFailure: ConnectionAttemptError | null,
+    progress: ConnectionDriverProgress,
+  ) {
+    if ("prepared" in progress) {
+      yield* SubscriptionRef.set(prepared, Option.some(progress.prepared));
+    }
+    yield* setState(
+      connectingState(yield* Ref.get(intent), generation, attempt, lastFailure, progress.stage),
+    );
+  });
 
-            if (next.reason === "credentials-changed") {
-              break;
-            }
+  const establishConnection = Effect.fnUntraced(function* (
+    attempt: number,
+    generation: number,
+    lastFailure: ConnectionAttemptError | null,
+  ) {
+    return yield* driver.connect(entry, (progress) =>
+      reportProgress(attempt, generation, lastFailure, progress),
+    );
+  });
 
-            if (yield* activeSession.value.probe.pipe(Effect.isFailure)) {
-              return;
-            }
-            break;
-          case "ConnectRequested":
-            break;
-        }
-      }
-    },
-  );
-
-  const waitWhileUnavailable = Effect.fn("EnvironmentSupervisor.waitWhileUnavailable")(
-    function* () {
-      for (;;) {
-        if (!(yield* Ref.get(desired))) {
-          yield* setState(AVAILABLE_CONNECTION_STATE);
-          yield* waitForSignal;
-          continue;
-        }
-
-        if ((yield* connectivity.status) === "offline") {
-          yield* setState({ _tag: "Offline" });
-          yield* waitForSignal;
-          continue;
-        }
-
-        return;
-      }
-    },
-  );
-
-  const runConnectionAttempt = Effect.fn("EnvironmentSupervisor.runConnectionAttempt")(
-    function* (attempt: number, generation: number) {
-      yield* SubscriptionRef.set(prepared, Option.none());
-      yield* setState({ _tag: "Resolving", attempt });
-      const nextPrepared = yield* broker.prepare(target);
-      yield* SubscriptionRef.set(prepared, Option.some(nextPrepared));
-      yield* setState({ _tag: "Connecting", attempt });
-      const activeSession = yield* sessionFactory.connect(nextPrepared);
-      yield* setState({ _tag: "Synchronizing", attempt });
-      yield* activeSession.ready.pipe(
-        Effect.timeoutOption(CONNECTION_READY_TIMEOUT),
-        Effect.flatMap(
-          Option.match({
-            onNone: () =>
-              Effect.fail(
-                new ConnectionTransientError({
-                  reason: "timeout",
-                  message: `${target.label} did not respond during connection setup.`,
-                }),
-              ),
-            onSome: Effect.succeed,
+  const traceRelayEstablishment = (
+    effect: Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, Scope.Scope>,
+    attempt: number,
+    generation: number,
+    pendingRetry: Option.Option<PendingRetryTrace>,
+  ) => {
+    const traced = Effect.gen(function* () {
+      const attemptSpan = yield* Effect.currentSpan.pipe(Effect.orDie);
+      yield* annotateTarget(target);
+      yield* Effect.annotateCurrentSpan({
+        "connection.attempt": attempt,
+        "connection.generation": generation,
+        "connection.retry.failure_count": Option.match(pendingRetry, {
+          onNone: () => 0,
+          onSome: (retry) => retry.failureCount,
+        }),
+      });
+      const lease = yield* effect.pipe(
+        Effect.mapError(
+          (error): TracedAttemptFailure => ({
+            error,
+            attemptSpan: Option.some(attemptSpan),
           }),
         ),
       );
-      yield* SubscriptionRef.set(session, Option.some(activeSession));
-      yield* setState({ _tag: "Ready", attempt, generation });
+      return { attemptSpan: Option.some(attemptSpan), lease };
+    }).pipe(Effect.withSpan("relay.connection.attempt", { root: true }));
 
-      return yield* activeSession.closed;
-    },
-    Effect.ensuring(
-      Effect.all(
-        [SubscriptionRef.set(session, Option.none()), SubscriptionRef.set(prepared, Option.none())],
-        { discard: true },
+    return Option.match(pendingRetry, {
+      onNone: () => traced,
+      onSome: (retry) =>
+        traced.pipe(
+          Effect.linkSpans(retry.previousAttempt, {
+            "connection.retry.delay_ms": retry.delayMs,
+            "connection.retry.reason": retry.reason,
+          }),
+        ),
+    }).pipe(withRelayClientTracing);
+  };
+
+  const establishTracedConnection = Effect.fnUntraced(function* (
+    attempt: number,
+    generation: number,
+    lastFailure: ConnectionAttemptError | null,
+    pendingRetry: Option.Option<PendingRetryTrace>,
+  ) {
+    if (target._tag === "RelayConnectionTarget") {
+      return yield* traceRelayEstablishment(
+        establishConnection(attempt, generation, lastFailure),
+        attempt,
+        generation,
+        pendingRetry,
+      );
+    }
+    return yield* establishConnection(attempt, generation, lastFailure).pipe(
+      Effect.map((lease) => ({
+        attemptSpan: Option.none<Tracer.Span>(),
+        lease,
+      })),
+      Effect.mapError(
+        (error): TracedAttemptFailure => ({
+          error,
+          attemptSpan: Option.none(),
+        }),
       ),
-    ),
-  );
+    );
+  });
 
-  const run = Effect.fn("EnvironmentSupervisor.run")(function* () {
-    yield* annotateTarget(target);
+  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* () {
+    for (;;) {
+      const next = yield* Queue.take(signals);
+      switch (next._tag) {
+        case "DisconnectRequested":
+        case "RetryRequested":
+          return;
+        case "NetworkChanged":
+          if (next.network === "offline") {
+            return;
+          }
+          break;
+        case "ConnectRequested":
+        case "Wakeup":
+          break;
+      }
+    }
+  });
+
+  const monitorConnectedLease = Effect.fnUntraced(function* (lease: EnvironmentConnectionLease) {
+    for (;;) {
+      const next = yield* Queue.take(signals);
+      switch (next._tag) {
+        case "DisconnectRequested":
+        case "RetryRequested":
+          return;
+        case "NetworkChanged":
+          if (next.network === "offline") {
+            return;
+          }
+          break;
+        case "Wakeup":
+          if (next.reason === "application-active") {
+            yield* lease.session.probe;
+          }
+          break;
+        case "ConnectRequested":
+          break;
+      }
+    }
+  });
+
+  const runAttempt = Effect.fnUntraced(function* (
+    attempt: number,
+    generation: number,
+    lastFailure: ConnectionAttemptError | null,
+    pendingRetry: Option.Option<PendingRetryTrace>,
+  ) {
+    yield* SubscriptionRef.set(prepared, Option.none());
+    const establishment = yield* Effect.raceAllFirst([
+      establishTracedConnection(attempt, generation, lastFailure, pendingRetry).pipe(
+        Effect.exit,
+        Effect.map(
+          (exit): EstablishmentEvent => ({
+            _tag: "Completed",
+            exit,
+          }),
+        ),
+      ),
+      waitForEstablishmentInterrupt().pipe(Effect.as<EstablishmentEvent>({ _tag: "Interrupted" })),
+      Effect.sleep(CONNECTION_ESTABLISHMENT_TIMEOUT).pipe(
+        Effect.as<EstablishmentEvent>({ _tag: "TimedOut" }),
+      ),
+    ]);
+
+    if (establishment._tag === "Interrupted") {
+      return { _tag: "Interrupted", established: false } satisfies AttemptOutcome;
+    }
+    if (establishment._tag === "TimedOut") {
+      return {
+        _tag: "Failure",
+        established: false,
+        failure: {
+          error: new ConnectionTransientError({
+            reason: "timeout",
+            message: `${target.label} did not respond during connection setup.`,
+          }),
+          attemptSpan: Option.none(),
+        },
+      } satisfies AttemptOutcome;
+    }
+    if (Exit.isFailure(establishment.exit)) {
+      const isUnexpectedDefect =
+        !Cause.hasInterruptsOnly(establishment.exit.cause) &&
+        !establishment.exit.cause.reasons.some(Cause.isFailReason);
+      const outcome = failureFromExit(target, establishment.exit, false);
+      if (isUnexpectedDefect) {
+        yield* Effect.logError("Connection attempt failed with an unexpected defect.").pipe(
+          Effect.annotateLogs({
+            "environment.id": target.environmentId,
+            "environment.label": target.label,
+            cause: Cause.pretty(establishment.exit.cause),
+          }),
+        );
+      }
+      return outcome;
+    }
+
+    const active = establishment.exit.value;
+    const currentIntent = yield* Ref.get(intent);
+    if (!currentIntent.desired || currentIntent.network === "offline") {
+      return { _tag: "Interrupted", established: false } satisfies AttemptOutcome;
+    }
+
+    yield* SubscriptionRef.set(prepared, Option.some(active.lease.prepared));
+    yield* SubscriptionRef.set(session, Option.some(active.lease.session));
+    yield* setState({
+      desired: true,
+      network: currentIntent.network,
+      phase: "connected",
+      stage: null,
+      attempt,
+      generation,
+      lastFailure: null,
+      retryAt: null,
+    });
+
+    const connectedExit = yield* Effect.raceFirst(
+      active.lease.session.closed.pipe(
+        Effect.mapError(
+          (error): TracedAttemptFailure => ({
+            error,
+            attemptSpan: active.attemptSpan,
+          }),
+        ),
+      ),
+      monitorConnectedLease(active.lease).pipe(
+        Effect.mapError(
+          (error): TracedAttemptFailure => ({
+            error,
+            attemptSpan: active.attemptSpan,
+          }),
+        ),
+      ),
+    ).pipe(Effect.exit);
+    return failureFromExit(target, connectedExit, true);
+  }, Effect.ensuring(clearLease));
+
+  const waitForRetrySignal = Effect.fnUntraced(function* (delayMs: number) {
+    return yield* Effect.raceFirst(
+      Effect.sleep(delayMs),
+      Effect.gen(function* () {
+        for (;;) {
+          const next = yield* Queue.take(signals);
+          switch (next._tag) {
+            case "ConnectRequested":
+            case "DisconnectRequested":
+            case "RetryRequested":
+            case "NetworkChanged":
+            case "Wakeup":
+              return;
+          }
+        }
+      }),
+    );
+  });
+
+  const waitForSignal = Queue.take(signals);
+
+  const run = Effect.fnUntraced(function* () {
     let failureCount = 0;
     let generation = 0;
+    let latestFailure: ConnectionAttemptError | null = null;
+    let pendingRetry = Option.none<PendingRetryTrace>();
 
     for (;;) {
-      yield* waitWhileUnavailable();
-      yield* drainSignals();
-      yield* waitWhileUnavailable();
-
-      const attempt = failureCount + 1;
-      const result = yield* Effect.raceFirst(
-        Effect.scoped(runConnectionAttempt(attempt, generation + 1)),
-        waitForAttemptInterrupt(),
-      ).pipe(Effect.result);
-
-      const currentState = yield* SubscriptionRef.get(state);
-      if (currentState._tag === "Ready") {
-        generation = currentState.generation;
+      const currentIntent = yield* Ref.get(intent);
+      if (!currentIntent.desired) {
         failureCount = 0;
+        latestFailure = null;
+        pendingRetry = Option.none();
+        yield* clearLease;
+        yield* setState(availableState(currentIntent, generation));
+        yield* waitForSignal;
+        continue;
       }
-
-      if (Result.isSuccess(result)) {
+      if (currentIntent.network === "offline") {
+        yield* clearLease;
+        yield* setState(offlineState(currentIntent, generation, failureCount + 1, latestFailure));
+        yield* waitForSignal;
         continue;
       }
 
-      const error: ConnectionAttemptError = result.failure;
+      const attempt = failureCount + 1;
+      const nextGeneration = generation + 1;
+      const outcome: AttemptOutcome = yield* Effect.scoped(
+        runAttempt(attempt, nextGeneration, latestFailure, pendingRetry),
+      );
+      if (outcome.established) {
+        generation = nextGeneration;
+        failureCount = 0;
+        latestFailure = null;
+        pendingRetry = Option.none();
+      }
+      if (outcome._tag === "Interrupted") {
+        continue;
+      }
+
+      const attemptSpan: Option.Option<Tracer.Span> = outcome.failure.attemptSpan;
+      const error: ConnectionAttemptError = outcome.failure.error;
+      latestFailure = error;
       if (error._tag === "ConnectionBlockedError") {
-        yield* setState({ _tag: "Blocked", error });
+        const blockedIntent = yield* Ref.get(intent);
+        yield* setState({
+          desired: blockedIntent.desired,
+          network: blockedIntent.network,
+          phase: "blocked",
+          stage: null,
+          attempt,
+          generation,
+          lastFailure: error,
+          retryAt: null,
+        });
         yield* waitForSignal;
         continue;
       }
 
       failureCount += 1;
       const delayMs = retryDelayMs(failureCount - 1);
-      const now = yield* Clock.currentTimeMillis;
+      pendingRetry = Option.map(attemptSpan, (previousAttempt) => ({
+        previousAttempt,
+        failureCount,
+        delayMs,
+        reason: error.reason,
+      }));
+      const failedIntent = yield* Ref.get(intent);
       yield* setState({
-        _tag: "RetryWaiting",
+        desired: failedIntent.desired,
+        network: failedIntent.network,
+        phase: "backoff",
+        stage: null,
         attempt,
-        retryAt: now + delayMs,
-        error,
+        generation,
+        lastFailure: error,
+        retryAt: (yield* Clock.currentTimeMillis) + delayMs,
       });
-
-      yield* Effect.raceFirst(Effect.sleep(delayMs), waitForSignal);
+      yield* waitForRetrySignal(delayMs);
     }
   });
 
   yield* connectivity.changes.pipe(
-    Stream.changes,
-    Stream.runForEach((networkStatus) =>
-      Ref.getAndSet(observedNetworkStatus, networkStatus).pipe(
-        Effect.flatMap((previousNetworkStatus) =>
-          previousNetworkStatus === networkStatus
-            ? Effect.void
-            : signal({ _tag: "ConnectivityChanged" }),
+    Stream.runForEach((network) =>
+      Ref.modify(intent, (current) =>
+        current.network === network ? [false, current] : ([true, { ...current, network }] as const),
+      ).pipe(
+        Effect.flatMap((changed) =>
+          changed ? signal({ _tag: "NetworkChanged", network }) : Effect.void,
         ),
       ),
     ),
@@ -271,21 +599,27 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
   );
   yield* run().pipe(Effect.forkScoped);
 
-  const connect = Effect.gen(function* () {
-    yield* Ref.set(desired, true);
-    yield* signal({ _tag: "ConnectRequested" });
-  }).pipe(Effect.withSpan("EnvironmentSupervisor.connect"));
-
-  const disconnect = Effect.gen(function* () {
-    yield* Ref.set(desired, false);
-    yield* signal({ _tag: "DisconnectRequested" });
-  }).pipe(Effect.withSpan("EnvironmentSupervisor.disconnect"));
-
-  const retryNow = signal({ _tag: "RetryRequested" });
-
-  yield* Effect.addFinalizer(() =>
-    Queue.shutdown(signals).pipe(Effect.andThen(SubscriptionRef.set(session, Option.none()))),
+  const connect = Ref.update(intent, (current) => ({
+    ...current,
+    desired: true,
+  })).pipe(
+    Effect.andThen(signal({ _tag: "ConnectRequested" })),
+    Effect.withSpan("EnvironmentSupervisor.connect"),
   );
+
+  const disconnect = Ref.update(intent, (current) => ({
+    ...current,
+    desired: false,
+  })).pipe(
+    Effect.andThen(signal({ _tag: "DisconnectRequested" })),
+    Effect.withSpan("EnvironmentSupervisor.disconnect"),
+  );
+
+  const retryNow = signal({ _tag: "RetryRequested" }).pipe(
+    Effect.withSpan("EnvironmentSupervisor.retryNow"),
+  );
+
+  yield* Effect.addFinalizer(() => Queue.shutdown(signals).pipe(Effect.andThen(clearLease)));
 
   return EnvironmentSupervisor.of({
     target,

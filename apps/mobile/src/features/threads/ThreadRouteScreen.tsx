@@ -23,7 +23,7 @@ import {
   useRemoteEnvironmentState,
 } from "../../state/use-remote-environment-registry";
 import { useKnownTerminalSessions } from "../../state/use-terminal-session";
-import { useSelectedThreadDetail } from "../../state/use-thread-detail";
+import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
 import {
@@ -45,6 +45,7 @@ import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-s
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
+import { projectThreadContentPresentation } from "./threadContentPresentation";
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
@@ -65,7 +66,8 @@ export function ThreadRouteScreen() {
   const { projects, threads } = useRemoteCatalog();
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
-  const selectedThreadDetail = useSelectedThreadDetail();
+  const selectedThreadDetailState = useSelectedThreadDetailState();
+  const selectedThreadDetail = selectedThreadDetailState.data;
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const composer = useThreadComposerState();
   const gitState = useSelectedThreadGitState();
@@ -87,7 +89,7 @@ export function ThreadRouteScreen() {
     ? (environmentStateById[environmentId] ?? null)
     : null;
   const routeConnectionState =
-    routeEnvironmentRuntime?.connectionState ?? (environmentId ? "idle" : connectionState);
+    routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
 
   /* ─── Native header theming ──────────────────────────────────────── */
@@ -272,11 +274,13 @@ export function ThreadRouteScreen() {
     );
   }
 
-  if (!selectedThreadDetail) {
-    return <OpeningThreadLoadingScreen />;
-  }
-
   const selectedThreadKey = scopedThreadKey(selectedThread.environmentId, selectedThread.id);
+  const contentPresentation = projectThreadContentPresentation({
+    hasDetail: selectedThreadDetail !== null,
+    detailError: selectedThreadDetailState.error,
+    detailDeleted: selectedThreadDetailState.isDeleted,
+    connectionState: routeConnectionState,
+  });
   const serverConfig =
     routeEnvironmentRuntime?.serverConfig ??
     pipe(
@@ -320,7 +324,7 @@ export function ThreadRouteScreen() {
                   letterSpacing: -0.4,
                 }}
               >
-                {selectedThreadDetail.title}
+                {selectedThread.title}
               </RNText>
               <RNText
                 numberOfLines={1}
@@ -340,7 +344,7 @@ export function ThreadRouteScreen() {
       />
 
       <ThreadGitControls
-        currentBranch={selectedThreadDetail.branch}
+        currentBranch={selectedThread.branch}
         gitStatus={gitStatus.data}
         gitOperationLabel={gitState.gitOperationLabel}
         canOpenTerminal={Boolean(selectedThreadProject?.workspaceRoot)}
@@ -357,7 +361,8 @@ export function ThreadRouteScreen() {
 
       <View className="flex-1 bg-screen">
         <ThreadDetailScreen
-          selectedThread={selectedThreadDetail}
+          selectedThread={selectedThread}
+          contentPresentation={contentPresentation}
           screenTone={connectionTone(routeConnectionState)}
           connectionError={routeConnectionError}
           environmentLabel={selectedEnvironmentConnection?.environmentLabel ?? null}

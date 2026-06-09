@@ -298,16 +298,27 @@ describe("EnvironmentThreads", () => {
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_THREAD });
       yield* SubscriptionRef.set(harness.supervisorState, {
-        _tag: "Synchronizing",
+        desired: true,
+        network: "online",
+        phase: "connecting",
+        stage: "synchronizing",
         attempt: 1,
+        generation: 0,
+        lastFailure: null,
+        retryAt: null,
       });
       yield* Queue.offer(harness.inputs, snapshot(BASE_THREAD));
       yield* awaitThreadState(harness.observed, (value) => value.status === "live");
 
       yield* SubscriptionRef.set(harness.supervisorState, {
-        _tag: "Ready",
+        desired: true,
+        network: "online",
+        phase: "connected",
+        stage: null,
         attempt: 1,
         generation: 1,
+        lastFailure: null,
+        retryAt: null,
       });
       for (let index = 0; index < 10; index += 1) {
         yield* Effect.yieldNow;

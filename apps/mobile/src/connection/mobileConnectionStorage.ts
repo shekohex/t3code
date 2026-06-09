@@ -274,7 +274,7 @@ export const mobileConnectionStorageLayer = Layer.effectContext(
         catalog.read.pipe(
           Effect.map((document) =>
             Option.fromUndefinedOr(
-              document.profiles.find((profile) => profile.connectionId === connectionId),
+              document.profiles.find((candidate) => candidate.connectionId === connectionId),
             ),
           ),
         ),

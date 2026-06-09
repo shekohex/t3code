@@ -22,6 +22,8 @@ import {
   TerminalOpenInput,
 } from "@t3tools/contracts";
 import {
+  connectionStatusText,
+  type EnvironmentConnectionPresentation,
   parseScopedThreadKey,
   scopedThreadKey,
   scopeProjectRef,
@@ -231,7 +233,7 @@ const TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR = [
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  readonly connectionState: "connecting" | "reconnecting" | "disconnected" | "error";
+  readonly connection: EnvironmentConnectionPresentation;
 };
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
@@ -1168,32 +1170,13 @@ export default function ChatView(props: ChatViewProps) {
     return {
       environmentId: activeEnvironment.environmentId,
       label: activeEnvironmentUnavailableLabel,
-      connectionState:
-        activeEnvironmentConnectionPhase === "connecting" ||
-        activeEnvironmentConnectionPhase === "reconnecting" ||
-        activeEnvironmentConnectionPhase === "error"
-          ? activeEnvironmentConnectionPhase
-          : "disconnected",
+      connection: activeEnvironment.connection,
     };
-  }, [
-    activeEnvironment,
-    activeEnvironmentConnectionPhase,
-    activeEnvironmentUnavailable,
-    activeEnvironmentUnavailableLabel,
-  ]);
-  const [reconnectingEnvironmentId, setReconnectingEnvironmentId] = useState<EnvironmentId | null>(
-    null,
-  );
+  }, [activeEnvironment, activeEnvironmentUnavailable, activeEnvironmentUnavailableLabel]);
   const handleReconnectActiveEnvironment = useCallback(
-    async (environmentId: EnvironmentId, label: string) => {
-      setReconnectingEnvironmentId(environmentId);
+    async (environmentId: EnvironmentId) => {
       try {
         await retryEnvironment(environmentId);
-        toastManager.add({
-          type: "success",
-          title: "Environment reconnected",
-          description: `${label} is ready.`,
-        });
       } catch (error) {
         toastManager.add(
           stackedThreadToast({
@@ -1202,8 +1185,6 @@ export default function ChatView(props: ChatViewProps) {
             description: error instanceof Error ? error.message : "Failed to reconnect.",
           }),
         );
-      } finally {
-        setReconnectingEnvironmentId(null);
       }
     },
     [retryEnvironment],
@@ -1410,43 +1391,29 @@ export default function ChatView(props: ChatViewProps) {
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
     if (activeEnvironmentUnavailableState) {
+      const connection = activeEnvironmentUnavailableState.connection;
+      const isReconnecting =
+        connection.phase === "connecting" || connection.phase === "reconnecting";
       items.push({
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
-        variant:
-          activeEnvironmentUnavailableState.connectionState === "error" ? "error" : "warning",
+        variant: connection.phase === "error" ? "error" : "warning",
         icon: <WifiOffIcon />,
-        title: (
-          <>
-            {activeEnvironmentUnavailableState.label} is{" "}
-            {activeEnvironmentUnavailableState.connectionState === "connecting"
-              ? "connecting"
-              : activeEnvironmentUnavailableState.connectionState === "reconnecting"
-                ? "reconnecting"
-                : "disconnected"}
-          </>
-        ),
-        description: "Reconnect this environment before sending messages or running actions.",
+        title: `${activeEnvironmentUnavailableState.label}: ${connectionStatusText(connection)}`,
+        description:
+          connection.error ??
+          "Reconnect this environment before sending messages or running actions.",
         actions: (
           <>
             <Button
               size="xs"
-              disabled={
-                activeEnvironmentUnavailableState.connectionState === "connecting" ||
-                activeEnvironmentUnavailableState.connectionState === "reconnecting" ||
-                reconnectingEnvironmentId === activeEnvironmentUnavailableState.environmentId
-              }
+              disabled={isReconnecting}
               onClick={() =>
                 void handleReconnectActiveEnvironment(
                   activeEnvironmentUnavailableState.environmentId,
-                  activeEnvironmentUnavailableState.label,
                 )
               }
             >
-              {activeEnvironmentUnavailableState.connectionState === "connecting" ||
-              activeEnvironmentUnavailableState.connectionState === "reconnecting" ||
-              reconnectingEnvironmentId === activeEnvironmentUnavailableState.environmentId
-                ? "Reconnecting..."
-                : "Reconnect"}
+              {isReconnecting ? "Reconnecting..." : "Reconnect"}
             </Button>
             <Button
               size="xs"
@@ -1483,7 +1450,6 @@ export default function ChatView(props: ChatViewProps) {
     activeEnvironmentUnavailableState,
     handleReconnectActiveEnvironment,
     navigate,
-    reconnectingEnvironmentId,
     showVersionMismatchBanner,
     versionMismatch,
     versionMismatchDismissKey,

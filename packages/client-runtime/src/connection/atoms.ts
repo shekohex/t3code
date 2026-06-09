@@ -314,6 +314,9 @@ export function createEnvironmentConnectionAtoms<R, E>(
   const remove = runtime.fn((environmentId: EnvironmentId) =>
     EnvironmentRegistry.pipe(Effect.flatMap((registry) => registry.remove(environmentId))),
   );
+  const removeRelayEnvironments = runtime.fn(() =>
+    EnvironmentRegistry.pipe(Effect.flatMap((registry) => registry.removeRelayEnvironments())),
+  );
   const retryNow = runtime.fn((environmentId: EnvironmentId) =>
     EnvironmentRegistry.pipe(Effect.flatMap((registry) => registry.retryNow(environmentId))),
   );
@@ -323,26 +326,34 @@ export function createEnvironmentConnectionAtoms<R, E>(
   const networkStatusValueAtom = Atom.make((get) =>
     Option.getOrElse(AsyncResult.value(get(networkStatusAtom)), () => "unknown" as const),
   ).pipe(Atom.withLabel("environment-network-status-value"));
-  const presentationsAtom = Atom.make((get) => {
-    const catalog = get(catalogValueAtom);
-    const presentations = new Map<EnvironmentIdType, EnvironmentPresentation>();
-    for (const [environmentId, entry] of catalog.entries) {
+  const presentationAtom = Atom.family((environmentId: EnvironmentIdType) =>
+    Atom.make((get) => {
+      const entry = get(catalogValueAtom).entries.get(environmentId);
+      if (entry === undefined) {
+        return null;
+      }
       const state = Option.getOrElse(
         AsyncResult.value(get(stateAtom(environmentId))),
         () => AVAILABLE_CONNECTION_STATE,
       );
-      const shellState = Option.getOrElse(
-        AsyncResult.value(get(shellStateAtom(environmentId))),
-        () => EMPTY_SHELL_STATE,
-      );
       const config = Option.getOrElse(AsyncResult.value(get(configAtom(environmentId))), () =>
         Option.none(),
       );
-      presentations.set(environmentId, {
+      return {
         entry,
-        connection: presentEnvironmentConnection(state, shellState),
+        connection: presentEnvironmentConnection(state),
         serverConfig: Option.getOrNull(config),
-      });
+      } satisfies EnvironmentPresentation;
+    }).pipe(Atom.withLabel(`environment-presentation:${environmentId}`)),
+  );
+  const presentationsAtom = Atom.make((get) => {
+    const catalog = get(catalogValueAtom);
+    const presentations = new Map<EnvironmentIdType, EnvironmentPresentation>();
+    for (const environmentId of catalog.entries.keys()) {
+      const presentation = get(presentationAtom(environmentId));
+      if (presentation !== null) {
+        presentations.set(environmentId, presentation);
+      }
     }
     return presentations as ReadonlyMap<EnvironmentIdType, EnvironmentPresentation>;
   }).pipe(Atom.withLabel("environment-presentations"));
@@ -369,6 +380,7 @@ export function createEnvironmentConnectionAtoms<R, E>(
     catalogValueAtom,
     networkStatusAtom,
     networkStatusValueAtom,
+    presentationAtom,
     presentationsAtom,
     stateAtom,
     preparedConnectionAtom,
@@ -380,6 +392,7 @@ export function createEnvironmentConnectionAtoms<R, E>(
     threadStateAtom,
     register,
     remove,
+    removeRelayEnvironments,
     retryNow,
   };
 }

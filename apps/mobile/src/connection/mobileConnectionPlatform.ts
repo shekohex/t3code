@@ -5,6 +5,7 @@ import {
   ConnectionTransientError,
   ConnectionWakeups,
   Connectivity,
+  EnvironmentOwnedDataCleanup,
   managedRelaySessionAtom,
   PlatformConnectionSource,
   RelayDeviceIdentity,
@@ -23,6 +24,8 @@ import { AppState } from "react-native";
 import { mobileAuthClientMetadata } from "../lib/authClientMetadata";
 import { loadOrCreateAgentAwarenessDeviceId } from "../lib/storage";
 import { appAtomRegistry } from "../state/atom-registry";
+import { clearThreadOutboxEnvironment } from "../state/thread-outbox";
+import { clearComposerDraftsEnvironment } from "../state/use-composer-drafts";
 import { mobileConnectionStorageLayer } from "./mobileConnectionStorage";
 
 function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "online" {
@@ -171,10 +174,32 @@ const mobilePlatformConnectionSourceLayer = Layer.succeed(
   }),
 );
 
+const mobileEnvironmentOwnedDataCleanupLayer = Layer.succeed(
+  EnvironmentOwnedDataCleanup,
+  EnvironmentOwnedDataCleanup.of({
+    clear: (environmentId) =>
+      Effect.all(
+        [
+          Effect.promise(() => clearThreadOutboxEnvironment(environmentId)),
+          Effect.promise(() => clearComposerDraftsEnvironment(environmentId)),
+        ],
+        { concurrency: "unbounded", discard: true },
+      ).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not clear mobile environment-owned data.", {
+            environmentId,
+            cause,
+          }),
+        ),
+      ),
+  }),
+);
+
 export const mobileConnectionPlatformLayer = Layer.mergeAll(
   mobileConnectionStorageLayer,
   mobileConnectivityLayer,
   mobileWakeupsLayer,
   mobileCapabilitiesLayer,
   mobilePlatformConnectionSourceLayer,
+  mobileEnvironmentOwnedDataCleanupLayer,
 );

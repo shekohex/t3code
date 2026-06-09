@@ -3,7 +3,6 @@ import * as Option from "effect/Option";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import type { NetworkStatus, SupervisorConnectionState } from "./model.ts";
-import type { EnvironmentShellState } from "./runtime.ts";
 
 export type EnvironmentConnectionPhase =
   | "available"
@@ -28,46 +27,58 @@ export interface EnvironmentPresentation {
 export function presentConnectionState(
   state: SupervisorConnectionState,
 ): EnvironmentConnectionPresentation {
-  switch (state._tag) {
-    case "Available":
+  switch (state.phase) {
+    case "available":
       return { phase: "available", error: null, traceId: null };
-    case "Offline":
+    case "offline":
       return { phase: "offline", error: null, traceId: null };
-    case "Resolving":
-    case "Connecting":
-    case "Synchronizing":
+    case "connecting":
       return {
-        phase: state.attempt <= 1 ? "connecting" : "reconnecting",
-        error: null,
-        traceId: null,
+        phase: state.attempt <= 1 && state.lastFailure === null ? "connecting" : "reconnecting",
+        error: state.lastFailure?.message ?? null,
+        traceId: state.lastFailure?.traceId ?? null,
       };
-    case "Ready":
+    case "connected":
       return { phase: "connected", error: null, traceId: null };
-    case "RetryWaiting":
-    case "Blocked":
+    case "backoff":
+      return {
+        phase: "reconnecting",
+        error: state.lastFailure?.message ?? null,
+        traceId: state.lastFailure?.traceId ?? null,
+      };
+    case "blocked":
       return {
         phase: "error",
-        error: state.error.message,
-        traceId: state.error.traceId ?? null,
+        error: state.lastFailure?.message ?? null,
+        traceId: state.lastFailure?.traceId ?? null,
       };
+  }
+}
+
+export function connectionStatusText(connection: EnvironmentConnectionPresentation): string {
+  switch (connection.phase) {
+    case "available":
+      return "Available";
+    case "offline":
+      return "Offline";
+    case "connecting":
+      return "Connecting...";
+    case "reconnecting":
+      return connection.error
+        ? `Failed to connect. Reconnecting... Reason: ${connection.error}`
+        : "Reconnecting...";
+    case "connected":
+      return "Connected";
+    case "error":
+      return connection.error
+        ? `Connection failed. Reason: ${connection.error}`
+        : "Connection failed";
   }
 }
 
 export function presentEnvironmentConnection(
   state: SupervisorConnectionState,
-  shellState: EnvironmentShellState,
 ): EnvironmentConnectionPresentation {
-  if (
-    state._tag === "Synchronizing" &&
-    shellState.status !== "synchronizing" &&
-    Option.isSome(shellState.error)
-  ) {
-    return {
-      phase: "error",
-      error: shellState.error.value,
-      traceId: null,
-    };
-  }
   return presentConnectionState(state);
 }
 

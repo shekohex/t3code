@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { stripPairingTokenFromUrl } from "@t3tools/shared/remote";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime";
 
 export { mobileAuthClientMetadata } from "./authClientMetadata";
 
@@ -16,12 +17,7 @@ export interface SavedRemoteConnection {
   readonly relayManaged?: true;
 }
 
-export type RemoteClientConnectionState =
-  | "idle"
-  | "connecting"
-  | "ready"
-  | "reconnecting"
-  | "disconnected";
+export type RemoteClientConnectionState = EnvironmentConnectionPhase;
 
 export function redactPairingCredential(pairingUrl: string): string {
   const trimmed = pairingUrl.trim();

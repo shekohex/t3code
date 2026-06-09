@@ -22,10 +22,14 @@ export function useThreadDetail(target: ThreadDetailTarget): ThreadDetailState {
   };
 }
 
-export function useSelectedThreadDetail() {
+export function useSelectedThreadDetailState() {
   const { selectedThread } = useThreadSelection();
   return useThreadDetail({
     environmentId: selectedThread?.environmentId ?? null,
     threadId: selectedThread?.id ?? null,
-  }).data;
+  });
+}
+
+export function useSelectedThreadDetail() {
+  return useSelectedThreadDetailState().data;
 }

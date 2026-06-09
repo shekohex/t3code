@@ -3,6 +3,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import { connectionBrokerLayer } from "./brokers.ts";
+import { connectionDriverLayer } from "./driver.ts";
 import { environmentRegistryLayer, EnvironmentRegistry } from "./registry.ts";
 import { connectionOnboardingLayer } from "./onboarding.ts";
 import { PlatformConnectionSource } from "./platformSource.ts";
@@ -13,9 +14,11 @@ import { environmentRuntimeFactoryLayer } from "./runtime.ts";
 
 const brokerLayer = connectionBrokerLayer.pipe(Layer.provide(remoteEnvironmentAuthorizationLayer));
 
-const runtimeFactoryLayer = environmentRuntimeFactoryLayer.pipe(
+const driverLayer = connectionDriverLayer.pipe(
   Layer.provide(Layer.mergeAll(brokerLayer, rpcSessionFactoryLayer)),
 );
+
+const runtimeFactoryLayer = environmentRuntimeFactoryLayer.pipe(Layer.provide(driverLayer));
 
 const registryLayer = environmentRegistryLayer.pipe(Layer.provide(runtimeFactoryLayer));
 
@@ -37,9 +40,8 @@ const connectionStartupLayer = Layer.effectDiscard(
       Effect.forkScoped,
     );
   }).pipe(Effect.withSpan("clientRuntime.connection.application.start")),
-).pipe(Layer.provide(connectionServicesLayer));
+);
 
-export const connectionApplicationLayer = Layer.merge(
-  connectionServicesLayer,
-  connectionStartupLayer,
+export const connectionApplicationLayer = connectionStartupLayer.pipe(
+  Layer.provideMerge(connectionServicesLayer),
 );

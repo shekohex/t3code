@@ -30,8 +30,12 @@ export default function HomeRouteScreen() {
           headerTitle: "",
           headerSearchBarOptions: {
             placeholder: "Search threads",
+            hideNavigationBar: false,
             onChangeText: (event) => {
               setSearchQuery(event.nativeEvent.text);
+            },
+            onCancelButtonPress: () => {
+              setSearchQuery("");
             },
             allowToolbarIntegration: true,
           },

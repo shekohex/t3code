@@ -39,7 +39,7 @@ export interface RelayEnvironmentDiscoveryState {
 
 export interface RelayEnvironmentDiscoveryService {
   readonly state: SubscriptionRef.SubscriptionRef<RelayEnvironmentDiscoveryState>;
-  readonly refresh: Effect.Effect<void, ConnectionAttemptError>;
+  readonly refresh: Effect.Effect<void>;
 }
 
 export class RelayEnvironmentDiscovery extends Context.Service<
@@ -201,7 +201,7 @@ const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make"
           ...current,
           refreshing: false,
           error: Option.some(error),
-        })).pipe(Effect.andThen(Effect.fail(error))),
+        })),
       ),
     ),
   );
@@ -216,17 +216,7 @@ const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make"
             offline: true,
           }))
         : Ref.get(hasRefreshed).pipe(
-            Effect.flatMap((shouldRefresh) =>
-              shouldRefresh
-                ? refresh.pipe(
-                    Effect.catch((error) =>
-                      Effect.logWarning(
-                        "Could not refresh relay environment discovery after connectivity changed.",
-                      ).pipe(Effect.annotateLogs({ error: error.message })),
-                    ),
-                  )
-                : Effect.void,
-            ),
+            Effect.flatMap((shouldRefresh) => (shouldRefresh ? refresh : Effect.void)),
           ),
     ),
     Effect.forkScoped,

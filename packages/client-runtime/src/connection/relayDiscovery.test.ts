@@ -16,6 +16,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import {
   ManagedRelayClient,
   ManagedRelayClientError,
+  ManagedRelayRequestTimeoutError,
   type ManagedRelayClientShape,
 } from "../managedRelay.ts";
 import { CloudSession } from "./capabilities.ts";
@@ -202,5 +203,60 @@ describe("RelayEnvironmentDiscovery", () => {
           expect(yield* Ref.get(harness.listCalls)).toBe(2);
         }).pipe(Effect.provide(harness.layer));
       }),
+  );
+
+  it.effect("publishes listing failures without rejecting the refresh command", () =>
+    Effect.gen(function* () {
+      const networkStatus = yield* SubscriptionRef.make<NetworkStatus>("online");
+      const client = ManagedRelayClient.of({
+        relayUrl: "https://relay.example.test",
+        listEnvironments: () =>
+          Effect.fail(
+            new ManagedRelayClientError({
+              message: "Relay environment listing timed out.",
+              cause: new ManagedRelayRequestTimeoutError({
+                message: "Relay environment listing timed out.",
+              }),
+            }),
+          ),
+        getEnvironmentStatus: () => Effect.die("unused"),
+        listDevices: () => Effect.die("unused"),
+        createEnvironmentLinkChallenge: () => Effect.die("unused"),
+        linkEnvironment: () => Effect.die("unused"),
+        unlinkEnvironment: () => Effect.die("unused"),
+        connectEnvironment: () => Effect.die("unused"),
+        registerDevice: () => Effect.die("unused"),
+        unregisterDevice: () => Effect.die("unused"),
+        registerLiveActivity: () => Effect.die("unused"),
+        resetTokenCache: Effect.void,
+      } satisfies ManagedRelayClientShape);
+      const layer = relayEnvironmentDiscoveryLayer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(ManagedRelayClient, client),
+            Layer.succeed(CloudSession, {
+              clerkToken: Effect.succeed("clerk-token"),
+            }),
+            Layer.succeed(Connectivity, {
+              status: SubscriptionRef.get(networkStatus),
+              changes: SubscriptionRef.changes(networkStatus),
+            }),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery;
+        yield* discovery.refresh;
+
+        const state = yield* SubscriptionRef.get(discovery.state);
+        expect(state.refreshing).toBe(false);
+        expect(Option.getOrThrow(state.error)).toMatchObject({
+          _tag: "ConnectionTransientError",
+          reason: "timeout",
+          message: "Relay environment listing timed out.",
+        });
+      }).pipe(Effect.provide(layer));
+    }),
   );
 });

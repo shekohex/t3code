@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentConnectionState, EnvironmentRuntimeState } from "@t3tools/client-runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
@@ -9,7 +8,7 @@ import { useMobileConnectionController } from "../connection/useMobileConnection
 import { useMobileWorkspace } from "../connection/useMobileWorkspace";
 import type { SavedRemoteConnection } from "../lib/connection";
 import { appAtomRegistry } from "./atom-registry";
-import type { ConnectedEnvironmentSummary } from "./remote-runtime-types";
+import type { ConnectedEnvironmentSummary, EnvironmentRuntimeState } from "./remote-runtime-types";
 
 const connectionPairingUrlAtom = Atom.make("").pipe(
   Atom.keepAlive,
@@ -120,7 +119,7 @@ export function useRemoteConnectionStatus() {
 
   return {
     connectedEnvironments,
-    connectionState: workspace.state.connectionState as EnvironmentConnectionState,
+    connectionState: workspace.state.connectionState,
     connectionError: pendingConnectionError ?? workspace.state.connectionError,
   };
 }

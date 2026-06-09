@@ -87,7 +87,12 @@ function deriveEmptyState(props: {
     };
   }
 
-  if (catalogState.connectionState === "disconnected" && !catalogState.hasLoadedShellSnapshot) {
+  if (
+    (catalogState.connectionState === "available" ||
+      catalogState.connectionState === "offline" ||
+      catalogState.connectionState === "error") &&
+    !catalogState.hasLoadedShellSnapshot
+  ) {
     return {
       title: "Environment unavailable",
       detail:
@@ -173,7 +178,6 @@ function ThreadRow(props: {
   readonly thread: EnvironmentScopedThreadShell;
   readonly environmentLabel: string | null;
   readonly onPress: () => void;
-  readonly disabled?: boolean;
   readonly isLast: boolean;
 }) {
   const separatorColor = useThemeColor("--color-separator");
@@ -186,11 +190,7 @@ function ThreadRow(props: {
   );
 
   return (
-    <Pressable
-      disabled={props.disabled}
-      onPress={props.onPress}
-      style={({ pressed }) => ({ opacity: props.disabled ? 0.48 : pressed ? 0.7 : 1 })}
-    >
+    <Pressable onPress={props.onPress} style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
       <View
         style={{
           flexDirection: "row",
@@ -272,6 +272,9 @@ function ThreadRow(props: {
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
 function staleCatalogPillLabel(props: { readonly catalogState: RemoteCatalogState }): string {
+  if (props.catalogState.networkStatus === "offline") {
+    return "You are offline";
+  }
   const connectingEnvironments = props.catalogState.connectingEnvironments;
   if (connectingEnvironments.length === 1) {
     return `Reconnecting to ${connectingEnvironments[0]!.environmentLabel}`;
@@ -379,8 +382,10 @@ export function HomeScreen(props: HomeScreenProps) {
   /* Empty states */
   const hasAnyThreads = props.threads.length > 0;
   const hasResults = filteredThreads.length > 0;
-  const isShowingUnavailableCachedData =
-    props.catalogState.isUsingCachedData && !props.catalogState.hasReadyEnvironment;
+  const shouldShowConnectionStatus =
+    props.catalogState.networkStatus === "offline" ||
+    props.catalogState.hasConnectingEnvironment ||
+    (props.catalogState.hasLoadedShellSnapshot && !props.catalogState.hasReadyEnvironment);
   const emptyState = deriveEmptyState({
     catalogState: props.catalogState,
     projectCount: props.projects.length,
@@ -446,7 +451,6 @@ export function HomeScreen(props: HomeScreenProps) {
                       environmentLabel={
                         props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
                       }
-                      disabled={isShowingUnavailableCachedData}
                       onPress={() => props.onSelectThread(thread)}
                       isLast={i === visibleThreads.length - 1}
                     />
@@ -457,7 +461,7 @@ export function HomeScreen(props: HomeScreenProps) {
           })
         )}
       </ScrollView>
-      {isShowingUnavailableCachedData ? (
+      {shouldShowConnectionStatus ? (
         <View
           className="absolute left-0 right-0 items-center"
           style={{ bottom: Math.max(insets.bottom, 18) + 76 }}

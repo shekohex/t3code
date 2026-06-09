@@ -5,7 +5,6 @@ export * from "./projectPaths.ts";
 export * from "./addProject.ts";
 export * from "./filesystemBrowseState.ts";
 export * from "./sourceControlDiscoveryState.ts";
-export * from "./environmentRuntimeState.ts";
 export * from "./errorTrace.ts";
 export * from "./shellTypes.ts";
 export * from "./shellSnapshotReducer.ts";

@@ -14,8 +14,6 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { RpcClientError } from "effect/unstable/rpc";
-import * as Socket from "effect/unstable/socket/Socket";
 
 import type { WsRpcProtocolClient } from "../wsRpcProtocol.ts";
 import {
@@ -113,19 +111,13 @@ describe("EnvironmentRpc", () => {
     }),
   );
 
-  it.effect("reconnects socket subscriptions and switches to the replacement session", () =>
+  it.effect("switches durable subscriptions when the supervisor replaces the session", () =>
     Effect.gen(function* () {
       const subscriptions: string[] = [];
-      const transportError = new RpcClientError.RpcClientError({
-        reason: new Socket.SocketCloseError({
-          code: 1006,
-          closeReason: "connection lost",
-        }),
-      });
       const firstClient = {
         [WS_METHODS.subscribeTerminalEvents]: () => {
           subscriptions.push("first");
-          return Stream.fail(transportError);
+          return Stream.never;
         },
       } as unknown as WsRpcProtocolClient;
       const secondClient = {
@@ -152,18 +144,12 @@ describe("EnvironmentRpc", () => {
         .pipe(Stream.runDrain, Effect.forkChild);
       yield* SubscriptionRef.set(activeSession, Option.some(session(firstClient)));
       yield* awaitSubscriptions(1);
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(retryCount)) === 1) {
-          break;
-        }
-        yield* Effect.yieldNow;
-      }
       yield* SubscriptionRef.set(activeSession, Option.some(session(secondClient)));
       yield* awaitSubscriptions(2);
       yield* Fiber.interrupt(subscriptionFiber);
 
       expect(subscriptions).toEqual(["first", "second"]);
-      expect(yield* Ref.get(retryCount)).toBe(1);
+      expect(yield* Ref.get(retryCount)).toBe(0);
     }),
   );
 
@@ -204,7 +190,16 @@ describe("EnvironmentShell", () => {
       });
       const shell = yield* makeEnvironmentShell(supervisor, rpc, cache);
 
-      yield* SubscriptionRef.set(state, { _tag: "Synchronizing", attempt: 1 });
+      yield* SubscriptionRef.set(state, {
+        desired: true,
+        network: "online",
+        phase: "connecting",
+        stage: "synchronizing",
+        attempt: 1,
+        generation: 0,
+        lastFailure: null,
+        retryAt: null,
+      });
       yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
       yield* Queue.offer(events, {
         kind: "snapshot",
@@ -216,9 +211,14 @@ describe("EnvironmentShell", () => {
       );
 
       yield* SubscriptionRef.set(state, {
-        _tag: "Ready",
+        desired: true,
+        network: "online",
+        phase: "connected",
+        stage: null,
         attempt: 1,
         generation: 1,
+        lastFailure: null,
+        retryAt: null,
       });
       for (let index = 0; index < 10; index += 1) {
         yield* Effect.yieldNow;

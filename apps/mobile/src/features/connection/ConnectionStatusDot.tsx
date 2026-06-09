@@ -11,7 +11,7 @@ import Animated, {
 
 import type { RemoteClientConnectionState } from "../../lib/connection";
 
-export type ConnectionStatusDotState = RemoteClientConnectionState | "available";
+export type ConnectionStatusDotState = RemoteClientConnectionState;
 
 function statusDotTone(state: ConnectionStatusDotState): {
   readonly dotColor: string;
@@ -23,7 +23,7 @@ function statusDotTone(state: ConnectionStatusDotState): {
         dotColor: "#9ca3af",
         haloColor: "rgba(156,163,175,0.42)",
       };
-    case "ready":
+    case "connected":
       return {
         dotColor: "#34d399",
         haloColor: "rgba(52,211,153,0.48)",
@@ -34,8 +34,8 @@ function statusDotTone(state: ConnectionStatusDotState): {
         dotColor: "#f59e0b",
         haloColor: "rgba(245,158,11,0.5)",
       };
-    case "idle":
-    case "disconnected":
+    case "offline":
+    case "error":
       return {
         dotColor: "#ef4444",
         haloColor: "rgba(239,68,68,0.48)",
