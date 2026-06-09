@@ -2,11 +2,8 @@ import type { ServerConfigStreamEvent, ServerLifecycleStreamEvent } from "@t3too
 import { useEffect, useRef } from "react";
 
 import { applyServerConfigEvent, emitWelcome, setServerConfigSnapshot } from "../rpc/serverState";
-import {
-  useServerConfig,
-  useServerConfigChanges,
-  useServerLifecycleChanges,
-} from "../state/server";
+import { useEnvironmentQuery } from "../state/query";
+import { serverEnvironment } from "../state/server";
 import { usePrimaryEnvironment } from "../state/environments";
 
 function serverConfigEventKey(event: ServerConfigStreamEvent): string {
@@ -27,9 +24,17 @@ function serverLifecycleEventKey(event: ServerLifecycleStreamEvent): string {
 export function ServerStateProjection() {
   const primaryEnvironment = usePrimaryEnvironment();
   const environmentId = primaryEnvironment?.environmentId ?? null;
-  const config = useServerConfig(environmentId);
-  const configChanges = useServerConfigChanges(environmentId);
-  const lifecycleChanges = useServerLifecycleChanges(environmentId);
+  const config = useEnvironmentQuery(
+    environmentId === null ? null : serverEnvironment.config({ environmentId, input: {} }),
+  );
+  const configChanges = useEnvironmentQuery(
+    environmentId === null ? null : serverEnvironment.configChanges({ environmentId, input: {} }),
+  );
+  const lifecycleChanges = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : serverEnvironment.lifecycleChanges({ environmentId, input: {} }),
+  );
   const projectedConfigRef = useRef<unknown>(null);
   const projectedConfigEventRef = useRef<string | null>(null);
   const projectedLifecycleEventRef = useRef<string | null>(null);

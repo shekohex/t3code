@@ -1,9 +1,10 @@
 import { useNavigate } from "@tanstack/react-router";
+import { useAtomSet } from "@effect/atom-react";
 import { DownloadIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 
-import { useServerActions } from "../state/server";
+import { serverEnvironment } from "../state/server";
 import { usePrimaryEnvironment } from "../state/environments";
 import { useDismissedProviderUpdateNotificationKeys } from "../providerUpdateDismissal";
 import { useServerProviders } from "../rpc/serverState";
@@ -104,7 +105,7 @@ export function ProviderUpdateLaunchNotification() {
   const navigate = useNavigate();
   const providers = useServerProviders();
   const primaryEnvironment = usePrimaryEnvironment();
-  const serverActions = useServerActions();
+  const updateProvider = useAtomSet(serverEnvironment.updateProvider, { mode: "promise" });
   const activeToastRef = useRef<ActiveProviderUpdateToast | null>(null);
   const { dismissedNotificationKeys, dismissNotificationKey } =
     useDismissedProviderUpdateNotificationKeys();
@@ -211,7 +212,7 @@ export function ProviderUpdateLaunchNotification() {
 
       void Promise.allSettled(
         oneClickProviders.map(async (provider) =>
-          serverActions.updateProvider({
+          updateProvider({
             environmentId: primaryEnvironment.environmentId,
             input: {
               provider: provider.driver,
@@ -294,7 +295,7 @@ export function ProviderUpdateLaunchNotification() {
     );
     activeToastRef.current = { kind: "prompt", key: notificationKey, toastId };
   }, [
-    serverActions,
+    updateProvider,
     dismissNotificationKey,
     dismissedNotificationKeys,
     notificationKey,

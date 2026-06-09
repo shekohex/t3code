@@ -1,7 +1,8 @@
 import { EDITORS, EditorId, type EnvironmentId } from "@t3tools/contracts";
+import { useAtomSet } from "@effect/atom-react";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
 import { useCallback, useMemo } from "react";
-import { useShellActions } from "./state/shell";
+import { shellEnvironment } from "./state/shell";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 
@@ -31,7 +32,7 @@ export function useOpenInPreferredEditor(
   environmentId: EnvironmentId | null,
   availableEditors: readonly EditorId[],
 ) {
-  const shellActions = useShellActions();
+  const openInEditor = useAtomSet(shellEnvironment.openInEditor, { mode: "promise" });
 
   return useCallback(
     async (targetPath: string): Promise<EditorId> => {
@@ -42,7 +43,7 @@ export function useOpenInPreferredEditor(
       if (!editor) {
         throw new Error("No available editors found.");
       }
-      await shellActions.openInEditor({
+      await openInEditor({
         environmentId,
         input: {
           cwd: targetPath,
@@ -51,6 +52,6 @@ export function useOpenInPreferredEditor(
       });
       return editor;
     },
-    [availableEditors, environmentId, shellActions],
+    [availableEditors, environmentId, openInEditor],
   );
 }

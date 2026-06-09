@@ -63,7 +63,8 @@ import {
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
 import { useActiveEnvironmentId } from "../state/entities";
-import { useServerConfig } from "../state/server";
+import { useEnvironmentQuery } from "../state/query";
+import { serverEnvironment } from "../state/server";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -1084,7 +1085,9 @@ function ChatMarkdown({
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const environmentId = useActiveEnvironmentId();
-  const serverConfig = useServerConfig(environmentId);
+  const serverConfig = useEnvironmentQuery(
+    environmentId === null ? null : serverEnvironment.config({ environmentId, input: {} }),
+  );
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
     serverConfig.data?.availableEditors ?? [],

@@ -18,6 +18,7 @@ import {
   ThreadStatusLabel,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { useAtomSet } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -84,15 +85,15 @@ import {
 } from "../keybindings";
 import { useModelPickerOpen } from "../modelPickerOpenState";
 import { useShortcutModifierState } from "../shortcutModifierState";
-import { useVcsStatus } from "../lib/vcsStatusState";
 import { readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 
 import { useThreadActions } from "../hooks/useThreadActions";
-import { useEnvironmentThread } from "../state/threads";
-import { useProjectActions } from "../state/projects";
-import { useThreadActions as useThreadEnvironmentActions } from "../state/threads";
+import { projectEnvironment } from "../state/projects";
+import { useEnvironmentQuery } from "../state/query";
+import { threadEnvironment, useEnvironmentThread } from "../state/threads";
+import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
   buildThreadRouteParams,
@@ -371,10 +372,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   );
   const threadProjectCwd = threadProject?.workspaceRoot ?? null;
   const gitCwd = thread.worktreePath ?? threadProjectCwd ?? props.projectCwd;
-  const gitStatus = useVcsStatus({
-    environmentId: thread.environmentId,
-    cwd: thread.branch != null ? gitCwd : null,
-  });
+  const gitStatus = useEnvironmentQuery(
+    thread.branch != null && gitCwd !== null
+      ? vcsEnvironment.status({
+          environmentId: thread.environmentId,
+          input: { cwd: gitCwd },
+        })
+      : null,
+  );
   const isHighlighted = isActive || isSelected;
   const isThreadRunning =
     thread.session?.status === "running" && thread.session.activeTurnId != null;
@@ -956,8 +961,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     (settings) => settings.defaultThreadEnvMode,
   );
   const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
-  const projectActions = useProjectActions();
-  const threadActions = useThreadEnvironmentActions();
+  const deleteProject = useAtomSet(projectEnvironment.delete, { mode: "promise" });
+  const updateProject = useAtomSet(projectEnvironment.update, { mode: "promise" });
+  const updateThreadMetadata = useAtomSet(threadEnvironment.updateMetadata, {
+    mode: "promise",
+  });
   const { updateSettings } = useUpdateSettings();
   const sidebarThreadPreviewCount = useSettings<SidebarThreadPreviewCount>(
     (settings) => settings.sidebarThreadPreviewCount,
@@ -1303,7 +1311,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
       draftStore.clearProjectDraftThreadId(memberProjectRef);
 
-      await projectActions.delete({
+      await deleteProject({
         environmentId: member.environmentId,
         input: {
           projectId: member.id,
@@ -1311,7 +1319,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         },
       });
     },
-    [projectActions],
+    [deleteProject],
   );
 
   const handleRemoveProject = useCallback(
@@ -1797,7 +1805,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return;
       }
       try {
-        await threadActions.updateMetadata({
+        await updateThreadMetadata({
           environmentId: threadRef.environmentId,
           input: {
             threadId: threadRef.threadId,
@@ -1815,7 +1823,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
       finishRename();
     },
-    [threadActions],
+    [updateThreadMetadata],
   );
 
   const closeProjectRenameDialog = useCallback(() => {
@@ -1843,7 +1851,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     }
 
     try {
-      await projectActions.update({
+      await updateProject({
         environmentId: projectRenameTarget.environmentId,
         input: {
           projectId: projectRenameTarget.id,
@@ -1860,7 +1868,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         }),
       );
     }
-  }, [closeProjectRenameDialog, projectActions, projectRenameTarget, projectRenameTitle]);
+  }, [closeProjectRenameDialog, projectRenameTarget, projectRenameTitle, updateProject]);
 
   const closeProjectGroupingDialog = useCallback(() => {
     setProjectGroupingTarget(null);

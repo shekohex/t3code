@@ -14,11 +14,12 @@ import { useThemeColor } from "../../../lib/useThemeColor";
 
 import { AppText as Text } from "../../../components/AppText";
 import { buildThreadReviewRoutePath } from "../../../lib/routes";
-import { useVcsStatus } from "../../../state/use-vcs-status";
+import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
+import { vcsEnvironment } from "../../../state/vcs";
 import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
 
 export function GitOverviewSheet() {
@@ -36,10 +37,14 @@ export function GitOverviewSheet() {
   const iconColor = useThemeColor("--color-icon");
   const borderColor = useThemeColor("--color-border");
 
-  const gitStatus = useVcsStatus({
-    environmentId: selectedThread?.environmentId ?? null,
-    cwd: selectedThreadCwd,
-  });
+  const gitStatus = useEnvironmentQuery(
+    selectedThread !== null && selectedThreadCwd !== null
+      ? vcsEnvironment.status({
+          environmentId: selectedThread.environmentId,
+          input: { cwd: selectedThreadCwd },
+        })
+      : null,
+  );
 
   const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
   const currentWorktreePath = selectedThreadWorktreePath;

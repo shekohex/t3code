@@ -1,10 +1,10 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useCallback, useMemo, useState } from "react";
 
 import { ApprovalRequestId, type ProviderApprovalDecision } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
-import { useThreadActions } from "../state/threads";
+import { threadEnvironment } from "../state/threads";
 import { scopedRequestKey } from "../lib/scopedEntities";
 import {
   buildPendingUserInputAnswers,
@@ -53,7 +53,8 @@ function setUserInputDraftCustomAnswer(
 }
 
 export function useSelectedThreadRequests() {
-  const threadActions = useThreadActions();
+  const respondToApproval = useAtomSet(threadEnvironment.respondToApproval, { mode: "promise" });
+  const respondToUserInput = useAtomSet(threadEnvironment.respondToUserInput, { mode: "promise" });
   const { selectedThread: selectedThreadShell } = useThreadSelection();
   const selectedThread = useSelectedThreadDetail();
   const userInputDraftsByRequestKey = useAtomValue(userInputDraftsByRequestKeyAtom);
@@ -114,7 +115,7 @@ export function useSelectedThreadRequests() {
 
       setRespondingApprovalId(requestId);
       try {
-        await threadActions.respondToApproval({
+        await respondToApproval({
           environmentId: selectedThreadShell.environmentId,
           input: {
             threadId: selectedThreadShell.id,
@@ -126,7 +127,7 @@ export function useSelectedThreadRequests() {
         setRespondingApprovalId((current) => (current === requestId ? null : current));
       }
     },
-    [threadActions, selectedThreadShell],
+    [respondToApproval, selectedThreadShell],
   );
 
   const onSubmitUserInput = useCallback(async () => {
@@ -136,7 +137,7 @@ export function useSelectedThreadRequests() {
 
     setRespondingUserInputId(activePendingUserInput.requestId);
     try {
-      await threadActions.respondToUserInput({
+      await respondToUserInput({
         environmentId: selectedThreadShell.environmentId,
         input: {
           threadId: selectedThreadShell.id,
@@ -149,7 +150,12 @@ export function useSelectedThreadRequests() {
         current === activePendingUserInput.requestId ? null : current,
       );
     }
-  }, [threadActions, activePendingUserInput, activePendingUserInputAnswers, selectedThreadShell]);
+  }, [
+    activePendingUserInput,
+    activePendingUserInputAnswers,
+    respondToUserInput,
+    selectedThreadShell,
+  ]);
 
   return {
     activePendingApproval,

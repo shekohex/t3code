@@ -2,6 +2,7 @@ import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "luci
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef, useState } from "react";
+import { useAtomSet } from "@effect/atom-react";
 import {
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
@@ -46,7 +47,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
-import { useServerActions } from "../../state/server";
+import { serverEnvironment } from "../../state/server";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
@@ -922,7 +923,10 @@ export function ProviderSettingsPanel() {
   const { updateSettings } = useUpdateSettings();
   const serverProviders = useServerProviders();
   const primaryEnvironment = usePrimaryEnvironment();
-  const serverActions = useServerActions();
+  const refreshServerProviders = useAtomSet(serverEnvironment.refreshProviders, {
+    mode: "promise",
+  });
+  const updateProvider = useAtomSet(serverEnvironment.updateProvider, { mode: "promise" });
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
   const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
@@ -966,11 +970,10 @@ export function ProviderSettingsPanel() {
       setIsRefreshingProviders(false);
       return;
     }
-    void serverActions
-      .refreshProviders({
-        environmentId: primaryEnvironment.environmentId,
-        input: {},
-      })
+    void refreshServerProviders({
+      environmentId: primaryEnvironment.environmentId,
+      input: {},
+    })
       .catch((error: unknown) => {
         console.warn("Failed to refresh providers", error);
       })
@@ -978,7 +981,7 @@ export function ProviderSettingsPanel() {
         refreshingRef.current = false;
         setIsRefreshingProviders(false);
       });
-  }, [primaryEnvironment, serverActions]);
+  }, [primaryEnvironment, refreshServerProviders]);
 
   const runProviderUpdate = useCallback(
     async (candidate: ProviderUpdateCandidate) => {
@@ -998,7 +1001,7 @@ export function ProviderSettingsPanel() {
       }
 
       try {
-        await serverActions.updateProvider({
+        await updateProvider({
           environmentId: primaryEnvironment.environmentId,
           input: {
             provider: candidate.driver,
@@ -1027,7 +1030,7 @@ export function ProviderSettingsPanel() {
         });
       }
     },
-    [primaryEnvironment, serverActions],
+    [primaryEnvironment, updateProvider],
   );
 
   interface InstanceRow {

@@ -8,6 +8,8 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { EnvironmentRegistry, type EnvironmentRegistryService } from "../connection/registry.ts";
 import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
+import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import { followStreamInEnvironment } from "./runtime.ts";
 
 export interface EnvironmentCatalogState {
   readonly isReady: boolean;
@@ -57,8 +59,13 @@ export function createEnvironmentCatalogAtoms<R, E>(
 
   const stateAtom = Atom.family((environmentId: EnvironmentIdType) =>
     runtime.atom(
-      Stream.unwrap(
-        EnvironmentRegistry.pipe(Effect.map((registry) => registry.stateChanges(environmentId))),
+      followStreamInEnvironment(
+        environmentId,
+        Stream.unwrap(
+          EnvironmentSupervisor.pipe(
+            Effect.map((supervisor) => SubscriptionRef.changes(supervisor.state)),
+          ),
+        ),
       ),
       { initialValue: AVAILABLE_CONNECTION_STATE },
     ),

@@ -45,7 +45,8 @@ import {
 } from "../types";
 import { readLocalApi } from "~/localApi";
 import { useTerminalController } from "../state/terminalSessions";
-import { useServerConfig } from "../state/server";
+import { useEnvironmentQuery } from "../state/query";
+import { serverEnvironment } from "../state/server";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -292,7 +293,7 @@ export function TerminalViewport({
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const environmentId = threadRef.environmentId;
-  const serverConfig = useServerConfig(environmentId);
+  const serverConfig = useEnvironmentQuery(serverEnvironment.config({ environmentId, input: {} }));
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
     serverConfig.data?.availableEditors ?? [],

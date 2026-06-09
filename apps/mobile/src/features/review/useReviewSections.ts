@@ -3,9 +3,10 @@ import { useCallback, useEffect, useMemo } from "react";
 import type { EnvironmentId, OrchestrationCheckpointSummary, ThreadId } from "@t3tools/contracts";
 
 import { useCheckpointDiff } from "../../state/queries";
+import { useEnvironmentQuery } from "../../state/query";
+import { reviewEnvironment } from "../../state/review";
 import { useSelectedThreadDetail } from "../../state/use-thread-detail";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
-import { useReviewDiffPreview } from "./reviewDiffPreviewState";
 import {
   buildReviewSectionItems,
   getDefaultReviewSectionId,
@@ -31,10 +32,14 @@ export function useReviewSections(input: {
   const enabled = input.enabled ?? true;
   const selectedThread = useSelectedThreadDetail();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
-  const diffPreview = useReviewDiffPreview({
-    environmentId: enabled ? environmentId : undefined,
-    cwd: enabled ? selectedThreadCwd : null,
-  });
+  const diffPreview = useEnvironmentQuery(
+    enabled && environmentId !== undefined && selectedThreadCwd !== null
+      ? reviewEnvironment.diffPreview({
+          environmentId,
+          input: { cwd: selectedThreadCwd },
+        })
+      : null,
+  );
   const { loadingTurnIds } = reviewCache.asyncState;
 
   useEffect(() => {

@@ -1,7 +1,5 @@
 import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
 
-import { resetVcsStatusStateForTests } from "./lib/vcsStatusState";
-import { resetSourceControlDiscoveryStateForTests } from "./lib/sourceControlDiscoveryState";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 import { resetServerStateForTests } from "./rpc/serverState";
 import { showContextMenuFallback } from "./contextMenuFallback";
@@ -150,8 +148,6 @@ export async function __resetLocalApiForTests() {
   cachedApi = undefined;
   const { __resetClientSettingsPersistenceForTests } = await import("./hooks/useSettings");
   __resetClientSettingsPersistenceForTests();
-  resetVcsStatusStateForTests();
-  resetSourceControlDiscoveryStateForTests();
   resetRequestLatencyStateForTests();
   resetServerStateForTests();
 }
