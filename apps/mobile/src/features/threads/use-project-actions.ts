@@ -1,3 +1,4 @@
+import { useAtomSet } from "@effect/atom-react";
 import { useCallback } from "react";
 
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -13,7 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 
-import { useThreadActions } from "../../state/threads";
+import { threadEnvironment } from "../../state/threads";
 import { useThreadShells } from "../../state/entities";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
@@ -31,7 +32,7 @@ function deriveThreadTitleFromPrompt(value: string): string {
 }
 
 export function useProjectActions() {
-  const threadActions = useThreadActions();
+  const startTurn = useAtomSet(threadEnvironment.startTurn, { mode: "promise" });
   const threads = useThreadShells();
 
   const onCreateThreadWithOptions = useCallback(
@@ -59,7 +60,7 @@ export function useProjectActions() {
       }
 
       const isWorktree = input.envMode === "worktree";
-      await threadActions.startTurn({
+      await startTurn({
         environmentId: input.project.environmentId,
         input: {
           commandId: CommandId.make(metadata.commandId),
@@ -105,7 +106,7 @@ export function useProjectActions() {
         threadId,
       };
     },
-    [threadActions],
+    [startTurn],
   );
 
   const onCreateThread = useCallback(

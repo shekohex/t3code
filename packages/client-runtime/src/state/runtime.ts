@@ -83,6 +83,33 @@ export function runStreamInEnvironment<A, E, R>(
   );
 }
 
+export function followStreamInEnvironment<A, E, R>(
+  environmentId: EnvironmentIdType,
+  stream: Stream.Stream<A, E, R>,
+): Stream.Stream<A, E, EnvironmentRegistry | Exclude<R, EnvironmentSupervisor>> {
+  return Stream.unwrap(
+    EnvironmentRegistry.pipe(
+      Effect.map((registry) =>
+        SubscriptionRef.changes(registry.entries).pipe(
+          Stream.map((entries) => Option.fromUndefinedOr(entries.get(environmentId))),
+          Stream.changes,
+          Stream.switchMap(
+            Option.match({
+              onNone: () => Stream.empty,
+              onSome: () =>
+                Stream.catchTag(
+                  registry.runStream(environmentId, stream),
+                  "EnvironmentNotRegisteredError",
+                  () => Stream.empty,
+                ),
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
   options: EnvironmentQueryAtomOptions<Input, A, E, EnvironmentSupervisor | R>,
@@ -92,15 +119,12 @@ function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
 }) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
   const rpcGenerationAtom = Atom.family((environmentId: EnvironmentIdType) =>
     runtime.atom(
-      runStreamInEnvironment(
+      followStreamInEnvironment(
         environmentId,
         Stream.unwrap(
           EnvironmentSupervisor.pipe(
             Effect.map((supervisor) =>
-              Stream.concat(
-                Stream.fromEffect(SubscriptionRef.get(supervisor.state)),
-                SubscriptionRef.changes(supervisor.state),
-              ).pipe(
+              SubscriptionRef.changes(supervisor.state).pipe(
                 Stream.filterMap((state) =>
                   state.phase === "connected" ? Result.succeed(state.generation) : Result.failVoid,
                 ),
@@ -145,7 +169,7 @@ export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
   const family = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
     return runtime
-      .atom(runStreamInEnvironment(target.environmentId, options.subscribe(target.input)))
+      .atom(followStreamInEnvironment(target.environmentId, options.subscribe(target.input)))
       .pipe(
         Atom.setIdleTTL(options.idleTtlMs ?? 5 * 60_000),
         Atom.withLabel(`${options.label}:${key}`),

@@ -6,23 +6,32 @@ import {
   type TerminalSessionState,
 } from "@t3tools/client-runtime/state/terminal";
 import { ThreadId, type EnvironmentId, type TerminalAttachInput } from "@t3tools/contracts";
+import { useAtomSet } from "@effect/atom-react";
 import { useCallback, useMemo } from "react";
 
-import { useTerminalActions, useTerminalAttach, useTerminalMetadata } from "./terminal";
+import { useEnvironmentQuery } from "./query";
+import { terminalEnvironment } from "./terminal";
 
 export function useAttachedTerminalSession(input: {
   readonly environmentId: EnvironmentId | null;
   readonly terminal: TerminalAttachInput | null;
 }): TerminalSessionState {
-  const attach = useTerminalAttach(
+  const attach = useEnvironmentQuery(
     input.environmentId !== null && input.terminal !== null
-      ? {
+      ? terminalEnvironment.attach({
           environmentId: input.environmentId,
           input: input.terminal,
-        }
+        })
       : null,
   );
-  const metadata = useTerminalMetadata(input.environmentId);
+  const metadata = useEnvironmentQuery(
+    input.environmentId === null
+      ? null
+      : terminalEnvironment.metadata({
+          environmentId: input.environmentId,
+          input: null,
+        }),
+  );
 
   return useMemo(() => {
     if (input.environmentId === null || input.terminal === null) {
@@ -43,7 +52,14 @@ export function useKnownTerminalSessions(input: {
   readonly environmentId: EnvironmentId | null;
   readonly threadId: ThreadId | null;
 }): ReadonlyArray<KnownTerminalSession> {
-  const metadata = useTerminalMetadata(input.environmentId);
+  const metadata = useEnvironmentQuery(
+    input.environmentId === null
+      ? null
+      : terminalEnvironment.metadata({
+          environmentId: input.environmentId,
+          input: null,
+        }),
+  );
   return useMemo(() => {
     if (input.environmentId === null) {
       return [];
@@ -79,13 +95,17 @@ export function useTerminalController(input: {
   readonly environmentId: EnvironmentId;
   readonly terminal: TerminalAttachInput;
 }) {
-  const terminalActions = useTerminalActions();
+  const writeTerminal = useAtomSet(terminalEnvironment.write, { mode: "promise" });
+  const resizeTerminal = useAtomSet(terminalEnvironment.resize, { mode: "promise" });
+  const clearTerminal = useAtomSet(terminalEnvironment.clear, { mode: "promise" });
+  const restartTerminal = useAtomSet(terminalEnvironment.restart, { mode: "promise" });
+  const closeTerminal = useAtomSet(terminalEnvironment.close, { mode: "promise" });
   const session = useAttachedTerminalSession(input);
   const { environmentId, terminal } = input;
 
   const write = useCallback(
     (data: string) =>
-      terminalActions.write({
+      writeTerminal({
         environmentId,
         input: {
           threadId: terminal.threadId,
@@ -93,11 +113,11 @@ export function useTerminalController(input: {
           data,
         },
       }),
-    [environmentId, terminal.terminalId, terminal.threadId, terminalActions],
+    [environmentId, terminal.terminalId, terminal.threadId, writeTerminal],
   );
   const resize = useCallback(
     (cols: number, rows: number) =>
-      terminalActions.resize({
+      resizeTerminal({
         environmentId,
         input: {
           threadId: terminal.threadId,
@@ -106,18 +126,18 @@ export function useTerminalController(input: {
           rows,
         },
       }),
-    [environmentId, terminal.terminalId, terminal.threadId, terminalActions],
+    [environmentId, resizeTerminal, terminal.terminalId, terminal.threadId],
   );
   const clear = useCallback(
     () =>
-      terminalActions.clear({
+      clearTerminal({
         environmentId,
         input: {
           threadId: terminal.threadId,
           terminalId: terminal.terminalId,
         },
       }),
-    [environmentId, terminal.terminalId, terminal.threadId, terminalActions],
+    [clearTerminal, environmentId, terminal.terminalId, terminal.threadId],
   );
   const restart = useCallback(() => {
     if (terminal.cwd === undefined || terminal.cols === undefined || terminal.rows === undefined) {
@@ -125,7 +145,7 @@ export function useTerminalController(input: {
         new Error("Terminal restart requires the working directory and dimensions."),
       );
     }
-    return terminalActions.restart({
+    return restartTerminal({
       environmentId,
       input: {
         threadId: terminal.threadId,
@@ -137,10 +157,10 @@ export function useTerminalController(input: {
         ...(terminal.env !== undefined ? { env: terminal.env } : {}),
       },
     });
-  }, [environmentId, terminal, terminalActions]);
+  }, [environmentId, restartTerminal, terminal]);
   const close = useCallback(
     (options?: { readonly deleteHistory?: boolean }) =>
-      terminalActions.close({
+      closeTerminal({
         environmentId,
         input: {
           threadId: terminal.threadId,
@@ -148,7 +168,7 @@ export function useTerminalController(input: {
           ...(options?.deleteHistory ? { deleteHistory: true } : {}),
         },
       }),
-    [environmentId, terminal.terminalId, terminal.threadId, terminalActions],
+    [closeTerminal, environmentId, terminal.terminalId, terminal.threadId],
   );
 
   return {

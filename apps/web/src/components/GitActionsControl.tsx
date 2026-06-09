@@ -70,11 +70,13 @@ import {
   useVcsInitAction,
   useVcsPullAction,
 } from "~/lib/sourceControlActions";
-import { useRepositoryStatus } from "~/state/queries";
 import { useThreadDetail } from "~/state/entities";
-import { useServerConfig } from "~/state/server";
-import { useThreadActions } from "~/state/threads";
-import { useSourceControlDiscovery } from "~/lib/sourceControlDiscoveryState";
+import { useEnvironmentQuery } from "~/state/query";
+import { serverEnvironment } from "~/state/server";
+import { sourceControlEnvironment } from "~/state/sourceControl";
+import { threadEnvironment } from "~/state/threads";
+import { vcsEnvironment } from "~/state/vcs";
+import { useAtomSet } from "@effect/atom-react";
 import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -347,7 +349,14 @@ interface PublishRepositoryDialogProps {
 
 function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const navigate = useNavigate();
-  const sourceControlDiscovery = useSourceControlDiscovery();
+  const sourceControlDiscovery = useEnvironmentQuery(
+    props.environmentId === null
+      ? null
+      : sourceControlEnvironment.discovery({
+          environmentId: props.environmentId,
+          input: {},
+        }),
+  );
   const [publishProvider, setPublishProvider] = useState<PublishProviderKind>("github");
   const [publishRepository, setPublishRepository] = useState("");
   const [publishVisibility, setPublishVisibility] =
@@ -947,9 +956,15 @@ export default function GitActionsControl({
   activeThreadRef,
   draftId,
 }: GitActionsControlProps) {
-  const threadActions = useThreadActions();
+  const updateThreadMetadata = useAtomSet(threadEnvironment.updateMetadata, {
+    mode: "promise",
+  });
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
-  const serverConfig = useServerConfig(activeEnvironmentId);
+  const serverConfig = useEnvironmentQuery(
+    activeEnvironmentId === null
+      ? null
+      : serverEnvironment.config({ environmentId: activeEnvironmentId, input: {} }),
+  );
   const openInPreferredEditor = useOpenInPreferredEditor(
     activeEnvironmentId,
     serverConfig.data?.availableEditors ?? [],
@@ -1007,16 +1022,14 @@ export default function GitActionsControl({
         }
 
         const worktreePath = activeServerThread.worktreePath;
-        void threadActions
-          .updateMetadata({
-            environmentId: activeThreadRef.environmentId,
-            input: {
-              threadId: activeThreadRef.threadId,
-              branch,
-              worktreePath,
-            },
-          })
-          .catch(() => undefined);
+        void updateThreadMetadata({
+          environmentId: activeThreadRef.environmentId,
+          input: {
+            threadId: activeThreadRef.threadId,
+            branch,
+            worktreePath,
+          },
+        }).catch(() => undefined);
 
         return;
       }
@@ -1036,7 +1049,7 @@ export default function GitActionsControl({
       activeThreadRef,
       draftId,
       setDraftThreadContext,
-      threadActions,
+      updateThreadMetadata,
     ],
   );
 
@@ -1052,10 +1065,14 @@ export default function GitActionsControl({
     [persistThreadBranchSync],
   );
 
-  const gitStatusQuery = useRepositoryStatus({
-    environmentId: activeEnvironmentId,
-    cwd: gitCwd,
-  });
+  const gitStatusQuery = useEnvironmentQuery(
+    activeEnvironmentId !== null && gitCwd !== null
+      ? vcsEnvironment.status({
+          environmentId: activeEnvironmentId,
+          input: { cwd: gitCwd },
+        })
+      : null,
+  );
   const { data: gitStatus, error: gitStatusError } = gitStatusQuery;
   const sourceControlPresentation = useMemo(
     () => getSourceControlPresentation(gitStatus?.sourceControlProvider),

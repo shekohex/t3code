@@ -36,13 +36,15 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { useAtomSet } from "@effect/atom-react";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSettings } from "../hooks/useSettings";
 import { readLocalApi } from "../localApi";
-import { useFilesystemDirectory, useSourceControlCapabilities } from "../state/queries";
-import { useProjectActions } from "../state/projects";
-import { useSourceControlActions } from "../state/sourceControl";
+import { filesystemEnvironment } from "../state/filesystem";
+import { projectEnvironment } from "../state/projects";
+import { useEnvironmentQuery } from "../state/query";
+import { sourceControlEnvironment } from "../state/sourceControl";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
 import {
@@ -388,8 +390,13 @@ function OpenCommandPaletteDialog() {
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const settings = useSettings();
-  const projectActions = useProjectActions();
-  const sourceControlActions = useSourceControlActions();
+  const createProject = useAtomSet(projectEnvironment.create, { mode: "promise" });
+  const lookupRepository = useAtomSet(sourceControlEnvironment.lookupRepository, {
+    mode: "promise",
+  });
+  const cloneRepository = useAtomSet(sourceControlEnvironment.cloneRepository, {
+    mode: "promise",
+  });
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
@@ -436,7 +443,14 @@ function OpenCommandPaletteDialog() {
   const browseEnvironmentId = addProjectEnvironmentId ?? defaultAddProjectEnvironmentId;
   const browseEnvironment =
     environments.find((environment) => environment.environmentId === browseEnvironmentId) ?? null;
-  const sourceControlDiscovery = useSourceControlCapabilities(browseEnvironmentId);
+  const sourceControlDiscovery = useEnvironmentQuery(
+    browseEnvironmentId === null
+      ? null
+      : sourceControlEnvironment.discovery({
+          environmentId: browseEnvironmentId,
+          input: {},
+        }),
+  );
   const browseEnvironmentPlatform = getEnvironmentBrowsePlatform(
     browseEnvironment?.serverConfig?.environment.platform.os,
   );
@@ -488,21 +502,18 @@ function OpenCommandPaletteDialog() {
   const browseDirectoryPath = isBrowsing ? getBrowseDirectoryPath(query) : "";
   const browseFilterQuery =
     isBrowsing && !hasTrailingPathSeparator(query) ? getBrowseLeafPathSegment(query) : "";
-  const browseQuery = useFilesystemDirectory(
+  const browseQuery = useEnvironmentQuery(
     isBrowsing &&
       browseDirectoryPath.length > 0 &&
       browseEnvironmentId !== null &&
       !relativePathNeedsActiveProject
-      ? browseEnvironmentId
-      : null,
-    isBrowsing &&
-      browseDirectoryPath.length > 0 &&
-      browseEnvironmentId !== null &&
-      !relativePathNeedsActiveProject
-      ? {
-          partialPath: browseDirectoryPath,
-          ...(currentProjectCwdForBrowse ? { cwd: currentProjectCwdForBrowse } : {}),
-        }
+      ? filesystemEnvironment.browse({
+          environmentId: browseEnvironmentId,
+          input: {
+            partialPath: browseDirectoryPath,
+            ...(currentProjectCwdForBrowse ? { cwd: currentProjectCwdForBrowse } : {}),
+          },
+        })
       : null,
   );
   const browseResult = browseQuery.data;
@@ -1039,7 +1050,7 @@ function OpenCommandPaletteDialog() {
 
       try {
         const projectId = newProjectId();
-        await projectActions.create({
+        await createProject({
           environmentId: browseEnvironmentId,
           input: {
             projectId,
@@ -1071,7 +1082,7 @@ function OpenCommandPaletteDialog() {
       browseEnvironmentPlatform,
       currentProjectCwdForBrowse,
       handleNewThread,
-      projectActions,
+      createProject,
       navigate,
       projects,
       setOpen,
@@ -1115,7 +1126,7 @@ function OpenCommandPaletteDialog() {
 
       setIsRemoteProjectLookingUp(true);
       try {
-        const repository = await sourceControlActions.lookupRepository({
+        const repository = await lookupRepository({
           environmentId: addProjectCloneFlow.environmentId,
           input: {
             provider,
@@ -1185,7 +1196,7 @@ function OpenCommandPaletteDialog() {
 
     setIsRemoteProjectCloning(true);
     try {
-      const result = await sourceControlActions.cloneRepository({
+      const result = await cloneRepository({
         environmentId: addProjectCloneFlow.environmentId,
         input: {
           remoteUrl: addProjectCloneFlow.remoteUrl,

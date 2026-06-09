@@ -40,10 +40,10 @@ import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/proje
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
+import { useAtomSet } from "@effect/atom-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
-import { useVcsStatus } from "~/lib/vcsStatusState";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -135,10 +135,12 @@ import {
 } from "../lib/terminalContext";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
-import { useProjectActions } from "../state/projects";
-import { useServerActions } from "../state/server";
-import { useTerminalActions } from "../state/terminal";
-import { useThreadActions } from "../state/threads";
+import { projectEnvironment } from "../state/projects";
+import { useEnvironmentQuery } from "../state/query";
+import { serverEnvironment } from "../state/server";
+import { terminalEnvironment } from "../state/terminal";
+import { threadEnvironment } from "../state/threads";
+import { vcsEnvironment } from "../state/vcs";
 import {
   useEnvironmentActions,
   useEnvironmentHttpBaseUrl,
@@ -382,7 +384,10 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   keybindings,
   onAddTerminalContext,
 }: PersistentThreadTerminalDrawerProps) {
-  const terminalActions = useTerminalActions();
+  const openTerminal = useAtomSet(terminalEnvironment.open, { mode: "promise" });
+  const writeTerminal = useAtomSet(terminalEnvironment.write, { mode: "promise" });
+  const clearTerminal = useAtomSet(terminalEnvironment.clear, { mode: "promise" });
+  const closeTerminalMutation = useAtomSet(terminalEnvironment.close, { mode: "promise" });
   const serverThread = useThreadDetail(threadRef);
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
   const projectRef = serverThread
@@ -515,7 +520,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     bumpFocusRequestId();
     void (async () => {
       try {
-        await terminalActions.open({
+        await openTerminal({
           environmentId: threadRef.environmentId,
           input: {
             threadId,
@@ -538,7 +543,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     storeSplitTerminal,
     threadId,
     threadRef,
-    terminalActions,
+    openTerminal,
   ]);
 
   const createNewTerminal = useCallback(() => {
@@ -550,7 +555,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     bumpFocusRequestId();
     void (async () => {
       try {
-        await terminalActions.open({
+        await openTerminal({
           environmentId: threadRef.environmentId,
           input: {
             threadId,
@@ -573,7 +578,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     storeNewTerminal,
     threadId,
     threadRef,
-    terminalActions,
+    openTerminal,
   ]);
 
   const activateTerminal = useCallback(
@@ -588,23 +593,19 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     (terminalId: string) => {
       const isFinalTerminal = terminalUiState.terminalIds.length <= 1;
       const fallbackExitWrite = () =>
-        terminalActions
-          .write({
-            environmentId: threadRef.environmentId,
-            input: { threadId, terminalId, data: "exit\n" },
-          })
-          .catch(() => undefined);
+        writeTerminal({
+          environmentId: threadRef.environmentId,
+          input: { threadId, terminalId, data: "exit\n" },
+        }).catch(() => undefined);
 
       void (async () => {
         if (isFinalTerminal) {
-          await terminalActions
-            .clear({
-              environmentId: threadRef.environmentId,
-              input: { threadId, terminalId },
-            })
-            .catch(() => undefined);
+          await clearTerminal({
+            environmentId: threadRef.environmentId,
+            input: { threadId, terminalId },
+          }).catch(() => undefined);
         }
-        await terminalActions.close({
+        await closeTerminalMutation({
           environmentId: threadRef.environmentId,
           input: {
             threadId,
@@ -623,7 +624,9 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       terminalUiState.terminalIds,
       threadId,
       threadRef,
-      terminalActions,
+      clearTerminal,
+      closeTerminalMutation,
+      writeTerminal,
     ],
   );
 
@@ -688,10 +691,36 @@ export default function ChatView(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
-  const projectActions = useProjectActions();
-  const serverActions = useServerActions();
-  const terminalActions = useTerminalActions();
-  const threadActions = useThreadActions();
+  const updateProject = useAtomSet(projectEnvironment.update, { mode: "promise" });
+  const upsertKeybinding = useAtomSet(serverEnvironment.upsertKeybinding, { mode: "promise" });
+  const openTerminal = useAtomSet(terminalEnvironment.open, { mode: "promise" });
+  const writeTerminal = useAtomSet(terminalEnvironment.write, { mode: "promise" });
+  const clearTerminal = useAtomSet(terminalEnvironment.clear, { mode: "promise" });
+  const closeTerminalMutation = useAtomSet(terminalEnvironment.close, { mode: "promise" });
+  const createThread = useAtomSet(threadEnvironment.create, { mode: "promise" });
+  const deleteThread = useAtomSet(threadEnvironment.delete, { mode: "promise" });
+  const updateThreadMetadata = useAtomSet(threadEnvironment.updateMetadata, {
+    mode: "promise",
+  });
+  const setThreadRuntimeMode = useAtomSet(threadEnvironment.setRuntimeMode, {
+    mode: "promise",
+  });
+  const setThreadInteractionMode = useAtomSet(threadEnvironment.setInteractionMode, {
+    mode: "promise",
+  });
+  const startThreadTurn = useAtomSet(threadEnvironment.startTurn, { mode: "promise" });
+  const interruptThreadTurn = useAtomSet(threadEnvironment.interruptTurn, {
+    mode: "promise",
+  });
+  const respondToThreadApproval = useAtomSet(threadEnvironment.respondToApproval, {
+    mode: "promise",
+  });
+  const respondToThreadUserInput = useAtomSet(threadEnvironment.respondToUserInput, {
+    mode: "promise",
+  });
+  const revertThreadCheckpoint = useAtomSet(threadEnvironment.revertCheckpoint, {
+    mode: "promise",
+  });
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
@@ -1679,7 +1708,14 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
-  const gitStatusQuery = useVcsStatus({ environmentId, cwd: gitCwd });
+  const gitStatusQuery = useEnvironmentQuery(
+    gitCwd === null
+      ? null
+      : vcsEnvironment.status({
+          environmentId,
+          input: { cwd: gitCwd },
+        }),
+  );
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
   // Prefer an instance-id match so a custom Codex instance (e.g.
@@ -1869,7 +1905,7 @@ export default function ChatView(props: ChatViewProps) {
     setTerminalFocusRequestId((value) => value + 1);
     void (async () => {
       try {
-        await terminalActions.open({
+        await openTerminal({
           environmentId,
           input: {
             threadId: activeThreadId,
@@ -1891,7 +1927,7 @@ export default function ChatView(props: ChatViewProps) {
     activeKnownTerminalIds,
     activeThreadId,
     activeThreadRef,
-    terminalActions,
+    openTerminal,
     activeThreadWorktreePath,
     environmentId,
     gitCwd,
@@ -1911,7 +1947,7 @@ export default function ChatView(props: ChatViewProps) {
     setTerminalFocusRequestId((value) => value + 1);
     void (async () => {
       try {
-        await terminalActions.open({
+        await openTerminal({
           environmentId,
           input: {
             threadId: activeThreadId,
@@ -1933,7 +1969,7 @@ export default function ChatView(props: ChatViewProps) {
     activeKnownTerminalIds,
     activeThreadId,
     activeThreadRef,
-    terminalActions,
+    openTerminal,
     activeThreadWorktreePath,
     environmentId,
     gitCwd,
@@ -1944,22 +1980,18 @@ export default function ChatView(props: ChatViewProps) {
       if (!activeThreadId || !activeThreadRef) return;
       const isFinalTerminal = activeKnownTerminalIds.length <= 1;
       const fallbackExitWrite = () =>
-        terminalActions
-          .write({
-            environmentId,
-            input: { threadId: activeThreadId, terminalId, data: "exit\n" },
-          })
-          .catch(() => undefined);
+        writeTerminal({
+          environmentId,
+          input: { threadId: activeThreadId, terminalId, data: "exit\n" },
+        }).catch(() => undefined);
       void (async () => {
         if (isFinalTerminal) {
-          await terminalActions
-            .clear({
-              environmentId,
-              input: { threadId: activeThreadId, terminalId },
-            })
-            .catch(() => undefined);
+          await clearTerminal({
+            environmentId,
+            input: { threadId: activeThreadId, terminalId },
+          }).catch(() => undefined);
         }
-        await terminalActions.close({
+        await closeTerminalMutation({
           environmentId,
           input: {
             threadId: activeThreadId,
@@ -1975,9 +2007,11 @@ export default function ChatView(props: ChatViewProps) {
       activeThreadId,
       activeThreadRef,
       activeKnownTerminalIds,
+      clearTerminal,
+      closeTerminalMutation,
       environmentId,
-      terminalActions,
       storeCloseTerminal,
+      writeTerminal,
     ],
   );
   const runProjectScript = useCallback(
@@ -2052,8 +2086,8 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       try {
-        await terminalActions.open({ environmentId, input: openTerminalInput });
-        await terminalActions.write({
+        await openTerminal({ environmentId, input: openTerminalInput });
+        await writeTerminal({
           environmentId,
           input: {
             threadId: activeThreadId,
@@ -2080,10 +2114,11 @@ export default function ChatView(props: ChatViewProps) {
       storeSetActiveTerminal,
       setLastInvokedScriptByProjectId,
       environmentId,
-      terminalActions,
+      openTerminal,
       activeKnownTerminalIds,
       runningTerminalIds,
       terminalUiState.activeTerminalId,
+      writeTerminal,
     ],
   );
 
@@ -2096,7 +2131,7 @@ export default function ChatView(props: ChatViewProps) {
       keybinding?: string | null;
       keybindingCommand: KeybindingCommand;
     }) => {
-      await projectActions.update({
+      await updateProject({
         environmentId,
         input: {
           projectId: input.projectId,
@@ -2110,13 +2145,13 @@ export default function ChatView(props: ChatViewProps) {
       });
 
       if (isElectron && keybindingRule) {
-        await serverActions.upsertKeybinding({
+        await upsertKeybinding({
           environmentId,
           input: keybindingRule,
         });
       }
     },
-    [environmentId, projectActions, serverActions],
+    [environmentId, updateProject, upsertKeybinding],
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput) => {
@@ -2295,7 +2330,7 @@ export default function ChatView(props: ChatViewProps) {
           JSON.stringify(input.modelSelection.options ?? null) !==
             JSON.stringify(serverThread.modelSelection.options ?? null))
       ) {
-        await threadActions.updateMetadata({
+        await updateThreadMetadata({
           environmentId,
           input: {
             threadId: input.threadId,
@@ -2305,7 +2340,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (input.runtimeMode !== serverThread.runtimeMode) {
-        await threadActions.setRuntimeMode({
+        await setThreadRuntimeMode({
           environmentId,
           input: {
             threadId: input.threadId,
@@ -2316,7 +2351,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (input.interactionMode !== serverThread.interactionMode) {
-        await threadActions.setInteractionMode({
+        await setThreadInteractionMode({
           environmentId,
           input: {
             threadId: input.threadId,
@@ -2326,7 +2361,13 @@ export default function ChatView(props: ChatViewProps) {
         });
       }
     },
-    [environmentId, serverThread, threadActions],
+    [
+      environmentId,
+      serverThread,
+      setThreadInteractionMode,
+      setThreadRuntimeMode,
+      updateThreadMetadata,
+    ],
   );
 
   // Scroll helpers — LegendList handles auto-scroll via maintainScrollAtEnd.
@@ -2665,7 +2706,7 @@ export default function ChatView(props: ChatViewProps) {
       setIsRevertingCheckpoint(true);
       setThreadError(activeThread.id, null);
       try {
-        await threadActions.revertCheckpoint({
+        await revertThreadCheckpoint({
           environmentId,
           input: {
             threadId: activeThread.id,
@@ -2689,8 +2730,8 @@ export default function ChatView(props: ChatViewProps) {
       isRevertingCheckpoint,
       isSendBusy,
       phase,
+      revertThreadCheckpoint,
       setThreadError,
-      threadActions,
     ],
   );
 
@@ -2891,7 +2932,7 @@ export default function ChatView(props: ChatViewProps) {
 
       // Auto-title from first message
       if (isFirstMessage && isServerThread) {
-        await threadActions.updateMetadata({
+        await updateThreadMetadata({
           environmentId,
           input: {
             threadId: threadIdForSend,
@@ -2941,7 +2982,7 @@ export default function ChatView(props: ChatViewProps) {
             }
           : undefined;
       beginLocalDispatch({ preparingWorktree: false });
-      await threadActions.startTurn({
+      await startThreadTurn({
         environmentId,
         input: {
           threadId: threadIdForSend,
@@ -3001,7 +3042,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const onInterrupt = async () => {
     if (!activeThread) return;
-    await threadActions.interruptTurn({
+    await interruptThreadTurn({
       environmentId,
       input: {
         threadId: activeThread.id,
@@ -3016,24 +3057,22 @@ export default function ChatView(props: ChatViewProps) {
       setRespondingRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
-      await threadActions
-        .respondToApproval({
-          environmentId,
-          input: {
-            threadId: activeThreadId,
-            requestId,
-            decision,
-          },
-        })
-        .catch((err: unknown) => {
-          setThreadError(
-            activeThreadId,
-            err instanceof Error ? err.message : "Failed to submit approval decision.",
-          );
-        });
+      await respondToThreadApproval({
+        environmentId,
+        input: {
+          threadId: activeThreadId,
+          requestId,
+          decision,
+        },
+      }).catch((err: unknown) => {
+        setThreadError(
+          activeThreadId,
+          err instanceof Error ? err.message : "Failed to submit approval decision.",
+        );
+      });
       setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
     },
-    [activeThreadId, environmentId, setThreadError, threadActions],
+    [activeThreadId, environmentId, respondToThreadApproval, setThreadError],
   );
 
   const onRespondToUserInput = useCallback(
@@ -3043,24 +3082,22 @@ export default function ChatView(props: ChatViewProps) {
       setRespondingUserInputRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
-      await threadActions
-        .respondToUserInput({
-          environmentId,
-          input: {
-            threadId: activeThreadId,
-            requestId,
-            answers,
-          },
-        })
-        .catch((err: unknown) => {
-          setThreadError(
-            activeThreadId,
-            err instanceof Error ? err.message : "Failed to submit user input.",
-          );
-        });
+      await respondToThreadUserInput({
+        environmentId,
+        input: {
+          threadId: activeThreadId,
+          requestId,
+          answers,
+        },
+      }).catch((err: unknown) => {
+        setThreadError(
+          activeThreadId,
+          err instanceof Error ? err.message : "Failed to submit user input.",
+        );
+      });
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
     },
-    [activeThreadId, environmentId, setThreadError, threadActions],
+    [activeThreadId, environmentId, respondToThreadUserInput, setThreadError],
   );
 
   const setActivePendingUserInputQuestionIndex = useCallback(
@@ -3254,7 +3291,7 @@ export default function ChatView(props: ChatViewProps) {
           nextInteractionMode,
         );
 
-        await threadActions.startTurn({
+        await startThreadTurn({
           environmentId,
           input: {
             threadId: threadIdForSend,
@@ -3308,10 +3345,10 @@ export default function ChatView(props: ChatViewProps) {
       isServerThread,
       persistThreadSettingsForNextTurn,
       resetLocalDispatch,
-      threadActions,
       runtimeMode,
       setComposerDraftInteractionMode,
       setThreadError,
+      startThreadTurn,
       autoOpenPlanSidebar,
       environmentId,
     ],
@@ -3364,23 +3401,22 @@ export default function ChatView(props: ChatViewProps) {
       resetLocalDispatch();
     };
 
-    await threadActions
-      .create({
-        environmentId,
-        input: {
-          threadId: nextThreadId,
-          projectId: activeProject.id,
-          title: nextThreadTitle,
-          modelSelection: nextThreadModelSelection,
-          runtimeMode,
-          interactionMode: "default",
-          branch: activeThreadBranch,
-          worktreePath: activeThread.worktreePath,
-          createdAt,
-        },
-      })
+    await createThread({
+      environmentId,
+      input: {
+        threadId: nextThreadId,
+        projectId: activeProject.id,
+        title: nextThreadTitle,
+        modelSelection: nextThreadModelSelection,
+        runtimeMode,
+        interactionMode: "default",
+        branch: activeThreadBranch,
+        worktreePath: activeThread.worktreePath,
+        createdAt,
+      },
+    })
       .then(() => {
-        return threadActions.startTurn({
+        return startThreadTurn({
           environmentId,
           input: {
             threadId: nextThreadId,
@@ -3417,14 +3453,12 @@ export default function ChatView(props: ChatViewProps) {
         });
       })
       .catch(async (err: unknown) => {
-        await threadActions
-          .delete({
-            environmentId,
-            input: {
-              threadId: nextThreadId,
-            },
-          })
-          .catch(() => undefined);
+        await deleteThread({
+          environmentId,
+          input: {
+            threadId: nextThreadId,
+          },
+        }).catch(() => undefined);
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -3444,12 +3478,15 @@ export default function ChatView(props: ChatViewProps) {
     activeThread,
     beginLocalDispatch,
     activeEnvironmentUnavailable,
+    createThread,
+    deleteThread,
     isConnecting,
     isSendBusy,
     isServerThread,
     navigate,
     resetLocalDispatch,
     runtimeMode,
+    startThreadTurn,
     autoOpenPlanSidebar,
     environmentId,
   ]);

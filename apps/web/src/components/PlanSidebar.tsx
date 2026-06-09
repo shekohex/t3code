@@ -1,4 +1,5 @@
 import { memo, useState, useCallback } from "react";
+import { useAtomSet } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { Badge } from "./ui/badge";
@@ -25,7 +26,7 @@ import {
   stripDisplayedPlanMarkdown,
 } from "../proposedPlan";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
-import { useProjectActions } from "~/state/projects";
+import { projectEnvironment } from "~/state/projects";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
@@ -76,7 +77,7 @@ const PlanSidebar = memo(function PlanSidebar({
 }: PlanSidebarProps) {
   const [proposedPlanExpanded, setProposedPlanExpanded] = useState(false);
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
-  const projectActions = useProjectActions();
+  const writeProjectFile = useAtomSet(projectEnvironment.writeFile, { mode: "promise" });
   const { copyToClipboard, isCopied } = useCopyToClipboard();
 
   const planMarkdown = activeProposedPlan?.planMarkdown ?? null;
@@ -98,15 +99,14 @@ const PlanSidebar = memo(function PlanSidebar({
     if (!workspaceRoot || !planMarkdown) return;
     const filename = buildProposedPlanMarkdownFilename(planMarkdown);
     setIsSavingToWorkspace(true);
-    void projectActions
-      .writeFile({
-        environmentId,
-        input: {
-          cwd: workspaceRoot,
-          relativePath: filename,
-          contents: normalizePlanMarkdownForExport(planMarkdown),
-        },
-      })
+    void writeProjectFile({
+      environmentId,
+      input: {
+        cwd: workspaceRoot,
+        relativePath: filename,
+        contents: normalizePlanMarkdownForExport(planMarkdown),
+      },
+    })
       .then((result) => {
         toastManager.add({
           type: "success",
@@ -127,7 +127,7 @@ const PlanSidebar = memo(function PlanSidebar({
         () => setIsSavingToWorkspace(false),
         () => setIsSavingToWorkspace(false),
       );
-  }, [environmentId, planMarkdown, projectActions, workspaceRoot]);
+  }, [environmentId, planMarkdown, workspaceRoot, writeProjectFile]);
 
   return (
     <div

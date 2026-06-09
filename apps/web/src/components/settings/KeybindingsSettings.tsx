@@ -27,6 +27,7 @@ import {
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
+import { useAtomSet } from "@effect/atom-react";
 
 import { isElectron } from "../../env";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
@@ -37,7 +38,7 @@ import {
   useServerKeybindings,
   useServerKeybindingsConfigPath,
 } from "../../rpc/serverState";
-import { useServerActions } from "../../state/server";
+import { serverEnvironment } from "../../state/server";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -1068,7 +1069,12 @@ export function KeybindingsSettingsPanel() {
   const keybindingsConfigPath = useServerKeybindingsConfigPath();
   const availableEditors = useServerAvailableEditors();
   const primaryEnvironment = usePrimaryEnvironment();
-  const serverActions = useServerActions();
+  const upsertKeybinding = useAtomSet(serverEnvironment.upsertKeybinding, {
+    mode: "promise",
+  });
+  const removeKeybindingMutation = useAtomSet(serverEnvironment.removeKeybinding, {
+    mode: "promise",
+  });
   const openInPreferredEditor = useOpenInPreferredEditor(
     primaryEnvironment?.environmentId ?? null,
     availableEditors,
@@ -1129,11 +1135,10 @@ export function KeybindingsSettingsPanel() {
         ...(input.when?.trim() ? { when: input.when.trim() } : {}),
         ...(input.replace ? { replace: input.replace } : {}),
       };
-      void serverActions
-        .upsertKeybinding({
-          environmentId: primaryEnvironment.environmentId,
-          input: payload,
-        })
+      void upsertKeybinding({
+        environmentId: primaryEnvironment.environmentId,
+        input: payload,
+      })
         .then(() => {
           setIsAddingBinding(false);
         })
@@ -1148,18 +1153,17 @@ export function KeybindingsSettingsPanel() {
           setSavingCommand(null);
         });
     },
-    [primaryEnvironment, serverActions],
+    [primaryEnvironment, upsertKeybinding],
   );
 
   const removeKeybinding = useCallback(
     (row: KeybindingRow) => {
       if (!primaryEnvironment) return;
       setSavingCommand(row.command);
-      void serverActions
-        .removeKeybinding({
-          environmentId: primaryEnvironment.environmentId,
-          input: rowKeybindingTarget(row),
-        })
+      void removeKeybindingMutation({
+        environmentId: primaryEnvironment.environmentId,
+        input: rowKeybindingTarget(row),
+      })
         .catch((error: unknown) => {
           toastManager.add({
             title: "Unable to remove keybinding",
@@ -1171,7 +1175,7 @@ export function KeybindingsSettingsPanel() {
           setSavingCommand(null);
         });
     },
-    [primaryEnvironment, serverActions],
+    [primaryEnvironment, removeKeybindingMutation],
   );
 
   const resetKeybinding = useCallback(
