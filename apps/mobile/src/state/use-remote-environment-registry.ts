@@ -5,18 +5,15 @@ import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 import { Alert } from "react-native";
 
-import { useEnvironmentServerConfig } from "../connection/entityState";
-import { useConnectionController } from "../connection/useConnectionController";
-import { useEnvironmentPresentation } from "../connection/connectionState";
+import { useEnvironmentServerConfig } from "../state/entities";
+import { useConnectionController } from "../features/connection/useConnectionController";
+import { useEnvironmentPresentation } from "./presentation";
 import {
   projectEnvironmentPresentation,
   type EnvironmentPresentation,
-} from "../connection/useEnvironments";
-import { useWorkspaceState } from "../connection/useWorkspace";
-import {
-  projectWorkspaceEnvironment,
-  type WorkspaceEnvironment,
-} from "../connection/workspaceModel";
+} from "../state/environments";
+import { useWorkspaceState } from "../state/workspace";
+import { projectWorkspaceEnvironment, type WorkspaceEnvironment } from "../state/workspaceModel";
 import type { SavedRemoteConnection } from "../lib/connection";
 import { appAtomRegistry } from "./atom-registry";
 import type { ConnectedEnvironmentSummary, EnvironmentRuntimeState } from "./remote-runtime-types";

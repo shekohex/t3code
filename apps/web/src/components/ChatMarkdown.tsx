@@ -35,8 +35,8 @@ import {
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
-import { useActiveEnvironmentId } from "../connection/entityState";
-import { useServerConfig } from "../connection/useEnvironmentData";
+import { useActiveEnvironmentId } from "../state/entities";
+import { useServerConfig } from "../state/server";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },

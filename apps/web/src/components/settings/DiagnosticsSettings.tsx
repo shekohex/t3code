@@ -24,10 +24,10 @@ import {
   useProcessDiagnostics,
   useProcessResourceHistory,
   useTraceDiagnostics,
-} from "../../connection/useEnvironmentData";
-import { useServerActions } from "../../connection/serverEnvironment";
-import { useShellActions } from "../../connection/shellEnvironment";
-import { usePrimaryEnvironment } from "../../connection/useEnvironments";
+} from "../../state/server";
+import { useServerActions } from "../../state/server";
+import { useShellActions } from "../../state/shell";
+import { usePrimaryEnvironment } from "../../state/environments";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";

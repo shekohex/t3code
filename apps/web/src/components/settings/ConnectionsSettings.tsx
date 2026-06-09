@@ -110,15 +110,15 @@ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import {
   linkPrimaryEnvironment as linkPrimaryEnvironmentAtom,
   unlinkPrimaryEnvironment as unlinkPrimaryEnvironmentAtom,
-} from "~/connection/connectionRuntime";
-import { useAuthAccessChanges } from "~/connection/useEnvironmentData";
+} from "~/cloud/linkEnvironmentAtoms";
+import { useAuthAccessChanges } from "~/state/auth";
 import {
   type EnvironmentPresentation,
   useEnvironmentActions,
   useEnvironments,
   usePrimaryEnvironment,
   useRelayEnvironmentDiscovery,
-} from "~/connection/useEnvironments";
+} from "~/state/environments";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 

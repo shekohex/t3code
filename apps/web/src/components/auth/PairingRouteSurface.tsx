@@ -2,7 +2,7 @@ import type { AuthSessionState } from "@t3tools/contracts";
 import React, { startTransition, useEffect, useRef, useState, useCallback } from "react";
 
 import { APP_DISPLAY_NAME } from "../../branding";
-import { useEnvironmentActions } from "../../connection/useEnvironments";
+import { useEnvironmentActions } from "../../state/environments";
 import {
   peekPairingTokenFromUrl,
   stripPairingTokenFromUrl,

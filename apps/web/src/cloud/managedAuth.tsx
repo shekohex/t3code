@@ -7,7 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 import { useEffect, useRef, type ReactNode } from "react";
 
-import { useEnvironmentConnectionActions } from "../connection/connectionState";
+import { useEnvironmentConnectionActions } from "../state/environments";
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";

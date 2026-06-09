@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 import { EnvironmentId, type ProjectScript } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Pressable, ScrollView, Text as RNText, View, useColorScheme } from "react-native";
-import { useWorkspaceState } from "../../connection/useWorkspace";
+import { useWorkspaceState } from "../../state/workspace";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useVcsStatus } from "../../state/use-vcs-status";
 import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";

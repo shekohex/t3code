@@ -6,8 +6,8 @@ import { CommandId, MessageId, type EnvironmentId, type ThreadId } from "@t3tool
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 import { Atom } from "effect/unstable/reactivity";
 
-import { useThreadActions } from "../connection/threadEnvironment";
-import { useThreadShells } from "../connection/entityState";
+import { useThreadActions } from "../state/threads";
+import { useThreadShells } from "../state/entities";
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import {
   convertPastedImagesToAttachments,

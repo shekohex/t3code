@@ -32,7 +32,7 @@ import {
   WebStormIcon,
 } from "../JetBrainsIcons";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
-import { useShellActions } from "~/connection/shellEnvironment";
+import { useShellActions } from "~/state/shell";
 
 const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
   const baseOptions: ReadonlyArray<{ label: string; Icon: Icon; value: EditorId }> = [

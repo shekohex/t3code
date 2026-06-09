@@ -9,13 +9,13 @@ import { useCallback, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
-import { useTerminalActions } from "../connection/terminalEnvironment";
-import { useThreadActions as useThreadEnvironmentActions } from "../connection/threadEnvironment";
-import { useVcsActions } from "../connection/vcsEnvironment";
+import { useTerminalActions } from "../state/terminal";
+import { useThreadActions as useThreadEnvironmentActions } from "../state/threads";
+import { useVcsActions } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
 import { readLocalApi } from "../localApi";
-import { readEnvironmentThreadRefs, readProject, readThreadShell } from "../connection/entityState";
+import { readEnvironmentThreadRefs, readProject, readThreadShell } from "../state/entities";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";

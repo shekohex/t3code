@@ -21,12 +21,8 @@ import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { resolveThreadRouteRef, buildThreadRouteParams } from "../threadRoutes";
 import { RightPanelSheet } from "../components/RightPanelSheet";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
-import {
-  useEnvironmentThreadRefs,
-  useThreadDetail,
-  useThreadShell,
-} from "../connection/entityState";
-import { useEnvironmentShell } from "../connection/connectionState";
+import { useEnvironmentThreadRefs, useThreadDetail, useThreadShell } from "../state/entities";
+import { useEnvironmentShell } from "../state/shell";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";

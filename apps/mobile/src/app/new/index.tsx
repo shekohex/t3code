@@ -8,9 +8,9 @@ import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { useProjects, useThreadShells } from "../../connection/entityState";
-import type { WorkspaceState } from "../../connection/workspaceModel";
-import { useWorkspaceState } from "../../connection/useWorkspace";
+import { useProjects, useThreadShells } from "../../state/entities";
+import type { WorkspaceState } from "../../state/workspaceModel";
+import { useWorkspaceState } from "../../state/workspace";
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 

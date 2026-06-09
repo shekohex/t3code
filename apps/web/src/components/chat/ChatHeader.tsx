@@ -16,7 +16,7 @@ import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScr
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
-import { usePrimaryEnvironment } from "../../connection/useEnvironments";
+import { usePrimaryEnvironment } from "../../state/environments";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;

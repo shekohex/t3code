@@ -34,13 +34,13 @@ import {
   resolveFileDiffPath,
 } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
-import { useProject, useThreadDetail } from "../connection/entityState";
+import { useProject, useThreadDetail } from "../state/entities";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
-import { useServerConfig } from "../connection/useEnvironmentData";
+import { useServerConfig } from "../state/server";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";

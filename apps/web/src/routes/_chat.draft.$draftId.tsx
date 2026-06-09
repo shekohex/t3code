@@ -5,7 +5,7 @@ import { threadHasStarted } from "../components/ChatView.logic";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
 import { SidebarInset } from "../components/ui/sidebar";
 import { buildThreadRouteParams } from "../threadRoutes";
-import { useThreadDetail, useThreadRefs } from "../connection/entityState";
+import { useThreadDetail, useThreadRefs } from "../state/entities";
 
 function DraftChatThreadRouteView() {
   const navigate = useNavigate();

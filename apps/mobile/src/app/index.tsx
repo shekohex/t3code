@@ -2,8 +2,8 @@ import { Stack, useRouter } from "expo-router";
 import { useState } from "react";
 import { Text as RNText, View, useColorScheme } from "react-native";
 
-import { useProjects, useThreadShells } from "../connection/entityState";
-import { useWorkspaceState } from "../connection/useWorkspace";
+import { useProjects, useThreadShells } from "../state/entities";
+import { useWorkspaceState } from "../state/workspace";
 import { buildThreadRoutePath } from "../lib/routes";
 import { useSavedRemoteConnections } from "../state/use-remote-environment-registry";
 import { HomeScreen } from "../features/home/HomeScreen";

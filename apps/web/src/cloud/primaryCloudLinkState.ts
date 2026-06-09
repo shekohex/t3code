@@ -9,7 +9,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { HttpClient } from "effect/unstable/http";
 import { useCallback, useMemo } from "react";
 
-import { usePrimaryEnvironment } from "../connection/useEnvironments";
+import { usePrimaryEnvironment } from "../state/environments";
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readPrimaryCloudLinkState, type CloudLinkTarget } from "./linkEnvironment";

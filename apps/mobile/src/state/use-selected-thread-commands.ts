@@ -6,7 +6,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 
-import { useThreadActions } from "../connection/threadEnvironment";
+import { useThreadActions } from "../state/threads";
 import { useThreadSelection } from "./use-thread-selection";
 
 export function useSelectedThreadCommands(input: {

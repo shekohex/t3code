@@ -10,7 +10,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 
-import { orchestrationEnvironment } from "../connection/orchestrationEnvironment";
+import { orchestrationEnvironment } from "../state/orchestration";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 
 const archivedSnapshotsAtom = Atom.family((environmentKey: string) =>

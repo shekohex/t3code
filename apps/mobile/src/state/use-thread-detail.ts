@@ -1,7 +1,7 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
-import { useEnvironmentThread } from "../connection/useEnvironmentData";
+import { useEnvironmentThread } from "./threads";
 import { useThreadSelection } from "./use-thread-selection";
 
 export interface ThreadDetailTarget {

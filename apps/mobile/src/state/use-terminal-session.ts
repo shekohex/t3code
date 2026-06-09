@@ -8,7 +8,7 @@ import {
 import { ThreadId, type EnvironmentId, type TerminalAttachInput } from "@t3tools/contracts";
 import { useMemo } from "react";
 
-import { useTerminalAttach, useTerminalMetadata } from "../connection/useEnvironmentData";
+import { useTerminalAttach, useTerminalMetadata } from "./terminal";
 
 export function useAttachedTerminalSession(input: {
   readonly environmentId: EnvironmentId | null;

@@ -14,7 +14,7 @@ import { useResolveClassNames } from "uniwind";
 
 import { LoadingScreen } from "../components/LoadingScreen";
 
-import { useWorkspaceState } from "../connection/useWorkspace";
+import { useWorkspaceState } from "../state/workspace";
 import { RegistryContext } from "@effect/atom-react";
 import { appAtomRegistry } from "../state/atom-registry";
 import { CloudAuthProvider } from "../features/cloud/CloudAuthProvider";

@@ -44,8 +44,8 @@ import {
   type ThreadTerminalGroup,
 } from "../types";
 import { readLocalApi } from "~/localApi";
-import { useTerminalController } from "../connection/terminalSessions";
-import { useServerConfig } from "../connection/useEnvironmentData";
+import { useTerminalController } from "../state/terminalSessions";
+import { useServerConfig } from "../state/server";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;

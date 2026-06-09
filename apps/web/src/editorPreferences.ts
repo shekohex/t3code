@@ -1,7 +1,7 @@
 import { EDITORS, EditorId, type EnvironmentId } from "@t3tools/contracts";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
 import { useCallback, useMemo } from "react";
-import { useShellActions } from "./connection/shellEnvironment";
+import { useShellActions } from "./state/shell";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 

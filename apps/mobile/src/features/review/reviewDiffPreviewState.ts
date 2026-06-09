@@ -1,6 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import { useReviewPreview } from "../../connection/appQueries";
+import { useReviewPreview } from "../../state/queries";
 
 export function useReviewDiffPreview(input: {
   readonly environmentId?: EnvironmentId;
