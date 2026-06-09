@@ -18,10 +18,3 @@ export const EMPTY_THREAD_DETAIL_STATE = Object.freeze<ThreadDetailState>({
   isPending: false,
   isDeleted: false,
 });
-
-export function getThreadDetailTargetKey(target: ThreadDetailTarget): string | null {
-  if (target.environmentId === null || target.threadId === null) {
-    return null;
-  }
-  return `${target.environmentId}:${target.threadId}`;
-}
