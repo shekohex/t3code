@@ -1,6 +1,7 @@
 import { mobileEnvironmentReact } from "./mobileConnectionRuntime";
 
 export const useMobileEnvironmentConnectionState = mobileEnvironmentReact.useConnectionState;
+export const useMobileEnvironmentPresentation = mobileEnvironmentReact.useEnvironmentPresentation;
 export const useMobileEnvironmentConfig = mobileEnvironmentReact.useEnvironmentConfig;
 export const useMobileEnvironmentShell = mobileEnvironmentReact.useShell;
 export const useMobileEnvironmentThread = mobileEnvironmentReact.useThread;

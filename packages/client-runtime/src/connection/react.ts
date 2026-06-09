@@ -12,10 +12,14 @@ import { useMemo } from "react";
 
 import type { createEnvironmentConnectionAtoms } from "./atoms.ts";
 import type { createEnvironmentDataAtoms } from "./dataAtoms.ts";
+import type { EnvironmentPresentation } from "./presentation.ts";
 import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threads.ts";
 
 const EMPTY_ASYNC_RESULT_ATOM = Atom.make(AsyncResult.initial<never, never>(false)).pipe(
   Atom.withLabel("environment-react:empty-result"),
+);
+const EMPTY_ENVIRONMENT_PRESENTATION_ATOM = Atom.make<EnvironmentPresentation | null>(null).pipe(
+  Atom.withLabel("environment-react:empty-presentation"),
 );
 
 export interface EnvironmentQueryView<A> {
@@ -59,6 +63,19 @@ export function createEnvironmentReactFacade<CR, CE, DR, DE>(
 ) {
   function useConnectionState(environmentId: EnvironmentId) {
     return useQuery(connections.stateAtom(environmentId));
+  }
+
+  function useEnvironmentPresentation(environmentId: EnvironmentId | null) {
+    const catalog = useAtomValue(connections.catalogValueAtom);
+    const presentation = useAtomValue(
+      environmentId === null
+        ? EMPTY_ENVIRONMENT_PRESENTATION_ATOM
+        : connections.presentationAtom(environmentId),
+    );
+    return {
+      isReady: catalog.isReady,
+      presentation,
+    };
   }
 
   function useEnvironmentConfig(environmentId: EnvironmentId) {
@@ -279,14 +296,18 @@ export function createEnvironmentReactFacade<CR, CE, DR, DE>(
   function useConnectionActions() {
     const register = useAtomSet(connections.register, { mode: "promise" });
     const remove = useAtomSet(connections.remove, { mode: "promise" });
+    const removeRelayEnvironments = useAtomSet(connections.removeRelayEnvironments, {
+      mode: "promise",
+    });
     const retryNow = useAtomSet(connections.retryNow, { mode: "promise" });
     return useMemo(
       () => ({
         register,
         remove,
+        removeRelayEnvironments,
         retryNow,
       }),
-      [register, remove, retryNow],
+      [register, remove, removeRelayEnvironments, retryNow],
     );
   }
 
@@ -637,6 +658,7 @@ export function createEnvironmentReactFacade<CR, CE, DR, DE>(
 
   return {
     useConnectionState,
+    useEnvironmentPresentation,
     useEnvironmentConfig,
     usePreparedConnection,
     useShell,

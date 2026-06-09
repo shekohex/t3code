@@ -1,30 +1,19 @@
 import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
-
-export type AvailableCloudEnvironmentState = "available" | "connecting" | "disconnected";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime";
 
 export interface AvailableCloudEnvironmentPresentation {
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
-  readonly connectionState: AvailableCloudEnvironmentState;
+  readonly connectionState: EnvironmentConnectionPhase;
   readonly statusText: string;
 }
 
 export function availableCloudEnvironmentPresentation(input: {
-  readonly isConnecting: boolean;
   readonly isStatusPending: boolean;
   readonly status: RelayEnvironmentStatusResponse | null;
   readonly statusError: string | null;
   readonly statusErrorTraceId: string | null;
 }): AvailableCloudEnvironmentPresentation {
-  if (input.isConnecting) {
-    return {
-      connectionError: null,
-      connectionErrorTraceId: null,
-      connectionState: "connecting",
-      statusText: "Connecting...",
-    };
-  }
-
   if (input.status?.status === "online") {
     return {
       connectionError: null,
@@ -39,7 +28,7 @@ export function availableCloudEnvironmentPresentation(input: {
     return {
       connectionError,
       connectionErrorTraceId: null,
-      connectionState: "disconnected",
+      connectionState: "error",
       statusText: connectionError,
     };
   }
@@ -48,7 +37,7 @@ export function availableCloudEnvironmentPresentation(input: {
     return {
       connectionError: input.statusError,
       connectionErrorTraceId: input.statusErrorTraceId,
-      connectionState: "disconnected",
+      connectionState: "error",
       statusText: input.statusError,
     };
   }

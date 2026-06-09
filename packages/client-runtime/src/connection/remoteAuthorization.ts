@@ -130,9 +130,12 @@ export const remoteEnvironmentAuthorizationLayer = Layer.effect(
                 message: "Could not load the environment authorization key.",
               }),
           ),
+          Effect.withSpan("environment.authorization.dpopKey.resolve"),
         );
         const now = yield* Clock.currentTimeMillis;
-        const cached = yield* tokenStore.get(input.expectedEnvironmentId);
+        const cached = yield* tokenStore
+          .get(input.expectedEnvironmentId)
+          .pipe(Effect.withSpan("environment.authorization.accessToken.cache"));
         if (
           Option.isSome(cached) &&
           cached.value.environmentId === input.expectedEnvironmentId &&
@@ -154,7 +157,9 @@ export const remoteEnvironmentAuthorizationLayer = Layer.effect(
           if (!shouldRefreshDpopAccessToken(cachedSocket.failure)) {
             return yield* mapDpopSocketError(cachedSocket.failure);
           }
-          yield* tokenStore.remove(input.expectedEnvironmentId);
+          yield* tokenStore
+            .remove(input.expectedEnvironmentId)
+            .pipe(Effect.withSpan("environment.authorization.accessToken.remove"));
         }
 
         yield* Effect.annotateCurrentSpan({
@@ -163,6 +168,7 @@ export const remoteEnvironmentAuthorizationLayer = Layer.effect(
         const bootstrap = yield* input.obtainBootstrap;
         const descriptor = yield* fetchDescriptor(bootstrap.endpoint.httpBaseUrl).pipe(
           Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.withSpan("environment.authorization.descriptor"),
         );
         if (descriptor.environmentId !== input.expectedEnvironmentId) {
           return yield* environmentMismatchError({
@@ -193,6 +199,7 @@ export const remoteEnvironmentAuthorizationLayer = Layer.effect(
         }).pipe(
           Effect.mapError(mapRemoteEnvironmentError),
           Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.withSpan("environment.authorization.accessToken.exchange"),
         );
         const issuedAt = yield* Clock.currentTimeMillis;
         const token = new RemoteDpopAccessToken({
@@ -206,7 +213,9 @@ export const remoteEnvironmentAuthorizationLayer = Layer.effect(
         const socketUrl = yield* createDpopSocketUrl(token).pipe(
           Effect.mapError(mapDpopSocketError),
         );
-        yield* tokenStore.put(token);
+        yield* tokenStore
+          .put(token)
+          .pipe(Effect.withSpan("environment.authorization.accessToken.persist"));
         return {
           environmentId: descriptor.environmentId,
           label: descriptor.label,
@@ -218,7 +227,8 @@ export const remoteEnvironmentAuthorizationLayer = Layer.effect(
 
     return RemoteEnvironmentAuthorization.of({
       authorizeBearer,
-      authorizeDpop,
+      authorizeDpop: (input) =>
+        authorizeDpop(input).pipe(Effect.withSpan("environment.authorization")),
     });
   }),
 );

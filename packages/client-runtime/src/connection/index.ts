@@ -3,6 +3,7 @@ export * from "./connectivity.ts";
 export * from "./wakeups.ts";
 export * from "./broker.ts";
 export * from "./brokers.ts";
+export * from "./driver.ts";
 export * from "./capabilities.ts";
 export * from "./catalog.ts";
 export * from "./errors.ts";

@@ -16,6 +16,7 @@ import {
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
+  type ConnectionCatalogEntry,
   ConnectionCredentialStore,
   ConnectionProfileStore,
   SshConnectionProfile,
@@ -60,21 +61,17 @@ const primaryBroker = Effect.fn("clientRuntime.connection.broker.primary")(
 );
 
 const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")(function* () {
-  const profiles = yield* ConnectionProfileStore;
   const credentials = yield* ConnectionCredentialStore;
   const remote = yield* RemoteEnvironmentAuthorization;
 
   return Effect.fn("clientRuntime.connection.broker.bearer")(function* (
-    target: BearerConnectionTarget,
+    entry: ConnectionCatalogEntry & { readonly target: BearerConnectionTarget },
   ) {
-    const profile = yield* profiles.get(target.connectionId).pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.fail(profileMissingError(target.connectionId)),
-          onSome: Effect.succeed,
-        }),
-      ),
-    );
+    const target = entry.target;
+    const profile = yield* Option.match(entry.profile, {
+      onNone: () => Effect.fail(profileMissingError(target.connectionId)),
+      onSome: Effect.succeed,
+    });
     if (!isBearerProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
@@ -125,8 +122,12 @@ const makeRelayBroker = Effect.fn("clientRuntime.connection.broker.makeRelay")(f
       const authorized = yield* remote.authorizeDpop({
         expectedEnvironmentId: target.environmentId,
         obtainBootstrap: Effect.gen(function* () {
-          const clerkToken = yield* session.clerkToken;
-          const deviceId = yield* identity.deviceId;
+          const clerkToken = yield* session.clerkToken.pipe(
+            Effect.withSpan("relay.connection.cloudSessionToken.resolve"),
+          );
+          const deviceId = yield* identity.deviceId.pipe(
+            Effect.withSpan("relay.connection.deviceIdentity.resolve"),
+          );
           const connected = yield* relay
             .connectEnvironment({
               clerkToken,
@@ -142,7 +143,7 @@ const makeRelayBroker = Effect.fn("clientRuntime.connection.broker.makeRelay")(f
             });
           }
           return connected;
-        }),
+        }).pipe(Effect.withSpan("relay.connection.bootstrap.obtain")),
       });
       return {
         environmentId: authorized.environmentId,
@@ -162,15 +163,14 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
   const ssh = yield* SshEnvironmentGateway;
   const remote = yield* RemoteEnvironmentAuthorization;
 
-  return Effect.fn("clientRuntime.connection.broker.ssh")(function* (target: SshConnectionTarget) {
-    const profile = yield* profiles.get(target.connectionId).pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.fail(profileMissingError(target.connectionId)),
-          onSome: Effect.succeed,
-        }),
-      ),
-    );
+  return Effect.fn("clientRuntime.connection.broker.ssh")(function* (
+    entry: ConnectionCatalogEntry & { readonly target: SshConnectionTarget },
+  ) {
+    const target = entry.target;
+    const profile = yield* Option.match(entry.profile, {
+      onNone: () => Effect.fail(profileMissingError(target.connectionId)),
+      onSome: Effect.succeed,
+    });
     if (!isSshProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
@@ -220,8 +220,9 @@ export const connectionBrokerLayer = Layer.effect(
     const ssh = yield* makeSshBroker();
 
     const prepare = Effect.fn("clientRuntime.connection.broker.prepare")(function* (
-      target: ConnectionTarget,
+      entry: ConnectionCatalogEntry,
     ) {
+      const target: ConnectionTarget = entry.target;
       yield* Effect.annotateCurrentSpan({
         "connection.environment.id": target.environmentId,
         "connection.target.kind": target._tag,
@@ -230,11 +231,11 @@ export const connectionBrokerLayer = Layer.effect(
         case "PrimaryConnectionTarget":
           return yield* primaryBroker(target);
         case "BearerConnectionTarget":
-          return yield* bearer(target);
+          return yield* bearer({ ...entry, target });
         case "RelayConnectionTarget":
           return yield* relay(target);
         case "SshConnectionTarget":
-          return yield* ssh(target);
+          return yield* ssh({ ...entry, target });
       }
     });
 

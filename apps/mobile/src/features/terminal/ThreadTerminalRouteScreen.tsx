@@ -19,7 +19,11 @@ import {
 import { EmptyState } from "../../components/EmptyState";
 import { GlassSurface } from "../../components/GlassSurface";
 import { LoadingScreen } from "../../components/LoadingScreen";
-import { useMobileActions } from "../../connection/useMobileEnvironmentData";
+import {
+  useMobileActions,
+  useMobileEnvironmentConnectionActions,
+  useMobileEnvironmentPresentation,
+} from "../../connection/useMobileEnvironmentData";
 import { buildThreadTerminalNavigation } from "../../lib/routes";
 import { useRemoteEnvironmentState } from "../../state/use-remote-environment-registry";
 import {
@@ -28,6 +32,7 @@ import {
 } from "../../state/use-terminal-session";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadDetail } from "../../state/use-thread-detail";
+import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { TerminalSurface } from "./NativeTerminalSurface";
 import { getPierreTerminalTheme } from "./terminalTheme";
 import { loadPreferences, savePreferencesPatch } from "../../lib/storage";
@@ -151,6 +156,7 @@ function pickRunningTerminalSessionForBootstrap(
 export function ThreadTerminalRouteScreen() {
   const router = useRouter();
   const actions = useMobileActions();
+  const environmentActions = useMobileEnvironmentConnectionActions();
   const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
   const { isLoadingSavedConnection } = useRemoteEnvironmentState();
   const params = useLocalSearchParams<{
@@ -167,6 +173,8 @@ export function ThreadTerminalRouteScreen() {
     ? EnvironmentId.make(routeEnvironmentIdRaw)
     : null;
   const routeThreadId = routeThreadIdRaw ? ThreadId.make(routeThreadIdRaw) : null;
+  const environment = useMobileEnvironmentPresentation(routeEnvironmentId);
+  const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const requestedTerminalId = firstRouteParam(params.terminalId);
   const terminalId = requestedTerminalId ?? DEFAULT_TERMINAL_ID;
   const cachedFontSize = getCachedTerminalFontSize();
@@ -291,6 +299,7 @@ export function ThreadTerminalRouteScreen() {
       initialAttachGridSize !== null &&
       hasResolvedFontPreference &&
       hasMeasuredSurface &&
+      isEnvironmentReady &&
       !shouldRedirectToRunningTerminal
         ? {
             threadId: selectedThread.id,
@@ -308,6 +317,7 @@ export function ThreadTerminalRouteScreen() {
       hasResolvedFontPreference,
       hasResolvedPendingLaunch,
       initialAttachGridSize,
+      isEnvironmentReady,
       launchLocation,
       pendingLaunch,
       selectedThread,
@@ -848,6 +858,11 @@ export function ThreadTerminalRouteScreen() {
   const handleShowKeyboard = useCallback(() => {
     setKeyboardFocusRequest((current) => current + 1);
   }, []);
+  const handleRetryEnvironment = useCallback(() => {
+    if (routeEnvironmentId !== null) {
+      void environmentActions.retryNow(routeEnvironmentId);
+    }
+  }, [environmentActions, routeEnvironmentId]);
 
   if (!selectedThread) {
     if (isLoadingSavedConnection) {
@@ -873,6 +888,10 @@ export function ThreadTerminalRouteScreen() {
         />
       </View>
     );
+  }
+
+  if (!environment.isReady && environment.presentation === null) {
+    return <LoadingScreen message="Opening terminal…" />;
   }
 
   return (
@@ -923,152 +942,178 @@ export function ThreadTerminalRouteScreen() {
         }}
       />
 
-      <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Menu icon="terminal" title="Terminal options" separateBackground>
-          <Stack.Toolbar.Label>
-            {getTerminalStatusLabel({
-              status: terminal.status,
-              hasRunningSubprocess: terminal.hasRunningSubprocess,
-            })}
-          </Stack.Toolbar.Label>
-          <Stack.Toolbar.Menu icon="textformat.size" inline title="Text size">
-            <Stack.Toolbar.Label>Text size</Stack.Toolbar.Label>
+      {isEnvironmentReady ? (
+        <Stack.Toolbar placement="right">
+          <Stack.Toolbar.Menu icon="terminal" title="Terminal options" separateBackground>
+            <Stack.Toolbar.Label>
+              {getTerminalStatusLabel({
+                status: terminal.status,
+                hasRunningSubprocess: terminal.hasRunningSubprocess,
+              })}
+            </Stack.Toolbar.Label>
+            <Stack.Toolbar.Menu icon="textformat.size" inline title="Text size">
+              <Stack.Toolbar.Label>Text size</Stack.Toolbar.Label>
+              <Stack.Toolbar.MenuAction
+                disabled={fontSize <= MIN_TERMINAL_FONT_SIZE}
+                discoverabilityLabel="Decrease terminal text size"
+                onPress={handleDecreaseFontSize}
+              >
+                <Stack.Toolbar.Label>{`A- ${Math.max(MIN_TERMINAL_FONT_SIZE, fontSize - TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`}</Stack.Toolbar.Label>
+              </Stack.Toolbar.MenuAction>
+              <Stack.Toolbar.MenuAction
+                disabled={fontSize >= MAX_TERMINAL_FONT_SIZE}
+                discoverabilityLabel="Increase terminal text size"
+                onPress={handleIncreaseFontSize}
+              >
+                <Stack.Toolbar.Label>{`A+ ${Math.min(MAX_TERMINAL_FONT_SIZE, fontSize + TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`}</Stack.Toolbar.Label>
+              </Stack.Toolbar.MenuAction>
+            </Stack.Toolbar.Menu>
+            {terminalMenuSessions.map((session) => (
+              <Stack.Toolbar.MenuAction
+                key={session.terminalId}
+                icon={session.terminalId === terminalId ? "checkmark" : "terminal"}
+                onPress={() => handleSelectTerminal(session.terminalId)}
+                subtitle={[
+                  getTerminalStatusLabel({ status: session.status }),
+                  basename(session.cwd),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              >
+                <Stack.Toolbar.Label>{session.displayLabel}</Stack.Toolbar.Label>
+              </Stack.Toolbar.MenuAction>
+            ))}
             <Stack.Toolbar.MenuAction
-              disabled={fontSize <= MIN_TERMINAL_FONT_SIZE}
-              discoverabilityLabel="Decrease terminal text size"
-              onPress={handleDecreaseFontSize}
+              icon="plus"
+              onPress={handleOpenNewTerminal}
+              subtitle={`Start another shell in ${basename(selectedThreadProject.workspaceRoot) ?? "this workspace"}`}
             >
-              <Stack.Toolbar.Label>{`A- ${Math.max(MIN_TERMINAL_FONT_SIZE, fontSize - TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`}</Stack.Toolbar.Label>
-            </Stack.Toolbar.MenuAction>
-            <Stack.Toolbar.MenuAction
-              disabled={fontSize >= MAX_TERMINAL_FONT_SIZE}
-              discoverabilityLabel="Increase terminal text size"
-              onPress={handleIncreaseFontSize}
-            >
-              <Stack.Toolbar.Label>{`A+ ${Math.min(MAX_TERMINAL_FONT_SIZE, fontSize + TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`}</Stack.Toolbar.Label>
+              <Stack.Toolbar.Label>Open new terminal</Stack.Toolbar.Label>
             </Stack.Toolbar.MenuAction>
           </Stack.Toolbar.Menu>
-          {terminalMenuSessions.map((session) => (
-            <Stack.Toolbar.MenuAction
-              key={session.terminalId}
-              icon={session.terminalId === terminalId ? "checkmark" : "terminal"}
-              onPress={() => handleSelectTerminal(session.terminalId)}
-              subtitle={[getTerminalStatusLabel({ status: session.status }), basename(session.cwd)]
-                .filter(Boolean)
-                .join(" · ")}
-            >
-              <Stack.Toolbar.Label>{session.displayLabel}</Stack.Toolbar.Label>
-            </Stack.Toolbar.MenuAction>
-          ))}
-          <Stack.Toolbar.MenuAction
-            icon="plus"
-            onPress={handleOpenNewTerminal}
-            subtitle={`Start another shell in ${basename(selectedThreadProject.workspaceRoot) ?? "this workspace"}`}
-          >
-            <Stack.Toolbar.Label>Open new terminal</Stack.Toolbar.Label>
-          </Stack.Toolbar.MenuAction>
-        </Stack.Toolbar.Menu>
-      </Stack.Toolbar>
+        </Stack.Toolbar>
+      ) : null}
 
       <View style={{ flex: 1, backgroundColor: terminalTheme.background }}>
-        <View style={{ flex: 1, paddingBottom: terminalBottomInset }}>
-          <TerminalSurface
-            buffer={terminalSurfaceBuffer}
-            fontSize={fontSize}
-            isRunning={isRunning}
-            keyboardFocusRequest={keyboardFocusRequest}
-            onInput={handleInput}
-            onResize={handleResize}
-            style={{ flex: 1 }}
-            terminalKey={terminalKey}
+        {!isEnvironmentReady ? (
+          <EnvironmentConnectionNotice
+            environmentLabel={
+              environment.presentation?.entry.target.label ??
+              selectedEnvironmentConnection?.environmentLabel ??
+              "Environment"
+            }
+            connection={
+              environment.presentation?.connection ?? {
+                phase: "available",
+                error: null,
+                traceId: null,
+              }
+            }
+            resourceName="terminal"
+            onRetry={handleRetryEnvironment}
           />
-        </View>
-
-        {isAccessoryVisible ? (
-          <KeyboardStickyView
-            style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
-            offset={{ closed: 0, opened: 0 }}
-          >
-            <View
-              style={{
-                backgroundColor: terminalTheme.background,
-                borderTopColor: terminalTheme.border,
-                borderTopWidth: 1,
-                minHeight: TERMINAL_ACCESSORY_HEIGHT,
-              }}
-            >
-              <ComposerToolbarRow paddingBottom={4} paddingHorizontal={8} paddingTop={4}>
-                <ComposerToolbarScroller
-                  contentPaddingRight={2}
-                  fadeOpaque={terminalTheme.background}
-                  fadeTransparent={`${terminalTheme.background}00`}
-                >
-                  {terminalToolbarActions.map((action) => {
-                    const active =
-                      action.kind === "modifier" && pendingModifier === action.modifier;
-
-                    return (
-                      <ComposerToolbarButton
-                        key={action.key}
-                        active={active}
-                        label={action.label}
-                        maxWidth={120}
-                        minWidth={action.label.length > 1 ? 56 : 44}
-                        onPress={() => handleToolbarActionPress(action)}
-                        showChevron={false}
-                        textTransform={
-                          action.kind === "modifier" || action.kind === "clear"
-                            ? "uppercase"
-                            : "none"
-                        }
-                      />
-                    );
-                  })}
-                </ComposerToolbarScroller>
-                <ComposerToolbarButton
-                  accessibilityLabel="Dismiss keyboard"
-                  icon={{ ios: "keyboard.chevron.compact.down", android: "keyboard_hide" }}
-                  onPress={handleDismissKeyboard}
-                  showChevron={false}
-                />
-              </ComposerToolbarRow>
-            </View>
-          </KeyboardStickyView>
-        ) : !keyboardState.isVisible ? (
-          <Pressable
-            accessibilityLabel="Show keyboard"
-            accessibilityRole="button"
-            onPress={handleShowKeyboard}
-            style={({ pressed }) => ({
-              bottom: 16,
-              borderRadius: 28,
-              opacity: pressed ? 0.72 : 1,
-              position: "absolute",
-              right: 16,
-            })}
-          >
-            <GlassSurface
-              chrome="none"
-              glassEffectStyle="regular"
-              tintColor="transparent"
-              style={{
-                alignItems: "center",
-                borderRadius: 24,
-                height: 48,
-                justifyContent: "center",
-                width: 48,
-              }}
-              pointerEvents="none"
-            >
-              <SymbolView
-                name={{ ios: "keyboard", android: "keyboard" }}
-                size={20}
-                tintColor={terminalTheme.foreground}
-                type="monochrome"
+        ) : (
+          <>
+            <View style={{ flex: 1, paddingBottom: terminalBottomInset }}>
+              <TerminalSurface
+                buffer={terminalSurfaceBuffer}
+                fontSize={fontSize}
+                isRunning={isRunning}
+                keyboardFocusRequest={keyboardFocusRequest}
+                onInput={handleInput}
+                onResize={handleResize}
+                style={{ flex: 1 }}
+                terminalKey={terminalKey}
               />
-            </GlassSurface>
-          </Pressable>
-        ) : null}
+            </View>
+
+            {isAccessoryVisible ? (
+              <KeyboardStickyView
+                style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
+                offset={{ closed: 0, opened: 0 }}
+              >
+                <View
+                  style={{
+                    backgroundColor: terminalTheme.background,
+                    borderTopColor: terminalTheme.border,
+                    borderTopWidth: 1,
+                    minHeight: TERMINAL_ACCESSORY_HEIGHT,
+                  }}
+                >
+                  <ComposerToolbarRow paddingBottom={4} paddingHorizontal={8} paddingTop={4}>
+                    <ComposerToolbarScroller
+                      contentPaddingRight={2}
+                      fadeOpaque={terminalTheme.background}
+                      fadeTransparent={`${terminalTheme.background}00`}
+                    >
+                      {terminalToolbarActions.map((action) => {
+                        const active =
+                          action.kind === "modifier" && pendingModifier === action.modifier;
+
+                        return (
+                          <ComposerToolbarButton
+                            key={action.key}
+                            active={active}
+                            label={action.label}
+                            maxWidth={120}
+                            minWidth={action.label.length > 1 ? 56 : 44}
+                            onPress={() => handleToolbarActionPress(action)}
+                            showChevron={false}
+                            textTransform={
+                              action.kind === "modifier" || action.kind === "clear"
+                                ? "uppercase"
+                                : "none"
+                            }
+                          />
+                        );
+                      })}
+                    </ComposerToolbarScroller>
+                    <ComposerToolbarButton
+                      accessibilityLabel="Dismiss keyboard"
+                      icon={{ ios: "keyboard.chevron.compact.down", android: "keyboard_hide" }}
+                      onPress={handleDismissKeyboard}
+                      showChevron={false}
+                    />
+                  </ComposerToolbarRow>
+                </View>
+              </KeyboardStickyView>
+            ) : !keyboardState.isVisible ? (
+              <Pressable
+                accessibilityLabel="Show keyboard"
+                accessibilityRole="button"
+                onPress={handleShowKeyboard}
+                style={({ pressed }) => ({
+                  bottom: 16,
+                  borderRadius: 28,
+                  opacity: pressed ? 0.72 : 1,
+                  position: "absolute",
+                  right: 16,
+                })}
+              >
+                <GlassSurface
+                  chrome="none"
+                  glassEffectStyle="regular"
+                  tintColor="transparent"
+                  style={{
+                    alignItems: "center",
+                    borderRadius: 24,
+                    height: 48,
+                    justifyContent: "center",
+                    width: 48,
+                  }}
+                  pointerEvents="none"
+                >
+                  <SymbolView
+                    name={{ ios: "keyboard", android: "keyboard" }}
+                    size={20}
+                    tintColor={terminalTheme.foreground}
+                    type="monochrome"
+                  />
+                </GlassSurface>
+              </Pressable>
+            ) : null}
+          </>
+        )}
       </View>
     </>
   );

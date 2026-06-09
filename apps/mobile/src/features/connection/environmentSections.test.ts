@@ -15,7 +15,7 @@ function connectedEnvironment(
     environmentLabel: input.environmentLabel ?? input.environmentId,
     displayUrl: input.displayUrl ?? `https://${input.environmentId}.example.test/`,
     isRelayManaged: input.isRelayManaged,
-    connectionState: input.connectionState ?? "ready",
+    connectionState: input.connectionState ?? "connected",
     connectionError: input.connectionError ?? null,
     connectionErrorTraceId: input.connectionErrorTraceId ?? null,
   };
@@ -64,7 +64,7 @@ describe("mobile environment settings sections", () => {
     const cloud = connectedEnvironment({
       environmentId: "environment-cloud",
       isRelayManaged: true,
-      connectionState: "disconnected",
+      connectionState: "reconnecting",
       connectionError: "Environment did not respond before the connection timeout.",
     });
 
@@ -78,11 +78,11 @@ describe("mobile environment settings sections", () => {
     expect(sections.availableCloudEnvironments).toEqual([]);
   });
 
-  it("keeps a cleanly disconnected relay environment as a fallback when listing is unavailable", () => {
+  it("keeps an available saved relay environment as a fallback when listing is unavailable", () => {
     const cloud = connectedEnvironment({
       environmentId: "environment-cloud",
       isRelayManaged: true,
-      connectionState: "disconnected",
+      connectionState: "available",
     });
 
     const sections = splitEnvironmentSections({
@@ -94,11 +94,11 @@ describe("mobile environment settings sections", () => {
     expect(sections.availableCloudEnvironments).toEqual([]);
   });
 
-  it("returns cleanly disconnected relay environments to the available cloud listing", () => {
+  it("does not duplicate a saved relay environment in the available cloud listing", () => {
     const cloud = connectedEnvironment({
       environmentId: "environment-cloud",
       isRelayManaged: true,
-      connectionState: "disconnected",
+      connectionState: "available",
     });
     const listedCloud = cloudEnvironment("environment-cloud");
 
@@ -107,15 +107,15 @@ describe("mobile environment settings sections", () => {
       cloudEnvironments: [listedCloud],
     });
 
-    expect(sections.connectedCloudEnvironments).toEqual([]);
-    expect(sections.availableCloudEnvironments).toEqual([listedCloud]);
+    expect(sections.connectedCloudEnvironments).toEqual([cloud]);
+    expect(sections.availableCloudEnvironments).toEqual([]);
   });
 
   it("keeps failed relay environments in the local connection row", () => {
     const cloud = connectedEnvironment({
       environmentId: "environment-cloud",
       isRelayManaged: true,
-      connectionState: "disconnected",
+      connectionState: "error",
       connectionError: "Connection failed.",
     });
 

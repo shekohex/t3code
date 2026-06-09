@@ -2,7 +2,7 @@ import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass
 import type {
   EnvironmentId,
   ModelSelection,
-  OrchestrationThread,
+  OrchestrationThreadShell,
   ProviderInteractionMode,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
@@ -84,7 +84,7 @@ export interface ThreadComposerProps {
   readonly connectionState: RemoteClientConnectionState;
   readonly connectionError: string | null;
   readonly environmentLabel: string | null;
-  readonly selectedThread: OrchestrationThread;
+  readonly selectedThread: OrchestrationThreadShell;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
@@ -95,7 +95,7 @@ export interface ThreadComposerProps {
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => Promise<void>;
-  readonly onSendMessage: () => void;
+  readonly onSendMessage: () => Promise<void>;
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => Promise<void>;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => Promise<void>;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => Promise<void>;
@@ -162,28 +162,38 @@ function composerConnectionStatus(input: {
   readonly connectionError: string | null;
   readonly connectionState: RemoteClientConnectionState;
   readonly environmentLabel: string | null;
-}): { readonly kind: "disconnected" | "reconnecting"; readonly label: string } | null {
+}): { readonly kind: "unavailable" | "reconnecting"; readonly label: string } | null {
   const environmentLabel = input.environmentLabel ?? "Environment";
-
-  if (input.connectionError !== null) {
-    return { kind: "disconnected", label: `${environmentLabel} is disconnected` };
-  }
 
   switch (input.connectionState) {
     case "connecting":
     case "reconnecting":
-      return { kind: "reconnecting", label: `Reconnecting to ${environmentLabel}...` };
-    case "disconnected":
-    case "idle":
-      return { kind: "disconnected", label: `${environmentLabel} is disconnected` };
-    case "ready":
+      return {
+        kind: "reconnecting",
+        label:
+          input.connectionError === null
+            ? `Reconnecting to ${environmentLabel}...`
+            : `Failed to connect. Retrying ${environmentLabel}...`,
+      };
+    case "offline":
+      return { kind: "unavailable", label: "You are offline" };
+    case "error":
+      return {
+        kind: "unavailable",
+        label: input.connectionError
+          ? `Failed to connect to ${environmentLabel}: ${input.connectionError}`
+          : `Failed to connect to ${environmentLabel}`,
+      };
+    case "available":
+      return { kind: "unavailable", label: `${environmentLabel} is not connected` };
+    case "connected":
       return null;
   }
 }
 
 const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(props: {
   readonly onPress: () => void;
-  readonly status: { readonly kind: "disconnected" | "reconnecting"; readonly label: string };
+  readonly status: { readonly kind: "unavailable" | "reconnecting"; readonly label: string };
 }) {
   const isReconnecting = props.status.kind === "reconnecting";
 
@@ -223,7 +233,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
   const isExpanded = isFocused;
-  const canSend = props.connectionState === "ready" && hasContent;
+  const canSend = hasContent;
 
   const onPressImage = useCallback(
     (uri: string) => {
@@ -245,10 +255,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   }, [isExpanded, onExpandedChange]);
   const showStopAction =
     props.selectedThread.session?.status === "running" ||
-    props.selectedThread.session?.status === "starting" ||
-    props.queueCount > 0;
+    props.selectedThread.session?.status === "starting";
 
-  const sendLabel = props.activeThreadBusy || props.queueCount > 0 ? "Queue" : "Send";
+  const sendLabel =
+    props.connectionState !== "connected" || props.activeThreadBusy || props.queueCount > 0
+      ? "Queue"
+      : "Send";
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const currentInteractionMode = props.selectedThread.interactionMode ?? "default";
@@ -455,8 +467,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
 
   const handleSend = useCallback(() => {
-    onSendMessage();
-    inputRef.current?.blur();
+    void onSendMessage().then(() => {
+      inputRef.current?.blur();
+    });
   }, [onSendMessage]);
   const handleCommandSelect = useCallback(
     (item: ComposerCommandItem) => {
@@ -762,7 +775,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 onSelectionChange={handleSelectionChange}
                 placeholder={props.placeholder}
                 placeholderTextColor={placeholderColor}
-                editable={props.connectionState === "ready"}
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
                 textAlignVertical={isExpanded ? "top" : "center"}
