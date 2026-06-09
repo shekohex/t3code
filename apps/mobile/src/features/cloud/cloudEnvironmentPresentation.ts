@@ -1,5 +1,5 @@
 import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
-import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime";
+import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 
 export interface AvailableCloudEnvironmentPresentation {
   readonly connectionError: string | null;

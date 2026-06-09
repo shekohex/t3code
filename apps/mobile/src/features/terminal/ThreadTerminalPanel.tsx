@@ -4,7 +4,7 @@ import { memo, useCallback, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { useMobileTerminalActions } from "../../connection/mobileTerminalEnvironment";
+import { useTerminalActions } from "../../connection/terminalEnvironment";
 import { useAttachedTerminalSession } from "../../state/use-terminal-session";
 import { TerminalSurface } from "./NativeTerminalSurface";
 import { hasNativeTerminalSurface } from "./nativeTerminalModule";
@@ -24,7 +24,7 @@ const DEFAULT_TERMINAL_ROWS = 24;
 export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
   props: ThreadTerminalPanelProps,
 ) {
-  const terminalActions = useMobileTerminalActions();
+  const terminalActions = useTerminalActions();
   const nativeTerminalAvailable = hasNativeTerminalSurface();
   const terminalId = DEFAULT_TERMINAL_ID;
   const [lastGridSize, setLastGridSize] = useState({

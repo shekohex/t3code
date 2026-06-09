@@ -1,7 +1,7 @@
 import {
   type ManagedRelayAccessTokenCacheEntry,
   type ManagedRelayAccessTokenStore,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/relay";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -87,7 +87,7 @@ const clearManagedRelayAccessTokens = Effect.tryPromise({
   catch: storeError("Could not clear persisted relay access tokens."),
 });
 
-export const mobileManagedRelayAccessTokenStore: ManagedRelayAccessTokenStore = {
+export const managedRelayAccessTokenStore: ManagedRelayAccessTokenStore = {
   load: loadManagedRelayAccessTokens.pipe(
     Effect.tapError(logStoreFailure("load")),
     Effect.orElseSucceed(() => []),

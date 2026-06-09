@@ -1,7 +1,7 @@
-import type {
-  EnvironmentScopedProjectShell,
-  EnvironmentScopedThreadShell,
-} from "@t3tools/client-runtime";
+import {
+  type EnvironmentProject,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 import { SymbolView } from "expo-symbols";
 import { useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
@@ -13,29 +13,29 @@ import { useThemeColor } from "../../lib/useThemeColor";
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+import type { WorkspaceState } from "../../connection/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
-import type { RemoteCatalogState } from "../../state/use-remote-catalog";
 import { threadStatusTone } from "../threads/threadPresentation";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
 interface HomeScreenProps {
-  readonly projects: ReadonlyArray<EnvironmentScopedProjectShell>;
-  readonly threads: ReadonlyArray<EnvironmentScopedThreadShell>;
-  readonly catalogState: RemoteCatalogState;
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly catalogState: WorkspaceState;
   readonly savedConnectionsById: Readonly<Record<string, SavedRemoteConnection>>;
   readonly searchQuery: string;
   readonly onAddConnection: () => void;
   readonly onOpenEnvironments: () => void;
-  readonly onSelectThread: (thread: EnvironmentScopedThreadShell) => void;
+  readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
 }
 
 interface ProjectGroup {
   readonly key: string;
-  readonly project: EnvironmentScopedProjectShell;
-  readonly threads: ReadonlyArray<EnvironmentScopedThreadShell>;
+  readonly project: EnvironmentProject;
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
 }
 
 const projectGroupActivityOrder = Order.mapInput(
@@ -49,7 +49,7 @@ const projectGroupActivityOrder = Order.mapInput(
 
 /* ─── Status indicator colors ────────────────────────────────────────── */
 
-function statusColors(thread: EnvironmentScopedThreadShell): { bg: string; fg: string } {
+function statusColors(thread: EnvironmentThreadShell): { bg: string; fg: string } {
   switch (thread.session?.status) {
     case "running":
       return { bg: "rgba(249,115,22,0.14)", fg: "#f97316" };
@@ -67,11 +67,11 @@ function statusColors(thread: EnvironmentScopedThreadShell): { bg: string; fg: s
 const COLLAPSED_THREAD_LIMIT = 6;
 
 function deriveEmptyState(props: {
-  readonly catalogState: RemoteCatalogState;
+  readonly catalogState: WorkspaceState;
   readonly projectCount: number;
 }): { readonly title: string; readonly detail: string; readonly loading: boolean } {
   const { catalogState } = props;
-  if (catalogState.isLoadingSavedConnections) {
+  if (catalogState.isLoadingConnections) {
     return {
       title: "Loading environments",
       detail: "Checking saved environments on this device.",
@@ -79,7 +79,7 @@ function deriveEmptyState(props: {
     };
   }
 
-  if (!catalogState.hasSavedConnections) {
+  if (!catalogState.hasConnections) {
     return {
       title: "No environments connected",
       detail: "Add an environment to load projects and start coding sessions.",
@@ -132,7 +132,7 @@ function deriveEmptyState(props: {
 /* ─── Project group header ───────────────────────────────────────────── */
 
 function ProjectGroupLabel(props: {
-  readonly project: EnvironmentScopedProjectShell;
+  readonly project: EnvironmentProject;
   readonly totalThreadCount: number;
   readonly httpBaseUrl: string | null;
   readonly bearerToken: string | null;
@@ -175,7 +175,7 @@ function ProjectGroupLabel(props: {
 /* ─── Thread row ─────────────────────────────────────────────────────── */
 
 function ThreadRow(props: {
-  readonly thread: EnvironmentScopedThreadShell;
+  readonly thread: EnvironmentThreadShell;
   readonly environmentLabel: string | null;
   readonly onPress: () => void;
   readonly isLast: boolean;
@@ -271,7 +271,7 @@ function ThreadRow(props: {
 
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
-function staleCatalogPillLabel(props: { readonly catalogState: RemoteCatalogState }): string {
+function staleCatalogPillLabel(props: { readonly catalogState: WorkspaceState }): string {
   if (props.catalogState.networkStatus === "offline") {
     return "You are offline";
   }
@@ -286,7 +286,7 @@ function staleCatalogPillLabel(props: { readonly catalogState: RemoteCatalogStat
 }
 
 function StaleCatalogStatusPill(props: {
-  readonly catalogState: RemoteCatalogState;
+  readonly catalogState: WorkspaceState;
   readonly onPress: () => void;
 }) {
   const iconColor = useThemeColor("--color-icon-muted");
@@ -359,7 +359,7 @@ export function HomeScreen(props: HomeScreenProps) {
 
   /* Group filtered threads by project */
   const projectGroups = useMemo<ReadonlyArray<ProjectGroup>>(() => {
-    const byProject = new Map<string, EnvironmentScopedThreadShell[]>();
+    const byProject = new Map<string, EnvironmentThreadShell[]>();
     for (const thread of filteredThreads) {
       const key = scopedProjectKey(thread.environmentId, thread.projectId);
       const existing = byProject.get(key);

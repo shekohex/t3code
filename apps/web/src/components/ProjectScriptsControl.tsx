@@ -87,7 +87,7 @@ export interface NewProjectScriptInput {
 }
 
 interface ProjectScriptsControlProps {
-  scripts: ProjectScript[];
+  scripts: ReadonlyArray<ProjectScript>;
   keybindings: ResolvedKeybindingsConfig;
   preferredScriptId?: string | null;
   onRunScript: (script: ProjectScript) => void;

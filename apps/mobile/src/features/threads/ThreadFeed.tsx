@@ -43,7 +43,7 @@ import {
 } from "../review/nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "../review/reviewModel";
 import { cn } from "../../lib/cn";
-import type { MobileLayoutVariant } from "../../lib/mobileLayout";
+import type { LayoutVariant } from "../../lib/layout";
 import type { ThreadFeedEntry } from "../../lib/threadActivity";
 import { relativeTime } from "../../lib/time";
 import { messageImageUrl } from "./threadPresentation";
@@ -57,7 +57,7 @@ export interface ThreadFeedProps {
   readonly bearerToken: string | null;
   readonly agentLabel: string;
   readonly contentBottomInset?: number;
-  readonly layoutVariant?: MobileLayoutVariant;
+  readonly layoutVariant?: LayoutVariant;
   readonly composerExpanded?: boolean;
 }
 

@@ -17,9 +17,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
 import {
-  useMobileEnvironmentConnectionActions,
-  useMobileEnvironmentPresentation,
-} from "../../connection/useMobileEnvironmentData";
+  useEnvironmentConnectionActions,
+  useEnvironmentPresentation,
+} from "../../connection/useEnvironmentData";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
@@ -119,8 +119,8 @@ export function ReviewSheet() {
     environmentId: EnvironmentId;
     threadId: ThreadId;
   }>();
-  const environment = useMobileEnvironmentPresentation(environmentId);
-  const environmentActions = useMobileEnvironmentConnectionActions();
+  const environment = useEnvironmentPresentation(environmentId);
+  const environmentActions = useEnvironmentConnectionActions();
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const { draftMessage } = useThreadDraftForThread({ environmentId, threadId });
   const reviewCache = useReviewCacheForThread({ environmentId, threadId });

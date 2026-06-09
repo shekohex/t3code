@@ -1,5 +1,5 @@
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
-import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
+import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -37,15 +37,19 @@ import {
   useServerConfigUpdatedSubscription,
   useServerWelcomeSubscription,
 } from "../rpc/serverState";
-import { useStore } from "../store";
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
-import { WebConnectionProjections } from "../connection/WebEnvironmentProjection";
-import { useWebShellActions } from "../connection/webShellEnvironment";
-import { useWebEnvironments, useWebPrimaryEnvironment } from "../connection/useWebEnvironments";
+import { ServerStateProjection } from "../connection/ServerStateProjection";
+import { useShellActions } from "../connection/shellEnvironment";
+import { useEnvironments, usePrimaryEnvironment } from "../connection/useEnvironments";
+import {
+  readProject,
+  setActiveEnvironmentId,
+  useActiveEnvironmentId,
+} from "../connection/entityState";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -113,7 +117,7 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
-        <WebConnectionProjections />
+        <ServerStateProjection />
         <RelayClientInstallDialog />
         <SshPasswordPromptDialog />
         <HostedStaticEnvironmentBootstrap />
@@ -126,7 +130,8 @@ function RootRouteView() {
 }
 
 function HostedStaticEnvironmentBootstrap() {
-  const { environments } = useWebEnvironments();
+  const { environments } = useEnvironments();
+  const activeEnvironmentId = useActiveEnvironmentId();
 
   useEffect(() => {
     if (
@@ -137,8 +142,7 @@ function HostedStaticEnvironmentBootstrap() {
       return;
     }
 
-    const currentActiveEnvironmentId = useStore.getState().activeEnvironmentId;
-    if (currentActiveEnvironmentId) {
+    if (activeEnvironmentId) {
       return;
     }
 
@@ -147,8 +151,8 @@ function HostedStaticEnvironmentBootstrap() {
       return;
     }
 
-    useStore.getState().setActiveEnvironmentId(firstSavedEnvironment.environmentId);
-  }, [environments]);
+    setActiveEnvironmentId(firstSavedEnvironment.environmentId);
+  }, [activeEnvironmentId, environments]);
 
   return null;
 }
@@ -233,12 +237,11 @@ function AuthenticatedTracingBootstrap() {
 }
 
 function EventRouter() {
-  const setActiveEnvironmentId = useStore((store) => store.setActiveEnvironmentId);
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
-  const primaryEnvironment = useWebPrimaryEnvironment();
-  const shellActions = useWebShellActions();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const shellActions = useShellActions();
   const readPathname = useEffectEvent(() => pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
   const seenServerConfigUpdateIdRef = useRef(getServerConfigUpdatedNotification()?.id ?? 0);
@@ -253,10 +256,9 @@ function EventRouter() {
       if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
         return;
       }
-      const bootstrapEnvironmentState =
-        useStore.getState().environmentStateById[payload.environment.environmentId];
-      const bootstrapProject =
-        bootstrapEnvironmentState?.projectById[payload.bootstrapProjectId] ?? null;
+      const bootstrapProject = readProject(
+        scopeProjectRef(payload.environment.environmentId, payload.bootstrapProjectId),
+      );
       const bootstrapProjectKey =
         (bootstrapProject
           ? deriveLogicalProjectKeyFromSettings(bootstrapProject, projectGroupingSettings)
@@ -363,7 +365,7 @@ function EventRouter() {
     }
 
     setActiveEnvironmentId(serverConfig.environment.environmentId);
-  }, [serverConfig, setActiveEnvironmentId]);
+  }, [serverConfig]);
 
   useServerWelcomeSubscription(handleWelcome);
   useServerConfigUpdatedSubscription(handleServerConfigUpdated);

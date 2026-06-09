@@ -3,14 +3,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 
-import { ConnectionBroker } from "./broker.ts";
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import type {
   ConnectionAttemptError,
   ConnectionAttemptStage,
   PreparedConnection,
 } from "./model.ts";
-import { RpcSessionFactory, type RpcSession } from "./rpcSession.ts";
+import { ConnectionResolver } from "./resolver.ts";
+import { RpcSessionFactory, type RpcSession } from "../rpc/session.ts";
 
 export type ConnectionDriverProgress =
   | {
@@ -40,7 +40,7 @@ export class ConnectionDriver extends Context.Service<ConnectionDriver, Connecti
 export const connectionDriverLayer = Layer.effect(
   ConnectionDriver,
   Effect.gen(function* () {
-    const broker = yield* ConnectionBroker;
+    const resolver = yield* ConnectionResolver;
     const sessions = yield* RpcSessionFactory;
 
     const connect = Effect.fn("ConnectionDriver.connect")(function* (
@@ -53,7 +53,7 @@ export const connectionDriverLayer = Layer.effect(
         "connection.target.kind": target._tag,
       });
       yield* reportProgress({ stage: "preparing" });
-      const prepared = yield* broker.prepare(entry);
+      const prepared = yield* resolver.prepare(entry);
       yield* reportProgress({ stage: "opening", prepared });
       const session = yield* sessions.connect(prepared);
       yield* reportProgress({ stage: "synchronizing", prepared });

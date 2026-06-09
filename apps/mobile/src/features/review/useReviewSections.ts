@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo } from "react";
 
 import type { EnvironmentId, OrchestrationCheckpointSummary, ThreadId } from "@t3tools/contracts";
 
-import { useMobileCheckpointDiff } from "../../connection/mobileAppQueries";
+import { useCheckpointDiff } from "../../connection/appQueries";
 import { useSelectedThreadDetail } from "../../state/use-thread-detail";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useReviewDiffPreview } from "./reviewDiffPreviewState";
@@ -116,7 +116,7 @@ export function useReviewSections(input: {
   const activeSectionId = activeCheckpoint
     ? getReviewSectionIdForCheckpoint(activeCheckpoint)
     : null;
-  const activeTurnDiff = useMobileCheckpointDiff({
+  const activeTurnDiff = useCheckpointDiff({
     environmentId: enabled ? (environmentId ?? null) : null,
     threadId: enabled ? (threadId ?? null) : null,
     fromTurnCount:

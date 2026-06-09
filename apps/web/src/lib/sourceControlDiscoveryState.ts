@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import { useWebSourceControlCapabilities } from "../connection/webAppQueries";
-import { useWebPrimaryEnvironment } from "../connection/useWebEnvironments";
+import { useSourceControlCapabilities } from "../connection/appQueries";
+import { usePrimaryEnvironment } from "../connection/useEnvironments";
 
 interface SourceControlDiscoveryTargetInput {
   readonly environmentId?: EnvironmentId | null;
@@ -10,8 +10,8 @@ interface SourceControlDiscoveryTargetInput {
 export function resetSourceControlDiscoveryStateForTests(): void {}
 
 export function useSourceControlDiscovery(input?: SourceControlDiscoveryTargetInput) {
-  const primaryEnvironment = useWebPrimaryEnvironment();
-  return useWebSourceControlCapabilities(
+  const primaryEnvironment = usePrimaryEnvironment();
+  return useSourceControlCapabilities(
     input?.environmentId ?? primaryEnvironment?.environmentId ?? null,
   );
 }

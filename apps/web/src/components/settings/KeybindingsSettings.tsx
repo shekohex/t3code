@@ -37,8 +37,8 @@ import {
   useServerKeybindings,
   useServerKeybindingsConfigPath,
 } from "../../rpc/serverState";
-import { useWebServerActions } from "../../connection/webServerEnvironment";
-import { useWebPrimaryEnvironment } from "../../connection/useWebEnvironments";
+import { useServerActions } from "../../connection/serverEnvironment";
+import { usePrimaryEnvironment } from "../../connection/useEnvironments";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Kbd, KbdGroup } from "../ui/kbd";
@@ -1067,8 +1067,8 @@ export function KeybindingsSettingsPanel() {
   const keybindings = useServerKeybindings();
   const keybindingsConfigPath = useServerKeybindingsConfigPath();
   const availableEditors = useServerAvailableEditors();
-  const primaryEnvironment = useWebPrimaryEnvironment();
-  const serverActions = useWebServerActions();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const serverActions = useServerActions();
   const openInPreferredEditor = useOpenInPreferredEditor(
     primaryEnvironment?.environmentId ?? null,
     availableEditors,

@@ -8,10 +8,11 @@ import {
   type RelayDeviceRegistrationRequest,
   type RelayLiveActivityRegistrationRequest,
 } from "@t3tools/contracts/relay";
-import { findErrorTraceId, ManagedRelayClient } from "@t3tools/client-runtime";
+import { findErrorTraceId } from "@t3tools/client-runtime/errors";
+import { ManagedRelayClient } from "@t3tools/client-runtime/relay";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
-import { mobileRuntime } from "../../lib/runtime";
+import { runtime } from "../../lib/runtime";
 import {
   loadAgentAwarenessDeviceId,
   loadOrCreateAgentAwarenessDeviceId,
@@ -271,7 +272,7 @@ function runRegistrationInBackground(
   operation: Effect.Effect<unknown, unknown, ManagedRelayClient>,
   context: string,
 ): void {
-  void mobileRuntime.runPromise(operation).catch((error: unknown) => {
+  void runtime.runPromise(operation).catch((error: unknown) => {
     logRegistrationError(context, error);
   });
 }
@@ -313,7 +314,7 @@ function startPendingDeviceRegistration(): void {
     hasObservedPushToken: next.input.observedPushToken !== undefined,
     hasPushToStartToken: next.input.pushToStartToken !== undefined,
   });
-  const operation = mobileRuntime
+  const operation = runtime
     .runPromise(registerDevice(next.input, generation))
     .catch((error: unknown) => {
       logRegistrationError(next.context, error);

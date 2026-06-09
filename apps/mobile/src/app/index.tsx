@@ -2,16 +2,19 @@ import { Stack, useRouter } from "expo-router";
 import { useState } from "react";
 import { Text as RNText, View, useColorScheme } from "react-native";
 
+import { useProjects, useThreadShells } from "../connection/entityState";
+import { useWorkspaceState } from "../connection/useWorkspace";
 import { buildThreadRoutePath } from "../lib/routes";
-import { useRemoteCatalog } from "../state/use-remote-catalog";
-import { useRemoteEnvironmentState } from "../state/use-remote-environment-registry";
+import { useSavedRemoteConnections } from "../state/use-remote-environment-registry";
 import { HomeScreen } from "../features/home/HomeScreen";
 
 /* ─── Route screen ───────────────────────────────────────────────────── */
 
 export default function HomeRouteScreen() {
-  const { projects, state: catalogState, threads } = useRemoteCatalog();
-  const { savedConnectionsById } = useRemoteEnvironmentState();
+  const projects = useProjects();
+  const threads = useThreadShells();
+  const { state: catalogState } = useWorkspaceState();
+  const { savedConnectionsById } = useSavedRemoteConnections();
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
 

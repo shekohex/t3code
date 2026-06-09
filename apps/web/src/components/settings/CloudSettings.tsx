@@ -9,7 +9,7 @@ import { useManagedRelayDevices } from "../../cloud/managedRelayState";
 import { usePrimaryCloudLinkState } from "../../cloud/primaryCloudLinkState";
 import { isElectron } from "../../env";
 import { usePrimarySessionState } from "../../environments/primary";
-import { webRuntime } from "../../lib/runtime";
+import { runtime } from "../../lib/runtime";
 import { cn } from "../../lib/utils";
 import { DesktopClerkWaitlist } from "../clerk/DesktopClerkWaitlist";
 import { Button } from "../ui/button";
@@ -104,7 +104,7 @@ function CloudSettingsPanelInner() {
       if (!primaryLinkState.target) {
         throw new Error("Local environment is not ready yet.");
       }
-      await webRuntime.runPromise(
+      await runtime.runPromise(
         updatePrimaryCloudPreferences({
           target: primaryLinkState.target,
           publishAgentActivity: enabled,

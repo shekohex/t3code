@@ -1,8 +1,8 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { stripPairingTokenFromUrl } from "@t3tools/shared/remote";
-import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime";
+import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 
-export { mobileAuthClientMetadata } from "./authClientMetadata";
+export { authClientMetadata } from "./authClientMetadata";
 
 export interface SavedRemoteConnection {
   readonly environmentId: EnvironmentId;

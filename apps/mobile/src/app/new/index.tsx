@@ -8,16 +8,18 @@ import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { useProjects, useThreadShells } from "../../connection/entityState";
+import type { WorkspaceState } from "../../connection/workspaceModel";
+import { useWorkspaceState } from "../../connection/useWorkspace";
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
-import { type RemoteCatalogState, useRemoteCatalog } from "../../state/use-remote-catalog";
-import { useRemoteEnvironmentState } from "../../state/use-remote-environment-registry";
+import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 
-function deriveProjectEmptyState(catalogState: RemoteCatalogState): {
+function deriveProjectEmptyState(catalogState: WorkspaceState): {
   readonly title: string;
   readonly detail: string;
   readonly loading: boolean;
 } {
-  if (catalogState.isLoadingSavedConnections) {
+  if (catalogState.isLoadingConnections) {
     return {
       title: "Loading environments",
       detail: "Checking saved environments on this device.",
@@ -25,7 +27,7 @@ function deriveProjectEmptyState(catalogState: RemoteCatalogState): {
     };
   }
 
-  if (!catalogState.hasSavedConnections) {
+  if (!catalogState.hasConnections) {
     return {
       title: "No environments connected",
       detail: "Add an environment before creating a task.",
@@ -68,8 +70,10 @@ function deriveProjectEmptyState(catalogState: RemoteCatalogState): {
 }
 
 export default function NewTaskRoute() {
-  const { projects, state: catalogState, threads } = useRemoteCatalog();
-  const { savedConnectionsById } = useRemoteEnvironmentState();
+  const projects = useProjects();
+  const threads = useThreadShells();
+  const { state: catalogState } = useWorkspaceState();
+  const { savedConnectionsById } = useSavedRemoteConnections();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const chevronColor = useThemeColor("--color-chevron");

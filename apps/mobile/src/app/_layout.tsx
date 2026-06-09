@@ -14,14 +14,14 @@ import { useResolveClassNames } from "uniwind";
 
 import { LoadingScreen } from "../components/LoadingScreen";
 
-import { useMobileWorkspace } from "../connection/useMobileWorkspace";
+import { useWorkspaceState } from "../connection/useWorkspace";
 import { RegistryContext } from "@effect/atom-react";
 import { appAtomRegistry } from "../state/atom-registry";
 import { CloudAuthProvider } from "../features/cloud/CloudAuthProvider";
 import { useAgentNotificationNavigation } from "../features/agent-awareness/notificationNavigation";
 
 function AppNavigator() {
-  const { state } = useMobileWorkspace();
+  const { state } = useWorkspaceState();
   const colorScheme = useColorScheme();
   const statusBarBg = colorScheme === "dark" ? "#0a0a0a" : "#f2f2f7";
   const sheetStyle = useResolveClassNames("bg-sheet");

@@ -10,13 +10,13 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import { FetchHttpClient } from "effect/unstable/http";
-import type { ManagedRelayClient } from "@t3tools/client-runtime";
+import { type ManagedRelayClient } from "@t3tools/client-runtime/relay";
 
 import type { EnvironmentId } from "@t3tools/contracts";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 import type { SavedRemoteConnection } from "../../lib/connection";
-import { mobileCryptoLayer } from "../cloud/dpop";
-import { mobileManagedRelayClientLayer } from "../cloud/managedRelayLayer";
+import { cryptoLayer } from "../cloud/dpop";
+import { managedRelayClientLayer } from "../cloud/managedRelayLayer";
 import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
 import {
   __resetAgentAwarenessRemoteRegistrationForTest,
@@ -104,7 +104,7 @@ vi.mock("react-native", () => ({
 }));
 
 vi.mock("../../lib/runtime", () => ({
-  mobileRuntime: {
+  runtime: {
     runPromise: (operation: unknown) =>
       new Promise((resolve, reject) => {
         backgroundRuntime.pending.push({ operation, resolve, reject });
@@ -141,8 +141,8 @@ function savedConnection(): SavedRemoteConnection {
   };
 }
 
-const relayTestLayer = mobileManagedRelayClientLayer("https://relay.example.test").pipe(
-  Layer.provide(Layer.mergeAll(FetchHttpClient.layer, mobileCryptoLayer)),
+const relayTestLayer = managedRelayClientLayer("https://relay.example.test").pipe(
+  Layer.provide(Layer.mergeAll(FetchHttpClient.layer, cryptoLayer)),
 );
 
 const runBackgroundOperations = Effect.fn("TestRemoteRegistration.runBackgroundOperations")(

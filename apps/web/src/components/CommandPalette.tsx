@@ -1,6 +1,6 @@
 "use client";
 
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_MODEL,
   type EnvironmentId,
@@ -36,18 +36,15 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { useShallow } from "zustand/react/shallow";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSettings } from "../hooks/useSettings";
 import { readLocalApi } from "../localApi";
-import {
-  useWebFilesystemDirectory,
-  useWebSourceControlCapabilities,
-} from "../connection/webAppQueries";
-import { useWebProjectActions } from "../connection/webProjectEnvironment";
-import { useWebSourceControlActions } from "../connection/webSourceControlEnvironment";
-import { useWebEnvironments, useWebPrimaryEnvironment } from "../connection/useWebEnvironments";
+import { useFilesystemDirectory, useSourceControlCapabilities } from "../connection/appQueries";
+import { useProjectActions } from "../connection/projectEnvironment";
+import { useSourceControlActions } from "../connection/sourceControlEnvironment";
+import { useEnvironments, usePrimaryEnvironment } from "../connection/useEnvironments";
+import { useProjects, useThreadShells } from "../connection/entityState";
 import {
   startNewThreadInProjectFromContext,
   startNewThreadFromContext,
@@ -70,11 +67,6 @@ import {
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { getLatestThreadForProject } from "../lib/threadSort";
 import { cn, isMacPlatform, isWindowsPlatform, newProjectId } from "../lib/utils";
-import {
-  selectProjectsAcrossEnvironments,
-  selectSidebarThreadsAcrossEnvironments,
-  useStore,
-} from "../store";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import {
@@ -396,14 +388,14 @@ function OpenCommandPaletteDialog() {
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const settings = useSettings();
-  const projectActions = useWebProjectActions();
-  const sourceControlActions = useWebSourceControlActions();
-  const { environments } = useWebEnvironments();
-  const primaryEnvironment = useWebPrimaryEnvironment();
+  const projectActions = useProjectActions();
+  const sourceControlActions = useSourceControlActions();
+  const { environments } = useEnvironments();
+  const primaryEnvironment = usePrimaryEnvironment();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
-  const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
-  const threads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
+  const projects = useProjects();
+  const threads = useThreadShells();
   const keybindings = useServerKeybindings();
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
@@ -444,7 +436,7 @@ function OpenCommandPaletteDialog() {
   const browseEnvironmentId = addProjectEnvironmentId ?? defaultAddProjectEnvironmentId;
   const browseEnvironment =
     environments.find((environment) => environment.environmentId === browseEnvironmentId) ?? null;
-  const sourceControlDiscovery = useWebSourceControlCapabilities(browseEnvironmentId);
+  const sourceControlDiscovery = useSourceControlCapabilities(browseEnvironmentId);
   const browseEnvironmentPlatform = getEnvironmentBrowsePlatform(
     browseEnvironment?.serverConfig?.environment.platform.os,
   );
@@ -471,11 +463,12 @@ function OpenCommandPaletteDialog() {
   );
 
   const projectCwdById = useMemo(
-    () => new Map<ProjectId, string>(projects.map((project) => [project.id, project.cwd])),
+    () =>
+      new Map<ProjectId, string>(projects.map((project) => [project.id, project.workspaceRoot])),
     [projects],
   );
   const projectTitleById = useMemo(
-    () => new Map<ProjectId, string>(projects.map((project) => [project.id, project.name])),
+    () => new Map<ProjectId, string>(projects.map((project) => [project.id, project.title])),
     [projects],
   );
 
@@ -495,7 +488,7 @@ function OpenCommandPaletteDialog() {
   const browseDirectoryPath = isBrowsing ? getBrowseDirectoryPath(query) : "";
   const browseFilterQuery =
     isBrowsing && !hasTrailingPathSeparator(query) ? getBrowseLeafPathSegment(query) : "";
-  const browseQuery = useWebFilesystemDirectory(
+  const browseQuery = useFilesystemDirectory(
     isBrowsing &&
       browseDirectoryPath.length > 0 &&
       browseEnvironmentId !== null &&
@@ -558,7 +551,7 @@ function OpenCommandPaletteDialog() {
         icon: (project) => (
           <ProjectFavicon
             environmentId={project.environmentId}
-            cwd={project.cwd}
+            cwd={project.workspaceRoot}
             className={ITEM_ICON_CLASS}
           />
         ),
@@ -575,7 +568,7 @@ function OpenCommandPaletteDialog() {
         icon: (project) => (
           <ProjectFavicon
             environmentId={project.environmentId}
-            cwd={project.cwd}
+            cwd={project.workspaceRoot}
             className={ITEM_ICON_CLASS}
           />
         ),
@@ -583,7 +576,7 @@ function OpenCommandPaletteDialog() {
           await startNewThreadInProjectFromContext(
             {
               activeDraftThread,
-              activeThread,
+              activeThread: activeThread ?? undefined,
               defaultProjectRef,
               defaultThreadEnvMode: settings.defaultThreadEnvMode,
               handleNewThread,
@@ -918,7 +911,7 @@ function OpenCommandPaletteDialog() {
         run: async () => {
           await startNewThreadFromContext({
             activeDraftThread,
-            activeThread,
+            activeThread: activeThread ?? undefined,
             defaultProjectRef,
             defaultThreadEnvMode: settings.defaultThreadEnvMode,
             handleNewThread,

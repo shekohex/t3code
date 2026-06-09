@@ -11,7 +11,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
-import type { WsRpcProtocolClient } from "../wsRpcProtocol.ts";
+import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import { Connectivity } from "./connectivity.ts";
 import {
@@ -30,7 +30,7 @@ import {
   type PreparedConnection,
   type SupervisorConnectionState,
 } from "./model.ts";
-import type { RpcSession } from "./rpcSession.ts";
+import type { RpcSession } from "../rpc/session.ts";
 import { makeEnvironmentSupervisor } from "./supervisor.ts";
 import { ConnectionWakeups } from "./wakeups.ts";
 

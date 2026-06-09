@@ -30,7 +30,8 @@ import {
   type DesktopServerExposureState,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { connectionStatusText, findErrorTraceId } from "@t3tools/client-runtime";
+import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -107,17 +108,17 @@ import { resolveServerConfigVersionMismatch } from "~/versionSkew";
 import { usePrimaryCloudLinkState } from "~/cloud/primaryCloudLinkState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import {
-  linkWebPrimaryEnvironment,
-  unlinkWebPrimaryEnvironment,
-} from "~/connection/webConnectionRuntime";
-import { useWebAuthAccessChanges } from "~/connection/useWebEnvironmentData";
+  linkPrimaryEnvironment as linkPrimaryEnvironmentAtom,
+  unlinkPrimaryEnvironment as unlinkPrimaryEnvironmentAtom,
+} from "~/connection/connectionRuntime";
+import { useAuthAccessChanges } from "~/connection/useEnvironmentData";
 import {
-  type WebEnvironmentPresentation,
-  useWebEnvironmentActions,
-  useWebEnvironments,
-  useWebPrimaryEnvironment,
-  useWebRelayEnvironmentDiscovery,
-} from "~/connection/useWebEnvironments";
+  type EnvironmentPresentation,
+  useEnvironmentActions,
+  useEnvironments,
+  usePrimaryEnvironment,
+  useRelayEnvironmentDiscovery,
+} from "~/connection/useEnvironments";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 
@@ -1413,7 +1414,7 @@ function NetworkAccessDescription({
 }
 
 type SavedBackendListRowProps = {
-  environment: WebEnvironmentPresentation;
+  environment: EnvironmentPresentation;
   removingEnvironmentId: EnvironmentId | null;
   onConnect: (environmentId: EnvironmentId) => void;
   onRemove: (environmentId: EnvironmentId) => void;
@@ -1584,9 +1585,11 @@ function CloudLinkSwitch({
 
 function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: boolean }) {
   const { getToken, isSignedIn } = useAuth();
-  const { refreshRelayEnvironments } = useWebEnvironmentActions();
-  const linkPrimaryEnvironment = useAtomSet(linkWebPrimaryEnvironment, { mode: "promise" });
-  const unlinkPrimaryEnvironment = useAtomSet(unlinkWebPrimaryEnvironment, { mode: "promise" });
+  const { refreshRelayEnvironments } = useEnvironmentActions();
+  const linkPrimaryEnvironment = useAtomSet(linkPrimaryEnvironmentAtom, { mode: "promise" });
+  const unlinkPrimaryEnvironment = useAtomSet(unlinkPrimaryEnvironmentAtom, {
+    mode: "promise",
+  });
   const primaryCloudLinkState = usePrimaryCloudLinkState();
   const [operationError, setOperationError] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -1718,8 +1721,8 @@ function ConfiguredCloudRemoteEnvironmentRows({
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironmentIds: ReadonlyArray<EnvironmentId>;
 }) {
-  const environmentsState = useWebRelayEnvironmentDiscovery();
-  const { connectRelayEnvironment, refreshRelayEnvironments } = useWebEnvironmentActions();
+  const environmentsState = useRelayEnvironmentDiscovery();
+  const { connectRelayEnvironment, refreshRelayEnvironments } = useEnvironmentActions();
   const [connectingEnvironmentId, setConnectingEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
@@ -1855,10 +1858,10 @@ function CloudRemoteEnvironmentRows({
 
 export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
-  const { environments } = useWebEnvironments();
-  const primaryEnvironment = useWebPrimaryEnvironment();
+  const { environments } = useEnvironments();
+  const primaryEnvironment = usePrimaryEnvironment();
   const { connectPairing, connectSshEnvironment, removeEnvironment, retryEnvironment } =
-    useWebEnvironmentActions();
+    useEnvironmentActions();
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const primarySessionState = usePrimarySessionState();
   const currentSessionScopes = desktopBridge
@@ -1880,7 +1883,7 @@ export function ConnectionsSettings() {
   );
   const savedDesktopSshEnvironmentsByAlias = useMemo(
     () =>
-      savedEnvironments.reduce<Record<string, WebEnvironmentPresentation>>(
+      savedEnvironments.reduce<Record<string, EnvironmentPresentation>>(
         (accumulator, environment) => {
           const profile = environment.entry.profile;
           if (
@@ -1989,7 +1992,7 @@ export function ConnectionsSettings() {
   );
   const canManageLocalBackend = currentSessionScopes?.includes(AuthAccessWriteScope) ?? false;
   const canManageRelay = currentSessionScopes?.includes(AuthRelayWriteScope) ?? false;
-  const authAccessChanges = useWebAuthAccessChanges(
+  const authAccessChanges = useAuthAccessChanges(
     canManageLocalBackend ? primaryEnvironmentId : null,
   );
   const isLocalBackendNetworkAccessible = desktopBridge

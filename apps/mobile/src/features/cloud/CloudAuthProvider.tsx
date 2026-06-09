@@ -4,12 +4,12 @@ import {
   createManagedRelaySession,
   ManagedRelayClient,
   setManagedRelaySession,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/relay";
 import * as Effect from "effect/Effect";
 import { type ReactNode, useEffect, useRef } from "react";
 
-import { useMobileEnvironmentConnectionActions } from "../../connection/mobileConnectionState";
-import { mobileRuntime } from "../../lib/runtime";
+import { useEnvironmentConnectionActions } from "../../connection/connectionState";
+import { runtime } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import {
   setAgentAwarenessRelayTokenProvider,
@@ -18,14 +18,14 @@ import {
 import { resolveCloudPublicConfig, resolveRelayClerkTokenOptions } from "./publicConfig";
 
 function resetManagedRelayTokenCache(): Promise<void> {
-  return mobileRuntime.runPromise(
+  return runtime.runPromise(
     ManagedRelayClient.pipe(Effect.flatMap((client) => client.resetTokenCache)),
   );
 }
 
 function CloudAuthBridge(props: { readonly children: ReactNode }) {
   const { getToken, isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
-  const { removeRelayEnvironments } = useMobileEnvironmentConnectionActions();
+  const { removeRelayEnvironments } = useEnvironmentConnectionActions();
   const previousTokenProviderRef = useRef<{
     readonly userId: string;
     readonly provider: () => Promise<string | null>;
@@ -54,11 +54,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
           resetManagedRelayTokenCache(),
           removeRelayEnvironments(),
           ...(previous
-            ? [
-                mobileRuntime.runPromise(
-                  unregisterAgentAwarenessDeviceForCurrentUser(previous.provider),
-                ),
-              ]
+            ? [runtime.runPromise(unregisterAgentAwarenessDeviceForCurrentUser(previous.provider))]
             : []),
         ];
         const results = await Promise.allSettled(cleanup);

@@ -1,17 +1,17 @@
 import {
-  managedRelayClientLayer,
+  managedRelayClientLayer as makeManagedRelayClientLayer,
   ManagedRelayDpopSigner,
   ManagedRelayDpopSignerError,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/relay";
 import { RelayMobileClientId } from "@t3tools/contracts/relay";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { createDpopProof, loadOrCreateDpopProofKeyPair } from "./dpop";
-import { mobileManagedRelayAccessTokenStore } from "./managedRelayTokenStore";
+import { managedRelayAccessTokenStore } from "./managedRelayTokenStore";
 
-const mobileRelayDpopSignerLayer = Layer.effect(
+const relayDpopSignerLayer = Layer.effect(
   ManagedRelayDpopSigner,
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
@@ -38,9 +38,9 @@ const mobileRelayDpopSignerLayer = Layer.effect(
   }),
 );
 
-export const mobileManagedRelayClientLayer = (relayUrl: string) =>
-  managedRelayClientLayer({
+export const managedRelayClientLayer = (relayUrl: string) =>
+  makeManagedRelayClientLayer({
     relayUrl,
     clientId: RelayMobileClientId,
-    accessTokenStore: mobileManagedRelayAccessTokenStore,
-  }).pipe(Layer.provideMerge(mobileRelayDpopSignerLayer));
+    accessTokenStore: managedRelayAccessTokenStore,
+  }).pipe(Layer.provideMerge(relayDpopSignerLayer));

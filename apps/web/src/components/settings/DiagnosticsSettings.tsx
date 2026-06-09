@@ -21,13 +21,13 @@ import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { formatRelativeTime } from "../../timestampFormat";
 import { useServerAvailableEditors, useServerObservability } from "../../rpc/serverState";
 import {
-  useWebProcessDiagnostics,
-  useWebProcessResourceHistory,
-  useWebTraceDiagnostics,
-} from "../../connection/useWebEnvironmentData";
-import { useWebServerActions } from "../../connection/webServerEnvironment";
-import { useWebShellActions } from "../../connection/webShellEnvironment";
-import { useWebPrimaryEnvironment } from "../../connection/useWebEnvironments";
+  useProcessDiagnostics,
+  useProcessResourceHistory,
+  useTraceDiagnostics,
+} from "../../connection/useEnvironmentData";
+import { useServerActions } from "../../connection/serverEnvironment";
+import { useShellActions } from "../../connection/shellEnvironment";
+import { usePrimaryEnvironment } from "../../connection/useEnvironments";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -807,27 +807,27 @@ function DiagnosticsRefreshButton({
 export function DiagnosticsSettingsPanel() {
   const observability = useServerObservability();
   const availableEditors = useServerAvailableEditors();
-  const primaryEnvironment = useWebPrimaryEnvironment();
+  const primaryEnvironment = usePrimaryEnvironment();
   const environmentId = primaryEnvironment?.environmentId ?? null;
-  const serverActions = useWebServerActions();
-  const shellActions = useWebShellActions();
+  const serverActions = useServerActions();
+  const shellActions = useShellActions();
   const [resourceWindowMs, setResourceWindowMs] = useState(15 * 60_000);
   const selectedResourceWindow =
     RESOURCE_HISTORY_WINDOWS.find((option) => option.windowMs === resourceWindowMs) ??
     RESOURCE_HISTORY_WINDOWS[1];
-  const { data, error, isPending, refresh } = useWebTraceDiagnostics(environmentId);
+  const { data, error, isPending, refresh } = useTraceDiagnostics(environmentId);
   const {
     data: processData,
     error: processError,
     isPending: isProcessPending,
     refresh: refreshProcesses,
-  } = useWebProcessDiagnostics(environmentId);
+  } = useProcessDiagnostics(environmentId);
   const {
     data: resourceData,
     error: resourceError,
     isPending: isResourcePending,
     refresh: refreshResources,
-  } = useWebProcessResourceHistory(
+  } = useProcessResourceHistory(
     environmentId === null
       ? null
       : {

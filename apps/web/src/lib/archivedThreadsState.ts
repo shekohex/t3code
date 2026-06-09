@@ -3,14 +3,14 @@ import {
   type ArchivedSnapshotEntry,
   makeArchivedThreadsEnvironmentKey,
   parseArchivedThreadsEnvironmentKey,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 
-import { webOrchestrationEnvironment } from "../connection/webOrchestrationEnvironment";
+import { orchestrationEnvironment } from "../connection/orchestrationEnvironment";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 
 const archivedSnapshotsAtom = Atom.family((environmentKey: string) =>
@@ -21,7 +21,7 @@ const archivedSnapshotsAtom = Atom.family((environmentKey: string) =>
 
     for (const environmentId of parseArchivedThreadsEnvironmentKey(environmentKey)) {
       const result = get(
-        webOrchestrationEnvironment.archivedShellSnapshot({
+        orchestrationEnvironment.archivedShellSnapshot({
           environmentId,
           input: {},
         }),
@@ -49,7 +49,7 @@ const archivedSnapshotsAtom = Atom.family((environmentKey: string) =>
 );
 
 function archivedSnapshotAtom(environmentId: EnvironmentId) {
-  return webOrchestrationEnvironment.archivedShellSnapshot({
+  return orchestrationEnvironment.archivedShellSnapshot({
     environmentId,
     input: {},
   });

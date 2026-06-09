@@ -2,7 +2,7 @@ import {
   attachEnvironmentDescriptor,
   createKnownEnvironment,
   type KnownEnvironment,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { HttpClientError } from "effect/unstable/http";

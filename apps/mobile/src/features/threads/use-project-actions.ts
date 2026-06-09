@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 
-import { EnvironmentScopedProjectShell } from "@t3tools/client-runtime";
+import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -13,11 +13,11 @@ import {
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 
-import { useMobileThreadActions } from "../../connection/mobileThreadEnvironment";
+import { useThreadActions } from "../../connection/threadEnvironment";
+import { useThreadShells } from "../../connection/entityState";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { uuidv4 } from "../../lib/uuid";
-import { useRemoteCatalog } from "../../state/use-remote-catalog";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 
 function deriveThreadTitleFromPrompt(value: string): string {
@@ -31,12 +31,12 @@ function deriveThreadTitleFromPrompt(value: string): string {
 }
 
 export function useProjectActions() {
-  const threadActions = useMobileThreadActions();
-  const { threads } = useRemoteCatalog();
+  const threadActions = useThreadActions();
+  const threads = useThreadShells();
 
   const onCreateThreadWithOptions = useCallback(
     async (input: {
-      readonly project: EnvironmentScopedProjectShell;
+      readonly project: EnvironmentProject;
       readonly modelSelection: ModelSelection;
       readonly envMode: "local" | "worktree";
       readonly branch: string | null;
@@ -109,7 +109,7 @@ export function useProjectActions() {
   );
 
   const onCreateThread = useCallback(
-    async (project: EnvironmentScopedProjectShell) => {
+    async (project: EnvironmentProject) => {
       const latestProjectThread =
         threads.find(
           (thread) =>

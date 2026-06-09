@@ -1,9 +1,12 @@
-import type { ComposerPathSearchState, ComposerPathSearchTarget } from "@t3tools/client-runtime";
+import {
+  type ComposerPathSearchState,
+  type ComposerPathSearchTarget,
+} from "@t3tools/client-runtime/state/threads";
 
-import { useWebComposerPathSearch } from "../connection/webAppQueries";
+import { useComposerPathSearch as useComposerPathSearchQuery } from "../connection/appQueries";
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget): ComposerPathSearchState {
-  const state = useWebComposerPathSearch(target);
+  const state = useComposerPathSearchQuery(target);
   return {
     entries: state.entries.map((entry) => ({
       path: entry.path,

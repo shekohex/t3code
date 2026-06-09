@@ -1,12 +1,12 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import { useMobileReviewPreview } from "../../connection/mobileAppQueries";
+import { useReviewPreview } from "../../connection/appQueries";
 
 export function useReviewDiffPreview(input: {
   readonly environmentId?: EnvironmentId;
   readonly cwd: string | null;
 }) {
-  return useMobileReviewPreview({
+  return useReviewPreview({
     environmentId: input.environmentId ?? null,
     cwd: input.cwd,
   });

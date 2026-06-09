@@ -2,23 +2,25 @@ import {
   addProjectRemoteSourceLabel,
   addProjectRemoteSourcePathHint,
   addProjectRemoteSourceProvider,
-  appendBrowsePathSegment,
   buildAddProjectRemoteSourceReadiness,
   buildProjectCreateCommand,
-  canNavigateUp,
-  ensureBrowseDirectoryPath,
   findExistingAddProject,
   getAddProjectInitialQuery,
+  resolveAddProjectPath,
+  sortAddProjectProviderSources,
+  type AddProjectRemoteSource,
+} from "@t3tools/client-runtime/operations/projects";
+import {
+  appendBrowsePathSegment,
+  canNavigateUp,
+  ensureBrowseDirectoryPath,
   getBrowseDirectoryPath,
   getBrowseLeafPathSegment,
   getBrowseParentPath,
   hasTrailingPathSeparator,
   inferProjectTitleFromPath,
   isFilesystemBrowseQuery,
-  resolveAddProjectPath,
-  sortAddProjectProviderSources,
-  type AddProjectRemoteSource,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/state/projects";
 import { CommandId, type EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
@@ -28,16 +30,16 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
-import { useMobileProjectActions } from "../../connection/mobileProjectEnvironment";
-import { useMobileSourceControlActions } from "../../connection/mobileSourceControlEnvironment";
+import { useProjects, useServerConfigs } from "../../connection/entityState";
+import { useProjectActions } from "../../connection/projectEnvironment";
+import { useSourceControlActions } from "../../connection/sourceControlEnvironment";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { ErrorBanner } from "../../components/ErrorBanner";
 import { SourceControlIcon } from "../../components/SourceControlIcon";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { uuidv4 } from "../../lib/uuid";
 import { useFilesystemBrowse } from "../../state/use-filesystem-browse";
-import { useRemoteCatalog } from "../../state/use-remote-catalog";
-import { useRemoteEnvironmentState } from "../../state/use-remote-environment-registry";
+import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useSourceControlDiscovery } from "../../state/use-source-control-discovery";
 
 interface EnvironmentOption {
@@ -222,12 +224,12 @@ function ProjectPathInput(props: {
 }
 
 function useEnvironmentOptions(): ReadonlyArray<EnvironmentOption> {
-  const { serverConfigByEnvironmentId } = useRemoteCatalog();
-  const { savedConnectionsById } = useRemoteEnvironmentState();
+  const serverConfigByEnvironmentId = useServerConfigs();
+  const { savedConnectionsById } = useSavedRemoteConnections();
 
   return useMemo<ReadonlyArray<EnvironmentOption>>(() => {
     const options = Object.values(savedConnectionsById).map((connection) => {
-      const config = serverConfigByEnvironmentId[connection.environmentId];
+      const config = serverConfigByEnvironmentId.get(connection.environmentId);
       return {
         environmentId: connection.environmentId,
         label: connection.environmentLabel,
@@ -428,8 +430,8 @@ export function AddProjectSourceScreen() {
 
 function useCreateProject(environment: EnvironmentOption | null) {
   const router = useRouter();
-  const projectActions = useMobileProjectActions();
-  const { projects } = useRemoteCatalog();
+  const projectActions = useProjectActions();
+  const projects = useProjects();
 
   return useCallback(
     async (workspaceRoot: string) => {
@@ -489,7 +491,7 @@ function useEnvironmentFromParam(): EnvironmentOption | null {
 }
 
 export function AddProjectRepositoryScreen() {
-  const sourceControlActions = useMobileSourceControlActions();
+  const sourceControlActions = useSourceControlActions();
   const router = useRouter();
   const params = useLocalSearchParams<{ environmentId?: string; source?: string }>();
   const environment = useEnvironmentFromParam();
@@ -721,7 +723,7 @@ export function AddProjectLocalFolderScreen() {
 }
 
 export function AddProjectDestinationScreen() {
-  const sourceControlActions = useMobileSourceControlActions();
+  const sourceControlActions = useSourceControlActions();
   const params = useLocalSearchParams<{
     environmentId?: string;
     remoteUrl?: string;

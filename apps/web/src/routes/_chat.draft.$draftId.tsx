@@ -4,21 +4,23 @@ import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
 import { SidebarInset } from "../components/ui/sidebar";
-import { createThreadSelectorAcrossEnvironments } from "../storeSelectors";
-import { useStore } from "../store";
 import { buildThreadRouteParams } from "../threadRoutes";
+import { useThreadDetail, useThreadRefs } from "../connection/entityState";
 
 function DraftChatThreadRouteView() {
   const navigate = useNavigate();
   const { draftId: rawDraftId } = Route.useParams();
   const draftId = DraftId.make(rawDraftId);
   const draftSession = useComposerDraftStore((store) => store.getDraftSession(draftId));
-  const serverThread = useStore(
-    useMemo(
-      () => createThreadSelectorAcrossEnvironments(draftSession?.threadId ?? null),
-      [draftSession?.threadId],
-    ),
+  const threadRefs = useThreadRefs();
+  const inferredThreadRef = useMemo(
+    () =>
+      draftSession
+        ? (threadRefs.find((ref) => ref.threadId === draftSession.threadId) ?? null)
+        : null,
+    [draftSession, threadRefs],
   );
+  const serverThread = useThreadDetail(draftSession?.promotedTo ?? inferredThreadRef);
   const serverThreadStarted = threadHasStarted(serverThread);
   const canonicalThreadRef = useMemo(
     () =>

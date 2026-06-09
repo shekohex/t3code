@@ -37,7 +37,6 @@ import { __resetLocalApiForTests } from "../localApi";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { getServerConfig, getServerConfigUpdatedNotification } from "../rpc/serverState";
 import { getRouter } from "../router";
-import { useStore } from "../store";
 import { createAuthenticatedSessionHandlers } from "../../test/authHttpHandlers";
 import { BrowserWsRpcHarness } from "../../test/wsRpcHarness";
 
@@ -550,10 +549,6 @@ describe("Keybindings update toast", () => {
       draftsByThreadKey: {},
       draftThreadsByThreadKey: {},
       logicalProjectDraftThreadKeyByLogicalProjectKey: {},
-    });
-    useStore.setState({
-      activeEnvironmentId: null,
-      environmentStateById: {},
     });
   });
 

@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ThreadId } from "@t3tools/contracts";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -156,81 +156,22 @@ vi.mock("~/composerDraftStore", async () => {
   };
 });
 
-vi.mock("~/store", () => ({
-  selectEnvironmentState: (
-    state: { environmentStateById: Record<string, unknown> },
-    environmentId: string | null,
-  ) => {
-    if (!environmentId) {
-      throw new Error("Missing environment id");
-    }
-    const environmentState = state.environmentStateById[environmentId];
-    if (!environmentState) {
-      throw new Error(`Unknown environment: ${environmentId}`);
-    }
-    return environmentState;
-  },
-  selectProjectsForEnvironment: () => [],
-  selectProjectsAcrossEnvironments: () => [],
-  selectThreadsForEnvironment: () => [],
-  selectThreadsAcrossEnvironments: () => [],
-  selectThreadShellsAcrossEnvironments: () => [],
-  selectSidebarThreadsAcrossEnvironments: () => [],
-  selectSidebarThreadsForProjectRef: () => [],
-  selectSidebarThreadsForProjectRefs: () => [],
-  selectBootstrapCompleteForActiveEnvironment: () => true,
-  selectProjectByRef: () => null,
-  selectThreadByRef: () => null,
-  selectSidebarThreadSummaryByRef: () => null,
-  selectThreadIdsByProjectRef: () => [],
-  useStore: (selector: (state: unknown) => unknown) =>
-    selector({
-      setThreadBranch: setThreadBranchSpy,
-      environmentStateById: {
-        [ENVIRONMENT_A]: {
-          threadShellById: hasServerThreadRef.current
-            ? {
-                [SHARED_THREAD_ID]: {
-                  id: SHARED_THREAD_ID,
-                  branch: BRANCH_NAME,
-                  worktreePath: null,
-                },
-              }
-            : {},
-          threadSessionById: {},
-          threadTurnStateById: {},
-          messageIdsByThreadId: {},
-          messageByThreadId: {},
-          activityIdsByThreadId: {},
-          activityByThreadId: {},
-          proposedPlanIdsByThreadId: {},
-          proposedPlanByThreadId: {},
-          turnDiffIdsByThreadId: {},
-          turnDiffSummaryByThreadId: {},
-        },
-        [ENVIRONMENT_B]: {
-          threadShellById: hasServerThreadRef.current
-            ? {
-                [SHARED_THREAD_ID]: {
-                  id: SHARED_THREAD_ID,
-                  branch: BRANCH_NAME,
-                  worktreePath: null,
-                },
-              }
-            : {},
-          threadSessionById: {},
-          threadTurnStateById: {},
-          messageIdsByThreadId: {},
-          messageByThreadId: {},
-          activityIdsByThreadId: {},
-          activityByThreadId: {},
-          proposedPlanIdsByThreadId: {},
-          proposedPlanByThreadId: {},
-          turnDiffIdsByThreadId: {},
-          turnDiffSummaryByThreadId: {},
-        },
-      },
-    }),
+vi.mock("~/connection/entityState", () => ({
+  useThreadDetail: (threadRef: { environmentId: string; threadId: string } | null) =>
+    threadRef && hasServerThreadRef.current
+      ? {
+          id: threadRef.threadId,
+          environmentId: threadRef.environmentId,
+          branch: BRANCH_NAME,
+          worktreePath: null,
+        }
+      : null,
+}));
+
+vi.mock("~/connection/threadEnvironment", () => ({
+  useThreadActions: () => ({
+    updateMetadata: setThreadBranchSpy,
+  }),
 }));
 
 vi.mock("~/terminal-links", () => ({

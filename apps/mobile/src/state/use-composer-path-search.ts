@@ -1,7 +1,7 @@
-import type { ComposerPathSearchTarget } from "@t3tools/client-runtime";
+import { type ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 
-import { useMobileComposerPathSearch } from "../connection/mobileAppQueries";
+import { useComposerPathSearch as useComposerPathSearchQuery } from "../connection/appQueries";
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
-  return useMobileComposerPathSearch(target);
+  return useComposerPathSearchQuery(target);
 }

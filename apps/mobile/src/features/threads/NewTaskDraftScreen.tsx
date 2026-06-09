@@ -26,7 +26,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
 import { buildThreadRoutePath } from "../../lib/routes";
-import { useRemoteCatalog } from "../../state/use-remote-catalog";
+import { useProjects } from "../../connection/entityState";
 import { useNativePaste } from "../../lib/useNativePaste";
 import { CLAUDE_AGENT_EFFORT_OPTIONS } from "./claudeEffortOptions";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
@@ -66,7 +66,7 @@ export function NewTaskDraftScreen(props: {
     readonly projectId?: string;
   };
 }) {
-  const { projects } = useRemoteCatalog();
+  const projects = useProjects();
   const { onCreateThreadWithOptions } = useProjectActions();
   const flow = useNewTaskFlow();
   const router = useRouter();

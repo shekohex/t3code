@@ -7,13 +7,13 @@ import {
   type VcsActionState,
   type VcsActionTarget,
   vcsActionStateAtom,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/state/vcs";
 import type { GitActionProgressEvent } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { useMobileRunStackedGitActionState } from "../connection/useMobileEnvironmentData";
+import { useRunStackedGitActionState } from "../connection/useEnvironmentData";
 import { appAtomRegistry } from "./atom-registry";
 
 function setVcsActionState(target: VcsActionTarget, state: VcsActionState): void {
@@ -58,7 +58,7 @@ export function failVcsAction(
 
 export function useVcsActionState(target: VcsActionTarget): VcsActionState {
   const targetKey = getVcsActionTargetKey(target);
-  const runStackedActionState = useMobileRunStackedGitActionState();
+  const runStackedActionState = useRunStackedGitActionState();
   const state = useAtomValue(
     targetKey !== null ? vcsActionStateAtom(targetKey) : EMPTY_VCS_ACTION_ATOM,
   );

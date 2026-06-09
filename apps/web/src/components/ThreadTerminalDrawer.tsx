@@ -44,8 +44,8 @@ import {
   type ThreadTerminalGroup,
 } from "../types";
 import { readLocalApi } from "~/localApi";
-import { useWebTerminalController } from "../connection/webTerminalSessions";
-import { useWebServerConfig } from "../connection/useWebEnvironmentData";
+import { useTerminalController } from "../connection/terminalSessions";
+import { useServerConfig } from "../connection/useEnvironmentData";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -292,7 +292,7 @@ export function TerminalViewport({
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const environmentId = threadRef.environmentId;
-  const serverConfig = useWebServerConfig(environmentId);
+  const serverConfig = useServerConfig(environmentId);
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
     serverConfig.data?.availableEditors ?? [],
@@ -313,7 +313,7 @@ export function TerminalViewport({
     onAddTerminalContext(selection);
   });
   const readTerminalLabel = useEffectEvent(() => terminalLabel);
-  const terminalController = useWebTerminalController({
+  const terminalController = useTerminalController({
     environmentId,
     terminal: {
       threadId,

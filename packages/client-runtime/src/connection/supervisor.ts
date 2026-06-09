@@ -28,7 +28,7 @@ import {
   type PreparedConnection,
   type SupervisorConnectionState,
 } from "./model.ts";
-import type { RpcSession } from "./rpcSession.ts";
+import type { RpcSession } from "../rpc/session.ts";
 import { type ConnectionWakeup, ConnectionWakeups } from "./wakeups.ts";
 
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
@@ -82,6 +82,16 @@ type EstablishmentEvent =
     }
   | { readonly _tag: "Interrupted" }
   | { readonly _tag: "TimedOut" };
+
+function exitUnlessInterrupted<A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<Exit.Exit<A, E>, never, R> {
+  return Effect.matchCauseEffect(effect, {
+    onFailure: (cause) =>
+      Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Exit.failCause(cause)),
+    onSuccess: (value) => Effect.succeed(Exit.succeed(value)),
+  });
+}
 
 export interface EnvironmentSupervisorOptions {
   readonly initiallyDesired?: boolean;
@@ -391,8 +401,9 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
   ) {
     yield* SubscriptionRef.set(prepared, Option.none());
     const establishment = yield* Effect.raceAllFirst([
-      establishTracedConnection(attempt, generation, lastFailure, pendingRetry).pipe(
-        Effect.exit,
+      exitUnlessInterrupted(
+        establishTracedConnection(attempt, generation, lastFailure, pendingRetry),
+      ).pipe(
         Effect.map(
           (exit): EstablishmentEvent => ({
             _tag: "Completed",
@@ -475,7 +486,7 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
           }),
         ),
       ),
-    ).pipe(Effect.exit);
+    ).pipe(exitUnlessInterrupted);
     return failureFromExit(target, connectedExit, true);
   }, Effect.ensuring(clearLease));
 

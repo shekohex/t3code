@@ -1,30 +1,21 @@
 import {
   type DesktopSshEnvironmentTarget,
   EnvironmentId,
-  ORCHESTRATION_WS_METHODS,
   type OrchestrationShellSnapshot,
-  type OrchestrationShellStreamItem,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import type { WsRpcProtocolClient } from "../wsRpcProtocol.ts";
-import { ConnectionBroker } from "./broker.ts";
-import {
-  RemoteDpopAccessToken,
-  RemoteDpopAccessTokenStore,
-  SshEnvironmentGateway,
-} from "./capabilities.ts";
+import { SshEnvironmentGateway } from "../platform/capabilities.ts";
+import { RemoteDpopAccessToken, RemoteDpopAccessTokenStore } from "../authorization/tokenStore.ts";
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
@@ -38,7 +29,7 @@ import {
   type ConnectionProfile,
 } from "./catalog.ts";
 import { Connectivity } from "./connectivity.ts";
-import { connectionDriverLayer } from "./driver.ts";
+import { ConnectionDriver } from "./driver.ts";
 import {
   ConnectionTransientError,
   BearerConnectionTarget,
@@ -54,10 +45,9 @@ import {
   ConnectionTargetStore,
   EnvironmentCacheStore,
   EnvironmentOwnedDataCleanup,
-} from "./persistence.ts";
+} from "../platform/persistence.ts";
 import { EnvironmentRegistry, environmentRegistryLayer } from "./registry.ts";
-import { RpcSessionFactory, type RpcSession } from "./rpcSession.ts";
-import { EnvironmentShell, environmentServicesFactoryLayer } from "./runtime.ts";
+import type { RpcSession } from "../rpc/session.ts";
 import { EnvironmentSupervisor } from "./supervisor.ts";
 import { ConnectionWakeups } from "./wakeups.ts";
 
@@ -132,22 +122,7 @@ const CACHED_SNAPSHOT: OrchestrationShellSnapshot = {
   updatedAt: "2026-06-06T00:00:00.000Z",
 };
 
-const LIVE_SNAPSHOT: OrchestrationShellSnapshot = {
-  ...CACHED_SNAPSHOT,
-  snapshotSequence: 2,
-  updatedAt: "2026-06-06T00:01:00.000Z",
-};
-
-const TEST_CRYPTO_LAYER = Layer.succeed(
-  Crypto.Crypto,
-  Crypto.make({
-    randomBytes: (size) => new Uint8Array(size),
-    digest: (_algorithm, data) => Effect.succeed(data),
-  }),
-);
-
 interface SessionControl {
-  readonly events: Queue.Queue<OrchestrationShellStreamItem>;
   readonly closed: Deferred.Deferred<never, ConnectionTransientError>;
 }
 
@@ -156,7 +131,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   initialProfiles: ReadonlyArray<ConnectionProfile> = [],
   initialCredentials: ReadonlyArray<readonly [string, ConnectionCredential]> = [],
   options?: {
-    readonly beforeLoadShell?: (environmentId: EnvironmentId) => Effect.Effect<void>;
+    readonly beforeSessionConnect?: (environmentId: EnvironmentId) => Effect.Effect<void>;
     readonly beforeRegistrationRemove?: (target: ConnectionTarget) => Effect.Effect<void>;
   },
 ) {
@@ -256,8 +231,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   });
   const cacheStore = EnvironmentCacheStore.of({
     loadShell: (environmentId) =>
-      (options?.beforeLoadShell?.(environmentId) ?? Effect.void).pipe(
-        Effect.andThen(Ref.get(shellCache)),
+      Ref.get(shellCache).pipe(
         Effect.map((cache) => Option.fromUndefinedOr(cache.get(environmentId))),
       ),
     saveShell: (environmentId, snapshot) =>
@@ -349,55 +323,38 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     prepare: () => Effect.die(new Error("SSH preparation is not used.")),
     disconnect: (target) => Ref.update(disconnectedSshTargets, (current) => [...current, target]),
   });
-  const broker = ConnectionBroker.of({
-    prepare: ({ target }) =>
-      Effect.succeed({
-        ...PREPARED,
-        environmentId: target.environmentId,
-        label: target.label,
-        target,
-      }),
-  });
-  const sessionFactory = RpcSessionFactory.of({
-    connect: () =>
+  const driver = ConnectionDriver.of({
+    connect: (entry, reportProgress) =>
       Effect.gen(function* () {
-        const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+        const target = entry.target;
+        const prepared = {
+          ...PREPARED,
+          environmentId: target.environmentId,
+          label: target.label,
+          target,
+        };
+        yield* reportProgress({ stage: "preparing" });
+        yield* reportProgress({ stage: "opening", prepared });
+        yield* options?.beforeSessionConnect?.(target.environmentId) ?? Effect.void;
         const closed = yield* Deferred.make<never, ConnectionTransientError>();
-        yield* Ref.update(sessions, (current) => [...current, { events, closed }]);
-        yield* Effect.addFinalizer(() => Queue.shutdown(events));
-        const client = {
-          [ORCHESTRATION_WS_METHODS.subscribeShell]: () => Stream.fromQueue(events),
-        } as unknown as WsRpcProtocolClient;
-        return {
-          client,
-          initialConfig: Effect.die(new Error("Config is not used by registry tests.")),
-          ready: Effect.void,
-          probe: Effect.void,
-          closed: Deferred.await(closed),
-        } satisfies RpcSession;
+        yield* Ref.update(sessions, (current) => [...current, { closed }]);
+        const session = yield* Effect.acquireRelease(
+          Effect.succeed({
+            client: {} as RpcSession["client"],
+            initialConfig: Effect.die(new Error("Config is not used by registry tests.")),
+            ready: Effect.void,
+            probe: Effect.void,
+            closed: Deferred.await(closed),
+          } satisfies RpcSession),
+          () => Effect.void,
+        );
+        yield* reportProgress({ stage: "synchronizing", prepared });
+        yield* session.ready;
+        return { prepared, session };
       }),
   });
 
   const cacheLayer = Layer.succeed(EnvironmentCacheStore, cacheStore);
-  const driverLayer = connectionDriverLayer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        Layer.succeed(ConnectionBroker, broker),
-        Layer.succeed(RpcSessionFactory, sessionFactory),
-      ),
-    ),
-  );
-  const servicesFactoryLayer = environmentServicesFactoryLayer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        cacheLayer,
-        Layer.succeed(Connectivity, connectivity),
-        Layer.succeed(ConnectionWakeups, ConnectionWakeups.of({ changes: Stream.never })),
-        driverLayer,
-        TEST_CRYPTO_LAYER,
-      ),
-    ),
-  );
   const layer = environmentRegistryLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -408,9 +365,10 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         Layer.succeed(RemoteDpopAccessTokenStore, tokenStore),
         Layer.succeed(SshEnvironmentGateway, sshGateway),
         Layer.succeed(Connectivity, connectivity),
+        Layer.succeed(ConnectionWakeups, ConnectionWakeups.of({ changes: Stream.never })),
+        Layer.succeed(ConnectionDriver, driver),
         cacheLayer,
         Layer.succeed(EnvironmentOwnedDataCleanup, ownedDataCleanup),
-        servicesFactoryLayer,
       ),
     ),
   );
@@ -444,34 +402,6 @@ function awaitConnectionState(
     return yield* registry
       .stateChanges(environmentId)
       .pipe(Stream.filter(predicate), Stream.runHead, Effect.map(Option.getOrThrow));
-  });
-}
-
-function awaitShellStatus(
-  registry: EnvironmentRegistry["Service"],
-  environmentId: EnvironmentId,
-  status: "cached" | "synchronizing" | "live",
-) {
-  return Effect.gen(function* () {
-    const current = yield* registry.run(
-      environmentId,
-      EnvironmentShell.pipe(Effect.flatMap((shell) => SubscriptionRef.get(shell.state))),
-    );
-    if (current.status === status) {
-      return current;
-    }
-    return yield* registry
-      .runStream(
-        environmentId,
-        Stream.unwrap(
-          EnvironmentShell.pipe(Effect.map((shell) => SubscriptionRef.changes(shell.state))),
-        ),
-      )
-      .pipe(
-        Stream.filter((state) => state.status === status),
-        Stream.runHead,
-        Effect.map(Option.getOrThrow),
-      );
   });
 }
 
@@ -520,7 +450,7 @@ describe("EnvironmentRegistry", () => {
       const releaseLoads = yield* Deferred.make<void>();
       const loadCount = yield* Ref.make(0);
       const harness = yield* makeHarness([TARGET, SECOND_TARGET], [], [], {
-        beforeLoadShell: () =>
+        beforeSessionConnect: () =>
           Ref.updateAndGet(loadCount, (count) => count + 1).pipe(
             Effect.tap((count) =>
               count === 2 ? Deferred.succeed(bothLoadsStarted, undefined) : Effect.void,
@@ -582,80 +512,54 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
-  it.effect(
-    "hydrates registered environments, preserves cached data on failure, and clears it on explicit removal",
-    () =>
-      Effect.gen(function* () {
-        const harness = yield* makeHarness([TARGET]);
-        yield* Effect.gen(function* () {
-          const registry = yield* EnvironmentRegistry;
-          yield* registry.start;
-          yield* awaitConnectionState(
+  it.effect("preserves cached data on connection failure and clears it on explicit removal", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([TARGET]);
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+        const controls = yield* Ref.get(harness.sessions);
+        expect(controls).toHaveLength(1);
+        const active = controls[0];
+        expect(active).toBeDefined();
+        expect((yield* Ref.get(harness.shellCache)).get(TARGET.environmentId)).toEqual(
+          CACHED_SNAPSHOT,
+        );
+
+        const retryFiber = yield* Effect.forkChild(
+          awaitConnectionState(
             registry,
             TARGET.environmentId,
-            (state) => state.phase === "connected",
-          );
+            (state) => state.phase === "backoff",
+          ),
+        );
+        yield* Effect.yieldNow;
+        yield* Deferred.fail(
+          active!.closed,
+          new ConnectionTransientError({
+            reason: "transport",
+            message: "Disconnected.",
+          }),
+        );
+        yield* Fiber.join(retryFiber);
+        expect((yield* Ref.get(harness.shellCache)).get(TARGET.environmentId)).toEqual(
+          CACHED_SNAPSHOT,
+        );
 
-          const synchronizing = yield* awaitShellStatus(
-            registry,
-            TARGET.environmentId,
-            "synchronizing",
-          );
-          expect(Option.getOrThrow(synchronizing.snapshot)).toEqual(CACHED_SNAPSHOT);
-
-          const liveFiber = yield* Effect.forkChild(
-            awaitShellStatus(registry, TARGET.environmentId, "live"),
-          );
-          const controls = yield* Ref.get(harness.sessions);
-          expect(controls).toHaveLength(1);
-          const active = controls[0];
-          expect(active).toBeDefined();
-          const readyFiber = yield* Effect.forkChild(
-            awaitConnectionState(
-              registry,
-              TARGET.environmentId,
-              (state) => state.phase === "connected",
-            ),
-          );
-          yield* Queue.offer(active!.events, {
-            kind: "snapshot",
-            snapshot: LIVE_SNAPSHOT,
-          });
-          yield* Fiber.join(liveFiber);
-          yield* Fiber.join(readyFiber);
-
-          expect((yield* Ref.get(harness.shellCache)).get(TARGET.environmentId)).toEqual(
-            LIVE_SNAPSHOT,
-          );
-
-          const retryFiber = yield* Effect.forkChild(
-            awaitConnectionState(
-              registry,
-              TARGET.environmentId,
-              (state) => state.phase === "backoff",
-            ),
-          );
-          yield* Deferred.fail(
-            active!.closed,
-            new ConnectionTransientError({
-              reason: "transport",
-              message: "Disconnected.",
-            }),
-          );
-          yield* Fiber.join(retryFiber);
-
-          const cached = yield* awaitShellStatus(registry, TARGET.environmentId, "cached");
-          expect(Option.getOrThrow(cached.snapshot)).toEqual(LIVE_SNAPSHOT);
-
-          yield* registry.remove(TARGET.environmentId);
-          expect((yield* Ref.get(harness.storedTargets)).has(TARGET.environmentId)).toBe(false);
-          expect((yield* Ref.get(harness.shellCache)).has(TARGET.environmentId)).toBe(false);
-          expect(yield* Ref.get(harness.cacheClears)).toEqual([TARGET.environmentId]);
-          expect((yield* SubscriptionRef.get(registry.entries)).has(TARGET.environmentId)).toBe(
-            false,
-          );
-        }).pipe(Effect.provide(harness.layer));
-      }),
+        yield* registry.remove(TARGET.environmentId);
+        expect((yield* Ref.get(harness.storedTargets)).has(TARGET.environmentId)).toBe(false);
+        expect((yield* Ref.get(harness.shellCache)).has(TARGET.environmentId)).toBe(false);
+        expect(yield* Ref.get(harness.cacheClears)).toEqual([TARGET.environmentId]);
+        expect((yield* SubscriptionRef.get(registry.entries)).has(TARGET.environmentId)).toBe(
+          false,
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }),
   );
 
   it.effect("persists and starts a newly registered environment", () =>

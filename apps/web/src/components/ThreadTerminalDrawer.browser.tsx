@@ -1,6 +1,6 @@
 import "../index.css";
 
-import { scopeThreadRef } from "@t3tools/client-runtime";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ThreadId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
@@ -11,7 +11,7 @@ const {
   fitAddonFitSpy,
   fitAddonLoadSpy,
   terminalControllerByEnvironmentId,
-  useWebTerminalControllerMock,
+  useTerminalControllerMock,
   readLocalApiMock,
 } = vi.hoisted(() => ({
   terminalConstructorSpy: vi.fn(),
@@ -37,7 +37,7 @@ const {
       close: ReturnType<typeof vi.fn>;
     }
   >(),
-  useWebTerminalControllerMock: vi.fn(),
+  useTerminalControllerMock: vi.fn(),
   readLocalApiMock: vi.fn<
     () =>
       | {
@@ -126,9 +126,9 @@ vi.mock("@xterm/xterm", () => ({
   },
 }));
 
-vi.mock("../connection/webTerminalSessions", () => ({
-  useWebTerminalController: (input: { environmentId: string }) => {
-    useWebTerminalControllerMock(input);
+vi.mock("../connection/terminalSessions", () => ({
+  useTerminalController: (input: { environmentId: string }) => {
+    useTerminalControllerMock(input);
     const controller = terminalControllerByEnvironmentId.get(input.environmentId);
     if (controller === undefined) {
       throw new Error(`Missing test terminal controller for ${input.environmentId}`);
@@ -137,8 +137,8 @@ vi.mock("../connection/webTerminalSessions", () => ({
   },
 }));
 
-vi.mock("../connection/useWebEnvironmentData", () => ({
-  useWebServerConfig: () => ({
+vi.mock("../connection/useEnvironmentData", () => ({
+  useServerConfig: () => ({
     data: { availableEditors: [] },
     error: null,
     isLoading: false,
@@ -248,7 +248,7 @@ async function mountTerminalViewport(props: {
 describe("TerminalViewport", () => {
   afterEach(() => {
     terminalControllerByEnvironmentId.clear();
-    useWebTerminalControllerMock.mockClear();
+    useTerminalControllerMock.mockClear();
     readLocalApiMock.mockClear();
     terminalConstructorSpy.mockClear();
     terminalDisposeSpy.mockClear();
@@ -266,7 +266,7 @@ describe("TerminalViewport", () => {
 
     try {
       await vi.waitFor(() => {
-        expect(useWebTerminalControllerMock).toHaveBeenCalledWith(
+        expect(useTerminalControllerMock).toHaveBeenCalledWith(
           expect.objectContaining({ environmentId: "environment-a" }),
         );
       });
@@ -314,7 +314,7 @@ describe("TerminalViewport", () => {
       });
 
       await vi.waitFor(() => {
-        expect(useWebTerminalControllerMock).toHaveBeenCalledWith(
+        expect(useTerminalControllerMock).toHaveBeenCalledWith(
           expect.objectContaining({ environmentId: "environment-b" }),
         );
       });

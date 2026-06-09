@@ -12,7 +12,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { SshEnvironmentGateway } from "./capabilities.ts";
+import { SshEnvironmentGateway } from "../platform/capabilities.ts";
 import {
   type ConnectionCatalogEntry,
   type ConnectionRegistration,
@@ -30,9 +30,14 @@ import {
   ConnectionTargetStore,
   EnvironmentCacheStore,
   EnvironmentOwnedDataCleanup,
-} from "./persistence.ts";
-import { type EnvironmentServices, EnvironmentServicesFactory } from "./runtime.ts";
-import { EnvironmentSupervisor } from "./supervisor.ts";
+} from "../platform/persistence.ts";
+import {
+  EnvironmentSupervisor,
+  type EnvironmentSupervisorService,
+  makeEnvironmentSupervisor,
+} from "./supervisor.ts";
+import { ConnectionDriver } from "./driver.ts";
+import { ConnectionWakeups } from "./wakeups.ts";
 
 const isSshConnectionProfile = Schema.is(SshConnectionProfile);
 
@@ -82,14 +87,14 @@ export interface EnvironmentRegistryService {
   readonly stateChanges: (
     environmentId: EnvironmentId,
   ) => Stream.Stream<SupervisorConnectionState, EnvironmentNotRegisteredError>;
-  readonly run: <A, E, R extends EnvironmentServices>(
+  readonly run: <A, E, R>(
     environmentId: EnvironmentId,
     effect: Effect.Effect<A, E, R>,
-  ) => Effect.Effect<A, E | EnvironmentNotRegisteredError>;
-  readonly runStream: <A, E, R extends EnvironmentServices>(
+  ) => Effect.Effect<A, E | EnvironmentNotRegisteredError, Exclude<R, EnvironmentSupervisor>>;
+  readonly runStream: <A, E, R>(
     environmentId: EnvironmentId,
     stream: Stream.Stream<A, E, R>,
-  ) => Stream.Stream<A, E | EnvironmentNotRegisteredError>;
+  ) => Stream.Stream<A, E | EnvironmentNotRegisteredError, Exclude<R, EnvironmentSupervisor>>;
 }
 
 export class EnvironmentRegistry extends Context.Service<
@@ -99,7 +104,7 @@ export class EnvironmentRegistry extends Context.Service<
 
 interface EnvironmentServiceScope {
   readonly entry: ConnectionCatalogEntry;
-  readonly context: Context.Context<EnvironmentServices>;
+  readonly supervisor: EnvironmentSupervisorService;
   readonly scope: Scope.Closeable;
 }
 
@@ -110,8 +115,9 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
   const ownedDataCleanup = yield* EnvironmentOwnedDataCleanup;
   const profiles = yield* ConnectionProfileStore;
   const connectivity = yield* Connectivity;
+  const driver = yield* ConnectionDriver;
+  const wakeups = yield* ConnectionWakeups;
   const ssh = yield* SshEnvironmentGateway;
-  const servicesFactory = yield* EnvironmentServicesFactory;
   const persistedTargets = yield* storage.list;
   const initialEntries = new Map(
     yield* Effect.forEach(
@@ -189,20 +195,25 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
   ) {
     const environmentId = entry.target.environmentId;
     const scope = yield* Scope.make();
-    const context = yield* servicesFactory.make(entry).pipe(
+    const supervisor = yield* makeEnvironmentSupervisor(entry, {
+      initiallyDesired: false,
+    }).pipe(
+      Effect.provideService(Connectivity, connectivity),
+      Effect.provideService(ConnectionDriver, driver),
+      Effect.provideService(ConnectionWakeups, wakeups),
       Scope.provide(scope),
       Effect.onError(() => Scope.close(scope, Exit.void)),
     );
     yield* Ref.update(serviceScopes, (current) => {
       const next = new Map(current);
-      next.set(environmentId, { entry, context, scope });
+      next.set(environmentId, { entry, supervisor, scope });
       return next;
     });
-    yield* Context.get(context, EnvironmentSupervisor).connect;
-    return context;
+    yield* supervisor.connect;
+    return supervisor;
   });
 
-  const acquireContext = Effect.fn("EnvironmentRegistry.acquireContext")(function* (
+  const acquireSupervisor = Effect.fn("EnvironmentRegistry.acquireSupervisor")(function* (
     environmentId: EnvironmentId,
   ) {
     const leaseLock = yield* getLeaseLock(environmentId);
@@ -212,7 +223,7 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
         const existing = (yield* Ref.get(serviceScopes)).get(environmentId);
         if (existing !== undefined) {
           if (Equal.equals(existing.entry, entry)) {
-            return existing.context;
+            return existing.supervisor;
           }
           yield* closeServiceScope(environmentId);
         }
@@ -224,19 +235,21 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
   const run: EnvironmentRegistryService["run"] = Effect.fn("EnvironmentRegistry.run")(function* <
     A,
     E,
-    R extends EnvironmentServices,
+    R,
   >(environmentId: EnvironmentId, effect: Effect.Effect<A, E, R>) {
-    const context = yield* acquireContext(environmentId);
-    return yield* Effect.provide(effect, context as Context.Context<R>);
+    const supervisor = yield* acquireSupervisor(environmentId);
+    return yield* Effect.provideService(effect, EnvironmentSupervisor, supervisor);
   });
 
-  const runStream: EnvironmentRegistryService["runStream"] = <A, E, R extends EnvironmentServices>(
+  const runStream: EnvironmentRegistryService["runStream"] = <A, E, R>(
     environmentId: EnvironmentId,
     stream: Stream.Stream<A, E, R>,
   ) =>
     Stream.unwrap(
-      acquireContext(environmentId).pipe(
-        Effect.map((context) => Stream.provide(stream, context as Context.Context<R>)),
+      acquireSupervisor(environmentId).pipe(
+        Effect.map((supervisor) =>
+          Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+        ),
       ),
     );
 
@@ -247,7 +260,7 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
     yield* Effect.forEach(
       persistedTargets,
       (target) =>
-        acquireContext(target.environmentId).pipe(
+        acquireSupervisor(target.environmentId).pipe(
           Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
         ),
       {
@@ -383,24 +396,19 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
   );
 
   const retryNow = (environmentId: EnvironmentId) =>
-    run(
-      environmentId,
-      EnvironmentSupervisor.pipe(Effect.flatMap((supervisor) => supervisor.retryNow)),
-    ).pipe(Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void));
-  const state = (environmentId: EnvironmentId) =>
-    run(
-      environmentId,
-      EnvironmentSupervisor.pipe(
-        Effect.flatMap((supervisor) => SubscriptionRef.get(supervisor.state)),
-      ),
+    acquireSupervisor(environmentId).pipe(
+      Effect.flatMap((supervisor) => supervisor.retryNow),
+      Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+      Effect.withSpan("EnvironmentRegistry.retryNow"),
     );
+  const state = Effect.fn("EnvironmentRegistry.state")(function* (environmentId: EnvironmentId) {
+    const supervisor = yield* acquireSupervisor(environmentId);
+    return yield* SubscriptionRef.get(supervisor.state);
+  });
   const stateChanges = (environmentId: EnvironmentId) =>
-    runStream(
-      environmentId,
-      Stream.unwrap(
-        EnvironmentSupervisor.pipe(
-          Effect.map((supervisor) => SubscriptionRef.changes(supervisor.state)),
-        ),
+    Stream.unwrap(
+      acquireSupervisor(environmentId).pipe(
+        Effect.map((supervisor) => SubscriptionRef.changes(supervisor.state)),
       ),
     );
 

@@ -1,11 +1,22 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { ServerConfig } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 import { Alert } from "react-native";
 
-import { useMobileConnectionController } from "../connection/useMobileConnectionController";
-import { useMobileWorkspace } from "../connection/useMobileWorkspace";
+import { useEnvironmentServerConfig } from "../connection/entityState";
+import { useConnectionController } from "../connection/useConnectionController";
+import { useEnvironmentPresentation } from "../connection/connectionState";
+import {
+  projectEnvironmentPresentation,
+  type EnvironmentPresentation,
+} from "../connection/useEnvironments";
+import { useWorkspaceState } from "../connection/useWorkspace";
+import {
+  projectWorkspaceEnvironment,
+  type WorkspaceEnvironment,
+} from "../connection/workspaceModel";
 import type { SavedRemoteConnection } from "../lib/connection";
 import { appAtomRegistry } from "./atom-registry";
 import type { ConnectedEnvironmentSummary, EnvironmentRuntimeState } from "./remote-runtime-types";
@@ -24,9 +35,7 @@ export function setPendingConnectionError(message: string | null): void {
   appAtomRegistry.set(pendingConnectionErrorAtom, message);
 }
 
-function toSavedConnection(
-  environment: ReturnType<typeof useMobileWorkspace>["environments"][number],
-): SavedRemoteConnection {
+function toSavedConnection(environment: WorkspaceEnvironment): SavedRemoteConnection {
   const displayUrl = environment.displayUrl;
   const wsBaseUrl = displayUrl.startsWith("https://")
     ? displayUrl.replace(/^https:/, "wss:")
@@ -50,35 +59,19 @@ function toSavedConnection(
 }
 
 function toRuntimeState(
-  environment: ReturnType<typeof useMobileWorkspace>["environments"][number],
-  serverConfig: ReturnType<typeof useMobileWorkspace>["serverConfigByEnvironmentId"],
+  environment: EnvironmentPresentation,
+  serverConfig: ServerConfig | null,
 ): EnvironmentRuntimeState {
   return {
-    connectionState: environment.connectionState,
-    connectionError: environment.connectionError,
-    connectionErrorTraceId: environment.connectionErrorTraceId,
-    serverConfig: serverConfig.get(environment.environmentId) ?? null,
+    connectionState: environment.connection.phase,
+    connectionError: environment.connection.error,
+    connectionErrorTraceId: environment.connection.traceId,
+    serverConfig,
   };
 }
 
-function toConnectedEnvironment(
-  environment: ReturnType<typeof useMobileWorkspace>["environments"][number],
-): ConnectedEnvironmentSummary {
-  return {
-    environmentId: environment.environmentId,
-    environmentLabel: environment.environmentLabel,
-    displayUrl: environment.displayUrl,
-    isRelayManaged: environment.isRelayManaged,
-    connectionState: environment.connectionState,
-    connectionError: environment.connectionError,
-    connectionErrorTraceId: environment.connectionErrorTraceId,
-  };
-}
-
-export function useRemoteEnvironmentState() {
-  const workspace = useMobileWorkspace();
-  const connectionPairingUrl = useAtomValue(connectionPairingUrlAtom);
-  const pendingConnectionError = useAtomValue(pendingConnectionErrorAtom);
+export function useSavedRemoteConnections() {
+  const workspace = useWorkspaceState();
   const savedConnectionsById = useMemo(
     () =>
       Object.fromEntries(
@@ -89,31 +82,50 @@ export function useRemoteEnvironmentState() {
       ) as Record<EnvironmentId, SavedRemoteConnection>,
     [workspace.environments],
   );
-  const environmentStateById = useMemo(
-    () =>
-      Object.fromEntries(
-        workspace.environments.map((environment) => [
-          environment.environmentId,
-          toRuntimeState(environment, workspace.serverConfigByEnvironmentId),
-        ]),
-      ) as Record<EnvironmentId, EnvironmentRuntimeState>,
-    [workspace.environments, workspace.serverConfigByEnvironmentId],
-  );
 
   return {
     isLoadingSavedConnection: workspace.state.isLoadingConnections,
-    connectionPairingUrl,
-    pendingConnectionError,
     savedConnectionsById,
-    environmentStateById,
   };
 }
 
+export function useSavedRemoteConnection(
+  environmentId: EnvironmentId | null,
+): SavedRemoteConnection | null {
+  const { presentation } = useEnvironmentPresentation(environmentId);
+  if (environmentId === null || presentation === null) {
+    return null;
+  }
+  return toSavedConnection(
+    projectWorkspaceEnvironment(projectEnvironmentPresentation(environmentId, presentation)),
+  );
+}
+
+export function useRemoteEnvironmentRuntime(
+  environmentId: EnvironmentId | null,
+): EnvironmentRuntimeState | null {
+  const { presentation } = useEnvironmentPresentation(environmentId);
+  const serverConfig = useEnvironmentServerConfig(environmentId);
+  if (environmentId === null || presentation === null) {
+    return null;
+  }
+  return toRuntimeState(projectEnvironmentPresentation(environmentId, presentation), serverConfig);
+}
+
 export function useRemoteConnectionStatus() {
-  const workspace = useMobileWorkspace();
+  const workspace = useWorkspaceState();
   const pendingConnectionError = useAtomValue(pendingConnectionErrorAtom);
-  const connectedEnvironments = useMemo(
-    () => workspace.environments.map(toConnectedEnvironment),
+  const connectedEnvironments = useMemo<ReadonlyArray<ConnectedEnvironmentSummary>>(
+    () =>
+      workspace.environments.map((environment) => ({
+        environmentId: environment.environmentId,
+        environmentLabel: environment.environmentLabel,
+        displayUrl: environment.displayUrl,
+        isRelayManaged: environment.isRelayManaged,
+        connectionState: environment.connectionState,
+        connectionError: environment.connectionError,
+        connectionErrorTraceId: environment.connectionErrorTraceId,
+      })),
     [workspace.environments],
   );
 
@@ -125,8 +137,9 @@ export function useRemoteConnectionStatus() {
 }
 
 export function useRemoteConnections() {
-  const controller = useMobileConnectionController();
-  const { connectionPairingUrl, pendingConnectionError } = useRemoteEnvironmentState();
+  const controller = useConnectionController();
+  const connectionPairingUrl = useAtomValue(connectionPairingUrlAtom);
+  const pendingConnectionError = useAtomValue(pendingConnectionErrorAtom);
   const { connectedEnvironments, connectionError, connectionState } = useRemoteConnectionStatus();
 
   const onChangeConnectionPairingUrl = useCallback((pairingUrl: string) => {

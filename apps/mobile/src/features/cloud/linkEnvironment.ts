@@ -22,17 +22,17 @@ import {
   type RelayEnvironmentStatusResponse as RelayEnvironmentStatusResponseType,
   type RelayManagedEndpointProviderKind,
 } from "@t3tools/contracts/relay";
+import { exchangeRemoteDpopAccessToken } from "@t3tools/client-runtime/authorization";
+import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
+import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import {
-  exchangeRemoteDpopAccessToken,
-  fetchRemoteEnvironmentDescriptor,
-  findErrorTraceId,
-  makeEnvironmentHttpApiClient,
   ManagedRelayClient,
   type ManagedRelayClientError,
   ManagedRelayDpopSigner,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/relay";
+import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
 
-import { mobileAuthClientMetadata } from "../../lib/authClientMetadata";
+import { authClientMetadata } from "../../lib/authClientMetadata";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { loadOrCreateAgentAwarenessDeviceId, loadPreferences } from "../../lib/storage";
 import { resolveCloudPublicConfig } from "./publicConfig";
@@ -525,7 +525,7 @@ const connectRelayManagedEnvironment = Effect.fn("mobile.cloud.connectRelayManag
       httpBaseUrl: connect.endpoint.httpBaseUrl,
       credential: connect.credential,
       dpopProof: bootstrapDpop,
-      clientMetadata: mobileAuthClientMetadata(),
+      clientMetadata: authClientMetadata(),
     }).pipe(
       Effect.mapError(
         cloudEnvironmentLinkError("Could not exchange a managed endpoint DPoP access token."),

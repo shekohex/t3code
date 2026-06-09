@@ -1,12 +1,15 @@
-import type { CheckpointDiffState, CheckpointDiffTarget } from "@t3tools/client-runtime";
+import {
+  type CheckpointDiffState,
+  type CheckpointDiffTarget,
+} from "@t3tools/client-runtime/state/threads";
 
-import { useWebCheckpointDiff } from "../connection/webAppQueries";
+import { useCheckpointDiff as useCheckpointDiffQuery } from "../connection/appQueries";
 
 export function useCheckpointDiff(
   target: CheckpointDiffTarget,
   options?: { readonly enabled?: boolean },
 ): CheckpointDiffState {
-  const state = useWebCheckpointDiff(target, options);
+  const state = useCheckpointDiffQuery(target, options);
   return {
     data: state.data,
     error: state.error,

@@ -16,7 +16,7 @@ vi.mock("expo-secure-store", () => ({
   }),
 }));
 
-import { mobileManagedRelayAccessTokenStore } from "./managedRelayTokenStore";
+import { managedRelayAccessTokenStore } from "./managedRelayTokenStore";
 
 it.effect("round-trips and clears persisted managed relay access tokens", () =>
   Effect.gen(function* () {
@@ -33,11 +33,11 @@ it.effect("round-trips and clears persisted managed relay access tokens", () =>
       },
     ] as const;
 
-    yield* mobileManagedRelayAccessTokenStore.save(entries);
-    expect(yield* mobileManagedRelayAccessTokenStore.load).toEqual(entries);
+    yield* managedRelayAccessTokenStore.save(entries);
+    expect(yield* managedRelayAccessTokenStore.load).toEqual(entries);
 
-    yield* mobileManagedRelayAccessTokenStore.clear;
-    expect(yield* mobileManagedRelayAccessTokenStore.load).toEqual([]);
+    yield* managedRelayAccessTokenStore.clear;
+    expect(yield* managedRelayAccessTokenStore.load).toEqual([]);
   }),
 );
 
@@ -46,6 +46,6 @@ it.effect("falls back to an empty cache when persisted data is invalid", () =>
     secureStore.clear();
     secureStore.set("t3code.cloud.relay-access-tokens", "not-json");
 
-    expect(yield* mobileManagedRelayAccessTokenStore.load).toEqual([]);
+    expect(yield* managedRelayAccessTokenStore.load).toEqual([]);
   }),
 );

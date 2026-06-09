@@ -6,7 +6,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 
-import { useMobileThreadActions } from "../connection/mobileThreadEnvironment";
+import { useThreadActions } from "../connection/threadEnvironment";
 import { useThreadSelection } from "./use-thread-selection";
 
 export function useSelectedThreadCommands(input: {
@@ -15,7 +15,7 @@ export function useSelectedThreadCommands(input: {
     readonly cwd?: string | null;
   }) => Promise<unknown>;
 }) {
-  const threadActions = useMobileThreadActions();
+  const threadActions = useThreadActions();
   const { refreshSelectedThreadGitStatus } = input;
   const { selectedThread } = useThreadSelection();
 

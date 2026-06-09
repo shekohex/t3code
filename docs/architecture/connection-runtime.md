@@ -9,7 +9,8 @@ legacy connection owner or supported mixed mode.
 
 ## Ownership
 
-Each environment has one scoped `EnvironmentRuntime`:
+Each registered environment has one scoped Effect `Context` containing focused
+services:
 
 - `EnvironmentSupervisor` owns desired state, retry scheduling, and the active
   session scope.
@@ -17,13 +18,14 @@ Each environment has one scoped `EnvironmentRuntime`:
   relay, and SSH targets.
 - `RpcSessionFactory` performs one transport attempt. It does not retry.
 - `EnvironmentRpc` exposes the active session without leaking the transport.
-- `EnvironmentOperations` exposes typed RPC operations.
-- `EnvironmentCommands` constructs orchestration commands, IDs, and timestamps.
+- `EnvironmentProjectCommands` and `EnvironmentThreadCommands` construct
+  orchestration commands, IDs, and timestamps.
 - `EnvironmentShell` and `EnvironmentThreads` own live subscriptions and cached
   snapshots.
 
-The registry owns environment runtime scopes. React components do not create
-connections, transports, retry loops, or RPC clients.
+`EnvironmentServicesFactory` assembles that context, and `EnvironmentRegistry`
+owns its scope. There is no aggregate environment runtime facade. React
+components do not create connections, transports, retry loops, or RPC clients.
 
 ## Connection State
 
@@ -63,8 +65,9 @@ Finite requests, durable subscriptions, and commands are separate APIs:
   arrives.
 - Cached shell and thread projections are never allowed to overwrite newer live
   data during a fast reconnect.
-- Application components consume environment-bound actions and never construct
-  raw orchestration commands.
+- Domain atom factories route effects through the environment registry and
+  resolve the current scoped service at execution time.
+- Web and mobile own their Atom runtimes, React hooks, and feature composition.
 
 The Promise bridge exists only at the React/Atom boundary. Runtime and business
 logic remain Effect-native.
@@ -84,11 +87,29 @@ Web and mobile provide:
 Platform layers adapt operating-system capabilities. They do not implement
 connection policy.
 
-## Runtime Boundary
+## Source Boundaries
 
-The application root mounts the shared connection application layer. Catalog,
-projection, query, and environment-bound action hooks are the only supported
-application entry points.
+The public package subpaths mirror the runtime layers:
+
+- `connection/core` contains state, catalog, retry policy, and connectivity.
+- `connection/transport` contains brokerage, authorization, attempts, and RPC
+  sessions.
+- `connection/platform` declares capabilities and persistence contracts.
+- `connection/services` contains environment-scoped data services.
+- `connection/application` assembles registries, discovery, and startup.
+- `connection/atoms` adapts shared services to application-owned Atom runtimes.
+- `connection/presentation` contains pure UI projections.
+
+Other reusable state lives in domain subpaths such as `shell`, `threads`,
+`terminal`, and `vcs`. Applications must import explicit package subpaths; the
+package intentionally has no root export.
+
+## Application Boundary
+
+The application root mounts the shared connection application layer, creates
+its own Atom runtime, and selects the domain atom factories required by that
+platform. Web and mobile may expose different hooks and features without
+changing connection ownership.
 
 Application code must not construct `WsTransport`, RPC clients, retry loops, or
 raw orchestration commands. Persistence paths belong to the platform

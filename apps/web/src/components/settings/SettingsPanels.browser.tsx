@@ -190,14 +190,14 @@ vi.mock("@clerk/react", () => ({
   }),
 }));
 
-vi.mock("../../connection/webConnectionRuntime", async () => {
+vi.mock("../../connection/connectionRuntime", async () => {
   const Effect = await import("effect/Effect");
   const { Atom } = await import("effect/unstable/reactivity");
 
   return {
-    linkWebPrimaryEnvironment: Atom.fn(() => Effect.void),
-    unlinkWebPrimaryEnvironment: Atom.fn(() => Effect.void),
-    webEnvironmentData: {
+    linkPrimaryEnvironment: Atom.fn(() => Effect.void),
+    unlinkPrimaryEnvironment: Atom.fn(() => Effect.void),
+    environmentData: {
       queries: {
         vcsListRefsAtom: vi.fn(),
       },
@@ -325,7 +325,7 @@ vi.mock("../../lib/sourceControlDiscoveryState", async () => {
   };
 });
 
-vi.mock("../../connection/useWebEnvironmentData", async () => {
+vi.mock("../../connection/useEnvironmentData", async () => {
   const React = await import("react");
   const { useServerConfig } = await import("../../rpc/serverState");
   const idleRefresh = async () => undefined;
@@ -373,22 +373,22 @@ vi.mock("../../connection/useWebEnvironmentData", async () => {
 
   const useEmptyQuery = () => emptyQuery;
   return {
-    useWebEnvironmentConnectionState: useEmptyQuery,
-    useWebEnvironmentConfig: useEmptyQuery,
-    useWebEnvironmentShell: useEmptyQuery,
-    useWebEnvironmentThread: useEmptyQuery,
-    useWebFilesystemBrowse: useEmptyQuery,
-    useWebProjectSearchEntries: useEmptyQuery,
-    useWebVcsListRefs: useEmptyQuery,
-    useWebVcsStatus: useEmptyQuery,
-    useWebReviewDiffPreview: useEmptyQuery,
-    useWebServerConfig: () => ({
+    useEnvironmentConnectionState: useEmptyQuery,
+    useEnvironmentConfig: useEmptyQuery,
+    useEnvironmentShell: useEmptyQuery,
+    useEnvironmentThread: useEmptyQuery,
+    useFilesystemBrowse: useEmptyQuery,
+    useProjectSearchEntries: useEmptyQuery,
+    useVcsListRefs: useEmptyQuery,
+    useVcsStatus: useEmptyQuery,
+    useReviewDiffPreview: useEmptyQuery,
+    useServerConfig: () => ({
       ...emptyQuery,
       data: useServerConfig(),
     }),
-    useWebServerSettings: useEmptyQuery,
-    useWebSourceControlDiscovery: useEmptyQuery,
-    useWebTraceDiagnostics: (environmentId: EnvironmentId | null) =>
+    useServerSettings: useEmptyQuery,
+    useSourceControlDiscovery: useEmptyQuery,
+    useTraceDiagnostics: (environmentId: EnvironmentId | null) =>
       useNativeQuery(
         () =>
           environmentId === null
@@ -396,7 +396,7 @@ vi.mock("../../connection/useWebEnvironmentData", async () => {
             : window.nativeApi?.server.getTraceDiagnostics(),
         [environmentId],
       ),
-    useWebProcessDiagnostics: (environmentId: EnvironmentId | null) =>
+    useProcessDiagnostics: (environmentId: EnvironmentId | null) =>
       useNativeQuery(
         () =>
           environmentId === null
@@ -404,7 +404,7 @@ vi.mock("../../connection/useWebEnvironmentData", async () => {
             : window.nativeApi?.server.getProcessDiagnostics(),
         [environmentId],
       ),
-    useWebProcessResourceHistory: (
+    useProcessResourceHistory: (
       target: {
         readonly environmentId: EnvironmentId;
         readonly input: Parameters<LocalApi["server"]["getProcessResourceHistory"]>[0];
@@ -417,18 +417,18 @@ vi.mock("../../connection/useWebEnvironmentData", async () => {
             : window.nativeApi?.server.getProcessResourceHistory(target.input),
         [target?.environmentId, target?.input.windowMs, target?.input.bucketMs],
       ),
-    useWebSourceControlRepository: useEmptyQuery,
-    useWebPullRequestResolution: useEmptyQuery,
-    useWebTurnDiff: useEmptyQuery,
-    useWebFullThreadDiff: useEmptyQuery,
-    useWebArchivedShellSnapshot: useEmptyQuery,
-    useWebRelayClientStatus: useEmptyQuery,
-    useWebTerminalAttach: useEmptyQuery,
-    useWebTerminalEvents: useEmptyQuery,
-    useWebTerminalMetadata: useEmptyQuery,
-    useWebServerConfigChanges: useEmptyQuery,
-    useWebServerLifecycleChanges: useEmptyQuery,
-    useWebAuthAccessChanges: (environmentId: EnvironmentId | null) => {
+    useSourceControlRepository: useEmptyQuery,
+    usePullRequestResolution: useEmptyQuery,
+    useTurnDiff: useEmptyQuery,
+    useFullThreadDiff: useEmptyQuery,
+    useArchivedShellSnapshot: useEmptyQuery,
+    useRelayClientStatus: useEmptyQuery,
+    useTerminalAttach: useEmptyQuery,
+    useTerminalEvents: useEmptyQuery,
+    useTerminalMetadata: useEmptyQuery,
+    useServerConfigChanges: useEmptyQuery,
+    useServerLifecycleChanges: useEmptyQuery,
+    useAuthAccessChanges: (environmentId: EnvironmentId | null) => {
       const event = React.useSyncExternalStore(
         authAccessHarness.subscribe,
         authAccessHarness.getSnapshot,
@@ -440,7 +440,7 @@ vi.mock("../../connection/useWebEnvironmentData", async () => {
         isPending: false,
       };
     },
-    useWebActions: () => ({
+    useActions: () => ({
       server: {
         refreshProviders: mockRefreshProviders,
         updateProvider: mockUpdateProvider,
@@ -463,17 +463,17 @@ vi.mock("../../connection/useWebEnvironmentData", async () => {
         }) => window.nativeApi?.shell.openInEditor(input.cwd, input.editor),
       },
     }),
-    useWebEnvironmentConnectionActions: () => ({
+    useEnvironmentConnectionActions: () => ({
       register: vi.fn(),
       remove: vi.fn(),
       retryNow: vi.fn(),
     }),
-    useWebRunStackedGitActionState: useEmptyQuery,
-    useWebEnvironmentActions: () => ({}),
+    useRunStackedGitActionState: useEmptyQuery,
+    useEnvironmentActions: () => ({}),
   };
 });
 
-vi.mock("../../connection/useWebEnvironments", async () => {
+vi.mock("../../connection/useEnvironments", async () => {
   const React = await import("react");
   const EffectOption = await import("effect/Option");
   const { EnvironmentId: EnvironmentIdSchema } = await import("@t3tools/contracts");
@@ -510,7 +510,7 @@ vi.mock("../../connection/useWebEnvironments", async () => {
   };
 
   return {
-    useWebEnvironments: () => {
+    useEnvironments: () => {
       const primary = usePrimaryEnvironment();
       return {
         isReady: true,
@@ -520,14 +520,14 @@ vi.mock("../../connection/useWebEnvironments", async () => {
         shellStateById: new Map(),
       };
     },
-    useWebPrimaryEnvironment: usePrimaryEnvironment,
-    useWebRelayEnvironmentDiscovery: () => ({
+    usePrimaryEnvironment: usePrimaryEnvironment,
+    useRelayEnvironmentDiscovery: () => ({
       environments: new Map(),
       refreshing: false,
       offline: false,
       error: EffectOption.none(),
     }),
-    useWebEnvironmentActions: () => ({
+    useEnvironmentActions: () => ({
       connectPairing: mockConnectPairingEnvironment,
       connectSshEnvironment: mockConnectDesktopSshEnvironment,
       connectRelayEnvironment: mockConnectRelayEnvironment,
@@ -535,7 +535,7 @@ vi.mock("../../connection/useWebEnvironments", async () => {
       retryEnvironment: mockRetryEnvironment,
       refreshRelayEnvironments: mockRefreshRelayEnvironments,
     }),
-    useWebEnvironmentHttpBaseUrl: () => "http://localhost:3000",
+    useEnvironmentHttpBaseUrl: () => "http://localhost:3000",
   };
 });
 

@@ -99,9 +99,9 @@ export function buildProjectActionItems(input: {
   return input.projects.map((project) => ({
     kind: "action",
     value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
-    searchTerms: [project.name, project.cwd],
-    title: project.name,
-    description: project.cwd,
+    searchTerms: [project.title, project.workspaceRoot],
+    title: project.title,
+    description: project.workspaceRoot,
     icon: input.icon(project),
     run: async () => {
       await input.runProject(project);
@@ -113,7 +113,7 @@ export type BuildThreadActionItemsThread = Pick<
   SidebarThreadSummary,
   "archivedAt" | "branch" | "createdAt" | "environmentId" | "id" | "projectId" | "title"
 > & {
-  updatedAt?: string | undefined;
+  updatedAt: string;
   latestUserMessageAt?: string | null;
 };
 

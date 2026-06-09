@@ -1,7 +1,7 @@
 import { EDITORS, EditorId, type EnvironmentId } from "@t3tools/contracts";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
 import { useCallback, useMemo } from "react";
-import { useWebShellActions } from "./connection/webShellEnvironment";
+import { useShellActions } from "./connection/shellEnvironment";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 
@@ -31,7 +31,7 @@ export function useOpenInPreferredEditor(
   environmentId: EnvironmentId | null,
   availableEditors: readonly EditorId[],
 ) {
-  const shellActions = useWebShellActions();
+  const shellActions = useShellActions();
 
   return useCallback(
     async (targetPath: string): Promise<EditorId> => {

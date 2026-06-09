@@ -3,12 +3,12 @@ import {
   createManagedRelaySession,
   ManagedRelayClient,
   setManagedRelaySession,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/relay";
 import * as Effect from "effect/Effect";
 import { useEffect, useRef, type ReactNode } from "react";
 
-import { useWebEnvironmentConnectionActions } from "../connection/webConnectionState";
-import { webRuntime } from "../lib/runtime";
+import { useEnvironmentConnectionActions } from "../connection/connectionState";
+import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
 
@@ -22,7 +22,7 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
   const { getToken, isLoaded, isSignedIn, userId } = useAuth({
     treatPendingAsSignedOut: false,
   });
-  const { removeRelayEnvironments } = useWebEnvironmentConnectionActions();
+  const { removeRelayEnvironments } = useEnvironmentConnectionActions();
   const observedAccountRef = useRef<string | null | undefined>(undefined);
   const accountTransitionRef = useRef(Promise.resolve());
 
@@ -40,7 +40,7 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
       accountTransitionRef.current = accountTransitionRef.current.then(async () => {
         const results = await Promise.allSettled([
           removeRelayEnvironments(),
-          webRuntime.runPromise(
+          runtime.runPromise(
             ManagedRelayClient.pipe(Effect.flatMap((client) => client.resetTokenCache)),
           ),
         ]);

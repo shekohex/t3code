@@ -1,8 +1,8 @@
 import {
-  managedRelayClientLayer,
+  managedRelayClientLayer as makeManagedRelayClientLayer,
   ManagedRelayDpopSigner,
   ManagedRelayDpopSignerError,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/relay";
 import { RelayWebClientId } from "@t3tools/contracts/relay";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -17,7 +17,7 @@ import {
   type BrowserDpopKey,
 } from "./dpop";
 
-export const webRelayDpopSignerLayer = Layer.effect(
+export const relayDpopSignerLayer = Layer.effect(
   ManagedRelayDpopSigner,
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
@@ -60,7 +60,7 @@ export const webRelayDpopSignerLayer = Layer.effect(
   }),
 );
 
-export const webManagedRelayClientLayer = (relayUrl: string) =>
-  managedRelayClientLayer({ relayUrl, clientId: RelayWebClientId }).pipe(
-    Layer.provideMerge(webRelayDpopSignerLayer),
+export const managedRelayClientLayer = (relayUrl: string) =>
+  makeManagedRelayClientLayer({ relayUrl, clientId: RelayWebClientId }).pipe(
+    Layer.provideMerge(relayDpopSignerLayer),
   );

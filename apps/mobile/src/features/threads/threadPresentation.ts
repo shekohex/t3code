@@ -1,12 +1,12 @@
 import type { StatusTone } from "../../components/StatusPill";
-import { EnvironmentScopedThreadShell } from "@t3tools/client-runtime";
+import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
-export function threadSortValue(thread: EnvironmentScopedThreadShell): number {
+export function threadSortValue(thread: EnvironmentThreadShell): number {
   const candidate = Date.parse(thread.updatedAt ?? thread.createdAt);
   return Number.isNaN(candidate) ? 0 : candidate;
 }
 
-export function threadStatusTone(thread: EnvironmentScopedThreadShell): StatusTone {
+export function threadStatusTone(thread: EnvironmentThreadShell): StatusTone {
   const status = thread.session?.status;
   if (status === "running") {
     return {

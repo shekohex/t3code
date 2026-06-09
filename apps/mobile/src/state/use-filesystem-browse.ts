@@ -1,10 +1,10 @@
 import type { EnvironmentId, FilesystemBrowseInput } from "@t3tools/contracts";
 
-import { useMobileFilesystemDirectory } from "../connection/mobileAppQueries";
+import { useFilesystemDirectory } from "../connection/appQueries";
 
 export function useFilesystemBrowse(
   environmentId: EnvironmentId | null,
   input: FilesystemBrowseInput | null,
 ) {
-  return useMobileFilesystemDirectory(environmentId, input);
+  return useFilesystemDirectory(environmentId, input);
 }

@@ -1,22 +1,21 @@
-import { parseScopedThreadKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
+import {
+  parseScopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
-import { useWebTerminalActions } from "../connection/webTerminalEnvironment";
-import { useWebThreadActions } from "../connection/webThreadEnvironment";
-import { useWebVcsActions } from "../connection/webVcsEnvironment";
+import { useTerminalActions } from "../connection/terminalEnvironment";
+import { useThreadActions as useThreadEnvironmentActions } from "../connection/threadEnvironment";
+import { useVcsActions } from "../connection/vcsEnvironment";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
 import { readLocalApi } from "../localApi";
-import {
-  selectProjectByRef,
-  selectThreadByRef,
-  selectThreadsForEnvironment,
-  useStore,
-} from "../store";
+import { readEnvironmentThreadRefs, readProject, readThreadShell } from "../connection/entityState";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
@@ -24,9 +23,9 @@ import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useSettings } from "./useSettings";
 
 export function useThreadActions() {
-  const terminalActions = useWebTerminalActions();
-  const threadActions = useWebThreadActions();
-  const vcsActions = useWebVcsActions();
+  const terminalActions = useTerminalActions();
+  const threadActions = useThreadEnvironmentActions();
+  const vcsActions = useVcsActions();
   const sidebarThreadSortOrder = useSettings((settings) => settings.sidebarThreadSortOrder);
   const confirmThreadDelete = useSettings((settings) => settings.confirmThreadDelete);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
@@ -44,8 +43,7 @@ export function useThreadActions() {
   handleNewThreadRef.current = handleNewThread;
 
   const resolveThreadTarget = useCallback((target: ScopedThreadRef) => {
-    const state = useStore.getState();
-    const thread = selectThreadByRef(state, target);
+    const thread = readThreadShell(target);
     if (!thread) {
       return null;
     }
@@ -111,9 +109,11 @@ export function useThreadActions() {
         return;
       }
       const { thread, threadRef } = resolved;
-      const state = useStore.getState();
-      const threads = selectThreadsForEnvironment(state, threadRef.environmentId);
-      const threadProject = selectProjectByRef(state, {
+      const threads = readEnvironmentThreadRefs(threadRef.environmentId).flatMap((ref) => {
+        const shell = readThreadShell(ref);
+        return shell === null ? [] : [shell];
+      });
+      const threadProject = readProject({
         environmentId: threadRef.environmentId,
         projectId: thread.projectId,
       });
@@ -137,7 +137,7 @@ export function useThreadActions() {
       const displayWorktreePath = orphanedWorktreePath
         ? formatWorktreePathForDisplay(orphanedWorktreePath)
         : null;
-      const canDeleteWorktree = orphanedWorktreePath !== null && threadProject !== undefined;
+      const canDeleteWorktree = orphanedWorktreePath !== null && threadProject !== null;
       const localApi = readLocalApi();
       const shouldDeleteWorktree =
         canDeleteWorktree &&
@@ -151,7 +151,7 @@ export function useThreadActions() {
           ].join("\n"),
         ));
 
-      if (thread.session && thread.session.status !== "closed") {
+      if (thread.session && thread.session.status !== "stopped") {
         await threadActions
           .stopSession({
             environmentId: threadRef.environmentId,
@@ -194,8 +194,7 @@ export function useThreadActions() {
 
       if (shouldNavigateToFallback) {
         if (fallbackThreadId) {
-          const fallbackThread = selectThreadByRef(
-            useStore.getState(),
+          const fallbackThread = readThreadShell(
             scopeThreadRef(threadRef.environmentId, fallbackThreadId),
           );
           if (fallbackThread) {
@@ -222,20 +221,20 @@ export function useThreadActions() {
         await vcsActions.removeWorktree({
           environmentId: threadRef.environmentId,
           input: {
-            cwd: threadProject.cwd,
+            cwd: threadProject.workspaceRoot,
             path: orphanedWorktreePath,
             force: true,
           },
         });
         await vcsActions.refreshStatus({
           environmentId: threadRef.environmentId,
-          input: { cwd: threadProject.cwd },
+          input: { cwd: threadProject.workspaceRoot },
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error removing worktree.";
         console.error("Failed to remove orphaned worktree after thread deletion", {
           threadId: threadRef.threadId,
-          projectCwd: threadProject.cwd,
+          projectCwd: threadProject.workspaceRoot,
           worktreePath: orphanedWorktreePath,
           error,
         });

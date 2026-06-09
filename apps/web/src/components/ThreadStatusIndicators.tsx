@@ -1,11 +1,15 @@
-import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
+import {
+  scopeProjectRef,
+  scopedThreadKey,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { CloudIcon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
-import { useWebEnvironments, useWebPrimaryEnvironment } from "../connection/useWebEnvironments";
+import { useEnvironments, usePrimaryEnvironment } from "../connection/useEnvironments";
+import { useProject } from "../connection/entityState";
 import { useVcsStatus } from "../lib/vcsStatusState";
-import { type AppState, selectProjectByRef, useStore } from "../store";
-import { useWebThreadRunningTerminalIds as useThreadRunningTerminalIds } from "../connection/webTerminalSessions";
+import { useThreadRunningTerminalIds } from "../connection/terminalSessions";
 import { useUiStateStore } from "../uiStateStore";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
@@ -137,14 +141,13 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   const lastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
   );
-  const threadProjectCwd = useStore(
+  const threadProject = useProject(
     useMemo(
-      () => (state: AppState) =>
-        selectProjectByRef(state, scopeProjectRef(thread.environmentId, thread.projectId))?.cwd ??
-        null,
+      () => scopeProjectRef(thread.environmentId, thread.projectId),
       [thread.environmentId, thread.projectId],
     ),
   );
+  const threadProjectCwd = threadProject?.workspaceRoot ?? null;
   const gitCwd = thread.worktreePath ?? threadProjectCwd;
   const gitStatus = useVcsStatus({
     environmentId: thread.environmentId,
@@ -195,8 +198,8 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
     environmentId: thread.environmentId,
     threadId: thread.id,
   });
-  const { environments } = useWebEnvironments();
-  const primaryEnvironmentId = useWebPrimaryEnvironment()?.environmentId ?? null;
+  const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
   const isRemoteThread =
     primaryEnvironmentId !== null && thread.environmentId !== primaryEnvironmentId;
   const remoteEnvLabel =

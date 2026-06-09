@@ -1,9 +1,9 @@
-import type { VcsStatusTarget } from "@t3tools/client-runtime";
+import { type VcsStatusTarget } from "@t3tools/client-runtime/state/vcs";
 
-import { useMobileRepositoryStatus } from "../connection/mobileAppQueries";
+import { useRepositoryStatus } from "../connection/appQueries";
 
 export function useVcsStatus(target: VcsStatusTarget) {
-  const state = useMobileRepositoryStatus(target);
+  const state = useRepositoryStatus(target);
   return {
     data: state.data,
     error: state.error,

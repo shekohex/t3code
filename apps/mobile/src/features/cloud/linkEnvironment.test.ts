@@ -8,8 +8,8 @@ import {
   managedRelayClientLayer,
   ManagedRelayClient,
   ManagedRelayDpopSigner,
-  remoteHttpClientLayer,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/relay";
+import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 import { HttpClient } from "effect/unstable/http";
 
 import {

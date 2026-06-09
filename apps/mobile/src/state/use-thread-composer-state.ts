@@ -1,12 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { EnvironmentScopedThreadShell } from "@t3tools/client-runtime";
+import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { CommandId, MessageId, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 import { Atom } from "effect/unstable/reactivity";
 
-import { useMobileThreadActions } from "../connection/mobileThreadEnvironment";
+import { useThreadActions } from "../connection/threadEnvironment";
+import { useThreadShells } from "../connection/entityState";
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import {
   convertPastedImagesToAttachments,
@@ -32,7 +33,6 @@ import {
   setPendingConnectionError,
   useRemoteConnectionStatus,
 } from "../state/use-remote-environment-registry";
-import { useRemoteCatalog } from "../state/use-remote-catalog";
 import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import {
@@ -92,7 +92,7 @@ function finishDispatchingQueuedMessage(queuedMessageId: MessageId): void {
 function useQueueDrain(input: {
   readonly dispatchingQueuedMessageId: MessageId | null;
   readonly queuedMessagesByThreadKey: Record<string, ReadonlyArray<QueuedThreadMessage>>;
-  readonly threads: ReadonlyArray<EnvironmentScopedThreadShell>;
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly environments: ReadonlyArray<ConnectedEnvironmentSummary>;
   readonly sendQueuedMessage: (message: QueuedThreadMessage) => Promise<boolean>;
 }) {
@@ -195,9 +195,9 @@ function useQueueDrain(input: {
 }
 
 export function useThreadComposerState() {
-  const threadActions = useMobileThreadActions();
+  const threadActions = useThreadActions();
   const { connectedEnvironments } = useRemoteConnectionStatus();
-  const { threads } = useRemoteCatalog();
+  const threads = useThreadShells();
   const { selectedThread: selectedThreadShell } = useThreadSelection();
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);

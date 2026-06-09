@@ -9,7 +9,8 @@ export interface TimelineDurationMessage {
   id: string;
   role: "user" | "assistant" | "system";
   createdAt: string;
-  completedAt?: string | undefined;
+  updatedAt: string;
+  streaming: boolean;
 }
 
 export type MessagesTimelineRow =
@@ -56,8 +57,8 @@ export function computeMessageDurationStart(
       lastBoundary = message.createdAt;
     }
     result.set(message.id, lastBoundary ?? message.createdAt);
-    if (message.role === "assistant" && message.completedAt) {
-      lastBoundary = message.completedAt;
+    if (message.role === "assistant" && !message.streaming) {
+      lastBoundary = message.updatedAt;
     }
   }
 

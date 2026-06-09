@@ -1,4 +1,4 @@
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, VcsRef, ThreadId } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronDownIcon } from "lucide-react";
@@ -14,14 +14,13 @@ import {
 } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
-import { useWebPaginatedBranches, useWebRepositoryStatus } from "../connection/webAppQueries";
-import { useWebThreadActions } from "../connection/webThreadEnvironment";
-import { useWebVcsActions } from "../connection/webVcsEnvironment";
+import { usePaginatedBranches, useRepositoryStatus } from "../connection/appQueries";
+import { useProject, useThreadDetail } from "../connection/entityState";
+import { useThreadActions } from "../connection/threadEnvironment";
+import { useVcsActions } from "../connection/vcsEnvironment";
 import { cn } from "../lib/utils";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
-import { useStore } from "../store";
-import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
 import {
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchSelectionTarget,
@@ -88,8 +87,8 @@ export function BranchToolbarBranchSelector({
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
-  const threadActions = useWebThreadActions();
-  const vcsActions = useWebVcsActions();
+  const threadActions = useThreadActions();
+  const vcsActions = useVcsActions();
   // ---------------------------------------------------------------------------
   // Thread / project state (pushed down from parent to colocate with mutation)
   // ---------------------------------------------------------------------------
@@ -97,10 +96,8 @@ export function BranchToolbarBranchSelector({
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
   );
-  const serverThreadSelector = useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]);
-  const serverThread = useStore(serverThreadSelector);
+  const serverThread = useThreadDetail(threadRef);
   const serverSession = serverThread?.session ?? null;
-  const setThreadBranchAction = useStore((store) => store.setThreadBranch);
   const draftThread = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
   );
@@ -111,11 +108,7 @@ export function BranchToolbarBranchSelector({
     : draftThread
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
-  const activeProjectSelector = useMemo(
-    () => createProjectSelectorByRef(activeProjectRef),
-    [activeProjectRef],
-  );
-  const activeProject = useStore(activeProjectSelector);
+  const activeProject = useProject(activeProjectRef);
 
   const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
   const activeThreadBranch =
@@ -123,9 +116,9 @@ export function BranchToolbarBranchSelector({
       ? activeThreadBranchOverride
       : (serverThread?.branch ?? draftThread?.branch ?? null);
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
-  const activeProjectCwd = activeProject?.cwd ?? null;
+  const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const branchCwd = activeWorktreePath ?? activeProjectCwd;
-  const hasServerThread = serverThread !== undefined;
+  const hasServerThread = serverThread !== null;
   const effectiveEnvMode =
     effectiveEnvModeOverride ??
     resolveEffectiveEnvMode({
@@ -160,7 +153,6 @@ export function BranchToolbarBranchSelector({
       }
       if (hasServerThread) {
         onActiveThreadBranchOverrideChange?.(branch);
-        setThreadBranchAction(threadRef, branch, worktreePath);
         return;
       }
       const nextDraftEnvMode = resolveDraftEnvModeAfterBranchChange({
@@ -182,7 +174,6 @@ export function BranchToolbarBranchSelector({
       activeWorktreePath,
       hasServerThread,
       onActiveThreadBranchOverrideChange,
-      setThreadBranchAction,
       setDraftThreadContext,
       draftId,
       threadRef,
@@ -199,7 +190,7 @@ export function BranchToolbarBranchSelector({
   const [branchQuery, setBranchQuery] = useState("");
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
-  const branchStatusQuery = useWebRepositoryStatus({ environmentId, cwd: branchCwd });
+  const branchStatusQuery = useRepositoryStatus({ environmentId, cwd: branchCwd });
   const trimmedBranchQuery = branchQuery.trim();
   const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
   const branchRefTarget = useMemo(
@@ -210,7 +201,7 @@ export function BranchToolbarBranchSelector({
     }),
     [branchCwd, deferredTrimmedBranchQuery, environmentId],
   );
-  const branchRefState = useWebPaginatedBranches(branchRefTarget);
+  const branchRefState = usePaginatedBranches(branchRefTarget);
   const refs = branchRefState.refs;
   const hasNextPage =
     branchRefState.data?.nextCursor !== null && branchRefState.data?.nextCursor !== undefined;

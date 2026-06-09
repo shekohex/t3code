@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { FolderIcon } from "lucide-react";
 import { useState } from "react";
-import { useWebEnvironments } from "../connection/useWebEnvironments";
+import { useEnvironments } from "../connection/useEnvironments";
 
 const loadedProjectFaviconSrcs = new Set<string>();
 
@@ -10,7 +10,7 @@ export function ProjectFavicon(input: {
   cwd: string;
   className?: string;
 }) {
-  const { presentationById } = useWebEnvironments();
+  const { presentationById } = useEnvironments();
   const src = (() => {
     try {
       const baseUrl = presentationById.get(input.environmentId)

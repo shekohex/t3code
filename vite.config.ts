@@ -90,6 +90,18 @@ export default defineConfig({
       "typescript/require-array-sort-compare": "off",
       "typescript/restrict-template-expressions": "off",
       "typescript/unbound-method": "off",
+      "eslint/no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@t3tools/client-runtime",
+              message:
+                "Import from an explicit @t3tools/client-runtime/* subpath. The package has no root export.",
+            },
+          ],
+        },
+      ],
       "t3code/no-inline-schema-compile": "warn",
       "t3code/no-manual-effect-runtime-in-tests": "error",
     },

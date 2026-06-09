@@ -1,7 +1,7 @@
-import type {
-  EnvironmentConnectionPhase,
-  EnvironmentConnectionPresentation,
-} from "@t3tools/client-runtime";
+import {
+  type EnvironmentConnectionPhase,
+  type EnvironmentConnectionPresentation,
+} from "@t3tools/client-runtime/connection";
 import { SymbolView } from "expo-symbols";
 import { ActivityIndicator, Pressable, View } from "react-native";
 

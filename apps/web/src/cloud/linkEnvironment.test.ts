@@ -5,22 +5,29 @@ import {
 } from "@t3tools/contracts";
 import { RelayWebClientId } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/unstable/http";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 import {
-  EnvironmentRpc,
-  type EnvironmentRpcService,
-  EnvironmentRegistry,
+  AVAILABLE_CONNECTION_STATE,
+  type EnvironmentRegistryService,
+  EnvironmentSupervisor,
+  type EnvironmentSupervisorService,
+  type PreparedConnection,
+  PrimaryConnectionTarget,
+} from "@t3tools/client-runtime/connection";
+import { type RpcSession } from "@t3tools/client-runtime/rpc";
+import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
+import {
   managedRelayClientLayer,
   ManagedRelayClient,
   ManagedRelayDpopSigner,
-  remoteHttpClientLayer,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/relay";
+import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 
 import {
   collectCloudLinkTargets,
@@ -75,34 +82,46 @@ function registryLayer(options?: {
   readonly status?: { readonly status: "available"; readonly version: string };
   readonly installEvents?: ReadonlyArray<RelayClientInstallProgressEvent>;
 }) {
-  const rpc = {
-    config: Effect.die(new Error("Config is not used by cloud link tests.")),
-    request: ((tag: string) =>
-      tag === WS_METHODS.cloudGetRelayClientStatus
-        ? Effect.succeed(options?.status ?? { status: "available", version: "2026.6.0" })
-        : Effect.die(
-            new Error(`Unexpected RPC request: ${tag}`),
-          )) as EnvironmentRpcService["request"],
-    runStream: ((tag: string) =>
-      tag === WS_METHODS.cloudInstallRelayClient
-        ? Stream.fromIterable(options?.installEvents ?? [])
-        : Stream.die(
-            new Error(`Unexpected RPC stream: ${tag}`),
-          )) as EnvironmentRpcService["runStream"],
-    subscribe: (() => Stream.never) as EnvironmentRpcService["subscribe"],
-  } satisfies EnvironmentRpcService;
-  const context = Context.make(EnvironmentRpc, rpc);
-  const service = {
-    run: <A, E, R extends EnvironmentRpc>(
-      _environmentId: EnvironmentId,
-      effect: Effect.Effect<A, E, R>,
-    ) => Effect.provide(effect, context as Context.Context<R>),
-    runStream: <A, E, R extends EnvironmentRpc>(
-      _environmentId: EnvironmentId,
-      stream: Stream.Stream<A, E, R>,
-    ) => Stream.provide(stream, context as Context.Context<R>),
-  } as unknown as EnvironmentRegistry["Service"];
-  return Layer.succeed(EnvironmentRegistry, EnvironmentRegistry.of(service));
+  return Layer.effect(
+    EnvironmentRegistry,
+    Effect.gen(function* () {
+      const client = {
+        [WS_METHODS.cloudGetRelayClientStatus]: () =>
+          Effect.succeed(options?.status ?? { status: "available", version: "2026.6.0" }),
+        [WS_METHODS.cloudInstallRelayClient]: () =>
+          Stream.fromIterable(options?.installEvents ?? []),
+      } as unknown as RpcSession["client"];
+      const session: RpcSession = {
+        client,
+        initialConfig: Effect.never,
+        ready: Effect.void,
+        probe: Effect.void,
+        closed: Effect.never,
+      };
+      const target = new PrimaryConnectionTarget({
+        environmentId: EnvironmentId.make(TARGET.environmentId),
+        label: TARGET.label,
+        httpBaseUrl: TARGET.httpBaseUrl,
+        wsBaseUrl: TARGET.wsBaseUrl,
+      });
+      const supervisor = EnvironmentSupervisor.of({
+        target,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session)),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisorService);
+      const registry = {
+        run: <A, E, R>(_environmentId: EnvironmentId, effect: Effect.Effect<A, E, R>) =>
+          Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+        runStream: <A, E, R>(_environmentId: EnvironmentId, stream: Stream.Stream<A, E, R>) =>
+          Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+      } as unknown as EnvironmentRegistryService;
+      return EnvironmentRegistry.of(registry);
+    }),
+  );
 }
 
 function services(options?: Parameters<typeof registryLayer>[0]) {

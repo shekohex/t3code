@@ -3,7 +3,7 @@ import {
   createManagedRelayQueryManager,
   managedRelaySessionAtom,
   readManagedRelaySnapshotState,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/relay";
 import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
@@ -11,11 +11,11 @@ import type {
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect } from "react";
 
-import { mobileRuntimeContextLayer } from "../../lib/runtime";
+import { runtimeContextLayer } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { cloudDebugLog } from "./cloudDebugLog";
 
-const managedRelayAtomRuntime = Atom.runtime(mobileRuntimeContextLayer);
+const managedRelayAtomRuntime = Atom.runtime(runtimeContextLayer);
 
 export const managedRelayQueryManager = createManagedRelayQueryManager(managedRelayAtomRuntime, {
   onQueryEvent: (event) =>

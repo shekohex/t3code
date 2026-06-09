@@ -7,7 +7,7 @@ import {
   ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import "../../index.css";
 
 import { page } from "vite-plus/test/browser";

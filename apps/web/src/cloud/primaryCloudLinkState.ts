@@ -9,15 +9,15 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { HttpClient } from "effect/unstable/http";
 import { useCallback, useMemo } from "react";
 
-import { useWebPrimaryEnvironment } from "../connection/useWebEnvironments";
-import { webRuntime } from "../lib/runtime";
+import { usePrimaryEnvironment } from "../connection/useEnvironments";
+import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readPrimaryCloudLinkState, type CloudLinkTarget } from "./linkEnvironment";
 
 const primaryCloudLinkAtomRuntime = Atom.runtime(
   Layer.effect(
     HttpClient.HttpClient,
-    webRuntime.contextEffect.pipe(
+    runtime.contextEffect.pipe(
       Effect.map((context) => Context.get(context, HttpClient.HttpClient)),
     ),
   ),
@@ -49,7 +49,7 @@ export function refreshPrimaryCloudLinkState(target: CloudLinkTarget | null): vo
 }
 
 export function usePrimaryCloudLinkState() {
-  const primary = useWebPrimaryEnvironment();
+  const primary = usePrimaryEnvironment();
   const target = useMemo(
     () =>
       primary?.entry.target._tag === "PrimaryConnectionTarget"

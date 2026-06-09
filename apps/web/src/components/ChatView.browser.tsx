@@ -21,7 +21,7 @@ import {
   DEFAULT_TERMINAL_ID,
   ServerConfig as ServerConfigSchema,
 } from "@t3tools/contracts";
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -54,8 +54,6 @@ import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { getServerConfig } from "../rpc/serverState";
 import { getRouter } from "../router";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
-import { selectBootstrapCompleteForActiveEnvironment, useStore } from "../store";
-import { terminalSessionManager } from "../terminalSessionState";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useUiStateStore } from "../uiStateStore";
 import { createAuthenticatedSessionHandlers } from "../../test/authHttpHandlers";
@@ -110,7 +108,7 @@ const PROJECT_LOGICAL_KEY = deriveLogicalProjectKeyFromSettings(
   {
     environmentId: LOCAL_ENVIRONMENT_ID,
     id: PROJECT_ID,
-    cwd: "/repo/project",
+    workspaceRoot: "/repo/project",
     repositoryIdentity: null,
   },
   {
@@ -580,7 +578,6 @@ async function waitForAppBootstrap(): Promise<void> {
   await vi.waitFor(
     () => {
       expect(getServerConfig()).not.toBeNull();
-      expect(selectBootstrapCompleteForActiveEnvironment(useStore.getState())).toBe(true);
     },
     { timeout: 8_000, interval: 16 },
   );
@@ -1712,10 +1709,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
     useCommandPaletteStore.setState({
       open: false,
       openIntent: null,
-    });
-    useStore.setState({
-      activeEnvironmentId: null,
-      environmentStateById: {},
     });
     useUiStateStore.setState({
       projectExpandedById: {},
@@ -3885,24 +3878,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      await vi.waitFor(
-        () => {
-          expect(
-            terminalSessionManager.listSessions({
-              environmentId: LOCAL_ENVIRONMENT_ID,
-              threadId: THREAD_ID,
-            }),
-          ).toMatchObject([
-            {
-              state: {
-                hasRunningSubprocess: true,
-              },
-            },
-          ]);
-        },
-        { timeout: 8_000, interval: 16 },
-      );
-
       await vi.waitFor(
         () => {
           const terminalIndicator = document.querySelector<HTMLElement>(

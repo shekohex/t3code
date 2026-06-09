@@ -53,7 +53,7 @@ function ChatRouteGlobalShortcuts() {
         event.stopPropagation();
         void startNewLocalThreadFromContext({
           activeDraftThread,
-          activeThread,
+          activeThread: activeThread ?? undefined,
           defaultProjectRef,
           defaultThreadEnvMode: resolveSidebarNewThreadEnvMode({
             defaultEnvMode: appSettings.defaultThreadEnvMode,
@@ -68,7 +68,7 @@ function ChatRouteGlobalShortcuts() {
         event.stopPropagation();
         void startNewThreadFromContext({
           activeDraftThread,
-          activeThread,
+          activeThread: activeThread ?? undefined,
           defaultProjectRef,
           defaultThreadEnvMode: resolveSidebarNewThreadEnvMode({
             defaultEnvMode: appSettings.defaultThreadEnvMode,

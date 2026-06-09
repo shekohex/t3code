@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import { useMobileSourceControlCapabilities } from "../connection/mobileAppQueries";
+import { useSourceControlCapabilities } from "../connection/appQueries";
 
 export function useSourceControlDiscovery(environmentId: EnvironmentId | null) {
-  return useMobileSourceControlCapabilities(environmentId);
+  return useSourceControlCapabilities(environmentId);
 }

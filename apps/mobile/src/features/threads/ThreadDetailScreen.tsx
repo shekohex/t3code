@@ -1,4 +1,4 @@
-import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime";
+import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type {
   ApprovalRequestId,
   EnvironmentId,
@@ -22,7 +22,7 @@ import { runOnJS } from "react-native-reanimated";
 import { AppText as Text } from "../../components/AppText";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
-import type { MobileLayoutVariant } from "../../lib/mobileLayout";
+import type { LayoutVariant } from "../../lib/layout";
 import type {
   PendingApproval,
   PendingUserInput,
@@ -64,7 +64,7 @@ export interface ThreadDetailScreenProps {
   readonly projectWorkspaceRoot: string | null;
   readonly selectedThreadQueueCount: number;
   readonly serverConfig: T3ServerConfig | null;
-  readonly layoutVariant?: MobileLayoutVariant;
+  readonly layoutVariant?: LayoutVariant;
   readonly onOpenDrawer: () => void;
   readonly onOpenConnectionEditor: () => void;
   readonly onChangeDraftMessage: (value: string) => void;

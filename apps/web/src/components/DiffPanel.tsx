@@ -1,6 +1,6 @@
 import { FileDiff, Virtualizer } from "@pierre/diffs/react";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { scopeThreadRef } from "@t3tools/client-runtime";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { TurnId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
@@ -34,14 +34,13 @@ import {
   resolveFileDiffPath,
 } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
-import { selectProjectByRef, useStore } from "../store";
-import { createThreadSelectorByRef } from "../storeSelectors";
+import { useProject, useThreadDetail } from "../connection/entityState";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
-import { useWebServerConfig } from "../connection/useWebEnvironmentData";
+import { useServerConfig } from "../connection/useEnvironmentData";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
@@ -138,20 +137,18 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
   const diffOpen = diffSearch.diff === "1";
   const activeThreadId = routeThreadRef?.threadId ?? null;
-  const activeThread = useStore(
-    useMemo(() => createThreadSelectorByRef(routeThreadRef), [routeThreadRef]),
-  );
+  const activeThread = useThreadDetail(routeThreadRef);
   const activeProjectId = activeThread?.projectId ?? null;
-  const activeProject = useStore((store) =>
+  const activeProject = useProject(
     activeThread && activeProjectId
-      ? selectProjectByRef(store, {
+      ? {
           environmentId: activeThread.environmentId,
           projectId: activeProjectId,
-        })
-      : undefined,
+        }
+      : null,
   );
-  const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
-  const serverConfig = useWebServerConfig(activeThread?.environmentId ?? null);
+  const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
+  const serverConfig = useServerConfig(activeThread?.environmentId ?? null);
   const openInPreferredEditor = useOpenInPreferredEditor(
     activeThread?.environmentId ?? null,
     serverConfig.data?.availableEditors ?? [],

@@ -4,7 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { ApprovalRequestId, type ProviderApprovalDecision } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
-import { useMobileThreadActions } from "../connection/mobileThreadEnvironment";
+import { useThreadActions } from "../connection/threadEnvironment";
 import { scopedRequestKey } from "../lib/scopedEntities";
 import {
   buildPendingUserInputAnswers,
@@ -53,7 +53,7 @@ function setUserInputDraftCustomAnswer(
 }
 
 export function useSelectedThreadRequests() {
-  const threadActions = useMobileThreadActions();
+  const threadActions = useThreadActions();
   const { selectedThread: selectedThreadShell } = useThreadSelection();
   const selectedThread = useSelectedThreadDetail();
   const userInputDraftsByRequestKey = useAtomValue(userInputDraftsByRequestKeyAtom);

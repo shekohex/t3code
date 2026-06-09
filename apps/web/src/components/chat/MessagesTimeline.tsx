@@ -450,7 +450,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             ) : (
               formatMessageMeta(
                 row.message.createdAt,
-                formatElapsed(row.durationStart, row.message.completedAt),
+                formatElapsed(row.durationStart, row.message.updatedAt),
                 ctx.timestampFormat,
               )
             )}

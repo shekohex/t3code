@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import { FetchHttpClient } from "effect/unstable/http";
 import * as Socket from "effect/unstable/socket/Socket";
 
-import { remoteHttpClientLayer } from "@t3tools/client-runtime";
+import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 import { httpHeaderRedactionLayer } from "@t3tools/shared/httpObservability";
 import { makeRelayClientTracingLayer } from "@t3tools/shared/relayTracing";
 import {
@@ -14,22 +14,22 @@ import {
 import { primaryEnvironmentRequestInit } from "../environments/primary/requestInit";
 
 import { browserCryptoLayer } from "../cloud/dpop";
-import { webManagedRelayClientLayer } from "../cloud/managedRelayLayer";
+import { managedRelayClientLayer } from "../cloud/managedRelayLayer";
 import { resolveCloudPublicConfig, resolveRelayTracingConfig } from "../cloud/publicConfig";
 
 function configuredRelayUrl(): string {
   return resolveCloudPublicConfig().relayUrl ?? "http://relay.invalid";
 }
 
-const webHttpClientLayer = remoteHttpClientLayer(globalThis.fetch);
-const webRelayTracingLayer = makeRelayClientTracingLayer(resolveRelayTracingConfig(), {
+const httpClientLayer = remoteHttpClientLayer(globalThis.fetch);
+const relayTracingLayer = makeRelayClientTracingLayer(resolveRelayTracingConfig(), {
   serviceName: "t3-web-relay-client",
   serviceVersion: import.meta.env.APP_VERSION,
   runtime: "browser",
   client: typeof window !== "undefined" && window.desktopBridge ? "desktop" : "web",
-}).pipe(Layer.provide(webHttpClientLayer));
+}).pipe(Layer.provide(httpClientLayer));
 
-export const remoteHttpRuntime = ManagedRuntime.make(webHttpClientLayer);
+export const remoteHttpRuntime = ManagedRuntime.make(httpClientLayer);
 
 const primaryHttpRuntime = ManagedRuntime.make(
   primaryEnvironmentHttpClientLive.pipe(
@@ -59,14 +59,14 @@ export function __setPrimaryHttpRunnerForTests(runner?: PrimaryHttpEffectRunner)
   primaryHttpRunner = runner ?? livePrimaryHttpRunner;
 }
 
-export const webRuntimeLayer = Layer.mergeAll(
-  webHttpClientLayer,
+export const runtimeLayer = Layer.mergeAll(
+  httpClientLayer,
   browserCryptoLayer,
   Socket.layerWebSocketConstructorGlobal,
-  webRelayTracingLayer,
-  webManagedRelayClientLayer(configuredRelayUrl()).pipe(
-    Layer.provide(Layer.mergeAll(webHttpClientLayer, browserCryptoLayer)),
+  relayTracingLayer,
+  managedRelayClientLayer(configuredRelayUrl()).pipe(
+    Layer.provide(Layer.mergeAll(httpClientLayer, browserCryptoLayer)),
   ),
 );
 
-export const webRuntime = ManagedRuntime.make(webRuntimeLayer);
+export const runtime = ManagedRuntime.make(runtimeLayer);

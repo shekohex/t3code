@@ -1,21 +1,20 @@
 import { useCallback, useEffect, useMemo } from "react";
 
+import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
-  EnvironmentScopedProjectShell,
-  EnvironmentScopedThreadShell,
   type GitActionRequestInput,
   type VcsActionOperation,
   type VcsRef,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/state/vcs";
 import type { GitRunStackedActionResult } from "@t3tools/contracts";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
 
-import { useMobileGitActions } from "../connection/mobileGitEnvironment";
-import { useMobileThreadActions } from "../connection/mobileThreadEnvironment";
-import { useMobileVcsActions } from "../connection/mobileVcsEnvironment";
+import { useGitActions } from "../connection/gitEnvironment";
+import { useThreadActions } from "../connection/threadEnvironment";
+import { useVcsActions } from "../connection/vcsEnvironment";
 import { uuidv4 } from "../lib/uuid";
 import { setPendingConnectionError } from "./use-remote-environment-registry";
 import {
@@ -29,9 +28,9 @@ import { useThreadSelection } from "./use-thread-selection";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
 
 export function useSelectedThreadGitActions() {
-  const gitActions = useMobileGitActions();
-  const threadActions = useMobileThreadActions();
-  const vcsActions = useMobileVcsActions();
+  const gitActions = useGitActions();
+  const threadActions = useThreadActions();
+  const vcsActions = useVcsActions();
   const { selectedThread, selectedThreadProject } = useThreadSelection();
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
 
@@ -117,8 +116,8 @@ export function useSelectedThreadGitActions() {
       operation: VcsActionOperation,
       label: string,
       execute: (input: {
-        readonly thread: EnvironmentScopedThreadShell;
-        readonly project: EnvironmentScopedProjectShell;
+        readonly thread: EnvironmentThreadShell;
+        readonly project: EnvironmentProject;
         readonly cwd: string;
       }) => Promise<T>,
     ): Promise<T | null> => {
@@ -160,7 +159,7 @@ export function useSelectedThreadGitActions() {
 
   const syncSelectedThreadBranchState = useCallback(
     async (input: {
-      readonly thread: EnvironmentScopedThreadShell;
+      readonly thread: EnvironmentThreadShell;
       readonly cwd: string;
       readonly nextThreadState?: {
         readonly branch?: string | null;

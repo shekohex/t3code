@@ -1,5 +1,5 @@
 import { SymbolView } from "expo-symbols";
-import { connectionStatusText } from "@t3tools/client-runtime";
+import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
 import { Pressable, View } from "react-native";

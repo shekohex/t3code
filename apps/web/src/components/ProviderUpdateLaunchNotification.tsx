@@ -3,8 +3,8 @@ import { DownloadIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 
-import { useWebServerActions } from "../connection/webServerEnvironment";
-import { useWebPrimaryEnvironment } from "../connection/useWebEnvironments";
+import { useServerActions } from "../connection/serverEnvironment";
+import { usePrimaryEnvironment } from "../connection/useEnvironments";
 import { useDismissedProviderUpdateNotificationKeys } from "../providerUpdateDismissal";
 import { useServerProviders } from "../rpc/serverState";
 import { PROVIDER_ICON_BY_PROVIDER } from "./chat/providerIconUtils";
@@ -103,8 +103,8 @@ function isTerminalProviderUpdateToastView(view: ProviderUpdateToastView) {
 export function ProviderUpdateLaunchNotification() {
   const navigate = useNavigate();
   const providers = useServerProviders();
-  const primaryEnvironment = useWebPrimaryEnvironment();
-  const serverActions = useWebServerActions();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const serverActions = useServerActions();
   const activeToastRef = useRef<ActiveProviderUpdateToast | null>(null);
   const { dismissedNotificationKeys, dismissNotificationKey } =
     useDismissedProviderUpdateNotificationKeys();

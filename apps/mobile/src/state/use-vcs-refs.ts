@@ -1,9 +1,9 @@
-import type { VcsRefTarget } from "@t3tools/client-runtime";
+import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 
-import { useMobileBranches } from "../connection/mobileAppQueries";
+import { useBranches } from "../connection/appQueries";
 
 export function useVcsRefs(target: VcsRefTarget) {
-  const state = useMobileBranches(target);
+  const state = useBranches(target);
   return {
     data: state.data,
     isPending: state.isPending,

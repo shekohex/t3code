@@ -5,8 +5,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient } from "effect/unstable/http";
 
-import { bootstrapRemoteBearerSession, fetchRemoteEnvironmentDescriptor } from "../remote.ts";
-import { ClientPresentation, SshEnvironmentGateway } from "./capabilities.ts";
+import { bootstrapRemoteBearerSession } from "../authorization/remote.ts";
+import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
+import { ClientPresentation, SshEnvironmentGateway } from "../platform/capabilities.ts";
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
@@ -21,7 +22,7 @@ import {
   SshConnectionTarget,
   type ConnectionAttemptError,
 } from "./model.ts";
-import type { ConnectionPersistenceError } from "./persistence.ts";
+import type { ConnectionPersistenceError } from "../platform/persistence.ts";
 import { EnvironmentRegistry } from "./registry.ts";
 
 export interface PairingConnectionInput {

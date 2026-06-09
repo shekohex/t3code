@@ -88,7 +88,9 @@ function buildUserTimelineEntry(text: string) {
       id: "message-1" as never,
       role: "user" as const,
       text,
+      turnId: null,
       createdAt: MESSAGE_CREATED_AT,
+      updatedAt: MESSAGE_CREATED_AT,
       streaming: false,
     },
   };

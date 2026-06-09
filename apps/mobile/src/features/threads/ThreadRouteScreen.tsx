@@ -1,11 +1,10 @@
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
-import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
-import { pipe } from "effect/Function";
 import { EnvironmentId, type ProjectScript } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Pressable, ScrollView, Text as RNText, View, useColorScheme } from "react-native";
+import { useWorkspaceState } from "../../connection/useWorkspace";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useVcsStatus } from "../../state/use-vcs-status";
 import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
@@ -16,11 +15,10 @@ import { buildThreadRoutePath, buildThreadTerminalNavigation } from "../../lib/r
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { connectionTone } from "../connection/connectionTone";
 
-import { useRemoteCatalog } from "../../state/use-remote-catalog";
 import {
   useRemoteConnections,
   useRemoteConnectionStatus,
-  useRemoteEnvironmentState,
+  useRemoteEnvironmentRuntime,
 } from "../../state/use-remote-environment-registry";
 import { useKnownTerminalSessions } from "../../state/use-terminal-session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
@@ -60,14 +58,13 @@ function OpeningThreadLoadingScreen() {
 }
 
 export function ThreadRouteScreen() {
-  const { isLoadingSavedConnection, environmentStateById } = useRemoteEnvironmentState();
+  const { state: workspaceState } = useWorkspaceState();
   const { connectionState } = useRemoteConnectionStatus();
   const { onReconnectEnvironment } = useRemoteConnections();
-  const { projects, threads } = useRemoteCatalog();
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
   const selectedThreadDetailState = useSelectedThreadDetailState();
-  const selectedThreadDetail = selectedThreadDetailState.data;
+  const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const composer = useThreadComposerState();
   const gitState = useSelectedThreadGitState();
@@ -85,9 +82,7 @@ export function ThreadRouteScreen() {
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
   const threadId = firstRouteParam(params.threadId);
-  const routeEnvironmentRuntime = environmentId
-    ? (environmentStateById[environmentId] ?? null)
-    : null;
+  const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
@@ -247,7 +242,7 @@ export function ThreadRouteScreen() {
 
   if (!selectedThread) {
     const stillHydrating =
-      isLoadingSavedConnection ||
+      workspaceState.isLoadingConnections ||
       routeConnectionState === "connecting" ||
       routeConnectionState === "reconnecting";
 
@@ -277,18 +272,11 @@ export function ThreadRouteScreen() {
   const selectedThreadKey = scopedThreadKey(selectedThread.environmentId, selectedThread.id);
   const contentPresentation = projectThreadContentPresentation({
     hasDetail: selectedThreadDetail !== null,
-    detailError: selectedThreadDetailState.error,
-    detailDeleted: selectedThreadDetailState.isDeleted,
+    detailError: Option.getOrNull(selectedThreadDetailState.error),
+    detailDeleted: selectedThreadDetailState.status === "deleted",
     connectionState: routeConnectionState,
   });
-  const serverConfig =
-    routeEnvironmentRuntime?.serverConfig ??
-    pipe(
-      Object.values(environmentStateById),
-      Arr.map((runtime) => runtime.serverConfig),
-      Arr.findFirst((value) => value !== null),
-      Option.getOrNull,
-    );
+  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
 
   const headerSubtitle = [
     selectedThreadProject?.title ?? null,
@@ -404,8 +392,6 @@ export function ThreadRouteScreen() {
 
         <ThreadNavigationDrawer
           visible={drawerVisible}
-          projects={projects}
-          threads={threads}
           selectedThreadKey={selectedThreadKey}
           onClose={() => setDrawerVisible(false)}
           onSelectThread={(thread) => {

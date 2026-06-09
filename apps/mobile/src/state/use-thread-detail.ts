@@ -1,25 +1,16 @@
-import {
-  EMPTY_THREAD_DETAIL_STATE,
-  type ThreadDetailState,
-  type ThreadDetailTarget,
-} from "@t3tools/client-runtime";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
-import { useMobileEnvironmentThread } from "../connection/useMobileEnvironmentData";
+import { useEnvironmentThread } from "../connection/useEnvironmentData";
 import { useThreadSelection } from "./use-thread-selection";
 
-export function useThreadDetail(target: ThreadDetailTarget): ThreadDetailState {
-  const state = useMobileEnvironmentThread(target.environmentId, target.threadId);
-  if (target.environmentId === null || target.threadId === null) {
-    return EMPTY_THREAD_DETAIL_STATE;
-  }
+export interface ThreadDetailTarget {
+  readonly environmentId: EnvironmentId | null;
+  readonly threadId: ThreadId | null;
+}
 
-  return {
-    data: Option.getOrNull(state.data),
-    error: Option.getOrNull(state.error),
-    isPending: state.status === "synchronizing",
-    isDeleted: state.status === "deleted",
-  };
+export function useThreadDetail(target: ThreadDetailTarget) {
+  return useEnvironmentThread(target.environmentId, target.threadId);
 }
 
 export function useSelectedThreadDetailState() {
@@ -31,5 +22,5 @@ export function useSelectedThreadDetailState() {
 }
 
 export function useSelectedThreadDetail() {
-  return useSelectedThreadDetailState().data;
+  return Option.getOrNull(useSelectedThreadDetailState().data);
 }

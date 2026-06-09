@@ -1,7 +1,10 @@
 import { useAuth } from "@clerk/expo";
 import { Stack, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { connectionStatusText, type EnvironmentConnectionPhase } from "@t3tools/client-runtime";
+import {
+  connectionStatusText,
+  type EnvironmentConnectionPhase,
+} from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
 import {
@@ -17,9 +20,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
 import {
-  type MobileRelayEnvironmentView,
-  useMobileConnectionController,
-} from "../../connection/useMobileConnectionController";
+  type RelayEnvironmentView,
+  useConnectionController,
+} from "../../connection/useConnectionController";
 import { hasCloudPublicConfig } from "../../features/cloud/publicConfig";
 import { availableCloudEnvironmentPresentation } from "../../features/cloud/cloudEnvironmentPresentation";
 import { ConnectionEnvironmentRow } from "../../features/connection/ConnectionEnvironmentRow";
@@ -131,7 +134,7 @@ function ConfiguredCloudEnvironmentRows(props: {
   readonly onReconnectEnvironment: (environmentId: EnvironmentId) => void;
 }) {
   const { isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
-  const controller = useMobileConnectionController();
+  const controller = useConnectionController();
   const iconColor = useThemeColor("--color-icon");
   const availableCloudEnvironments = controller.availableRelayEnvironments;
   const [expandedErrorId, setExpandedErrorId] = useState<string | null>(null);
@@ -139,7 +142,7 @@ function ConfiguredCloudEnvironmentRows(props: {
     props.connectedCloudEnvironments.length > 0 || availableCloudEnvironments.length > 0;
 
   const handleConnectCloudEnvironment = useCallback(
-    (entry: MobileRelayEnvironmentView) => {
+    (entry: RelayEnvironmentView) => {
       void controller.connectRelayEnvironment(entry.environment);
     },
     [controller],
@@ -262,7 +265,7 @@ function ConnectedCloudEnvironmentRow(props: {
 }
 
 function CloudEnvironmentRow(props: {
-  readonly environment: MobileRelayEnvironmentView;
+  readonly environment: RelayEnvironmentView;
   readonly borderTop: boolean;
   readonly errorExpanded: boolean;
   readonly onConnect: () => void;

@@ -70,17 +70,16 @@ import {
   useVcsInitAction,
   useVcsPullAction,
 } from "~/lib/sourceControlActions";
-import { useWebRepositoryStatus } from "~/connection/webAppQueries";
-import { useWebServerConfig } from "~/connection/useWebEnvironmentData";
-import { useWebThreadActions } from "~/connection/webThreadEnvironment";
+import { useRepositoryStatus } from "~/connection/appQueries";
+import { useThreadDetail } from "~/connection/entityState";
+import { useServerConfig } from "~/connection/useEnvironmentData";
+import { useThreadActions } from "~/connection/threadEnvironment";
 import { useSourceControlDiscovery } from "~/lib/sourceControlDiscoveryState";
 import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { readLocalApi } from "~/localApi";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
-import { useStore } from "~/store";
-import { createThreadSelectorByRef } from "~/storeSelectors";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -948,9 +947,9 @@ export default function GitActionsControl({
   activeThreadRef,
   draftId,
 }: GitActionsControlProps) {
-  const threadActions = useWebThreadActions();
+  const threadActions = useThreadActions();
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
-  const serverConfig = useWebServerConfig(activeEnvironmentId);
+  const serverConfig = useServerConfig(activeEnvironmentId);
   const openInPreferredEditor = useOpenInPreferredEditor(
     activeEnvironmentId,
     serverConfig.data?.availableEditors ?? [],
@@ -959,11 +958,7 @@ export default function GitActionsControl({
     () => (activeThreadRef ? { threadRef: activeThreadRef } : undefined),
     [activeThreadRef],
   );
-  const activeServerThreadSelector = useMemo(
-    () => createThreadSelectorByRef(activeThreadRef),
-    [activeThreadRef],
-  );
-  const activeServerThread = useStore(activeServerThreadSelector);
+  const activeServerThread = useThreadDetail(activeThreadRef);
   const activeDraftThread = useComposerDraftStore((store) =>
     draftId
       ? store.getDraftSession(draftId)
@@ -972,7 +967,6 @@ export default function GitActionsControl({
         : null,
   );
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
-  const setThreadBranch = useStore((store) => store.setThreadBranch);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
@@ -1024,7 +1018,6 @@ export default function GitActionsControl({
           })
           .catch(() => undefined);
 
-        setThreadBranch(activeThreadRef, branch, worktreePath);
         return;
       }
 
@@ -1043,7 +1036,6 @@ export default function GitActionsControl({
       activeThreadRef,
       draftId,
       setDraftThreadContext,
-      setThreadBranch,
       threadActions,
     ],
   );
@@ -1060,7 +1052,7 @@ export default function GitActionsControl({
     [persistThreadBranchSync],
   );
 
-  const gitStatusQuery = useWebRepositoryStatus({
+  const gitStatusQuery = useRepositoryStatus({
     environmentId: activeEnvironmentId,
     cwd: gitCwd,
   });

@@ -2,7 +2,7 @@ import type { AuthSessionState } from "@t3tools/contracts";
 import React, { startTransition, useEffect, useRef, useState, useCallback } from "react";
 
 import { APP_DISPLAY_NAME } from "../../branding";
-import { useWebEnvironmentActions } from "../../connection/useWebEnvironments";
+import { useEnvironmentActions } from "../../connection/useEnvironments";
 import {
   peekPairingTokenFromUrl,
   stripPairingTokenFromUrl,
@@ -162,7 +162,7 @@ export function PairingRouteSurface({
 }
 
 export function HostedPairingRouteSurface() {
-  const { connectPairing } = useWebEnvironmentActions();
+  const { connectPairing } = useEnvironmentActions();
   const hostedPairingRequestRef = useRef(readHostedPairingRequest());
   const [status, setStatus] = useState<"pairing" | "paired" | "error">(() =>
     hostedPairingRequestRef.current ? "pairing" : "error",

@@ -1,5 +1,5 @@
 import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
-import type { KnownTerminalSession } from "@t3tools/client-runtime";
+import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { SymbolView } from "expo-symbols";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -20,12 +20,12 @@ import { EmptyState } from "../../components/EmptyState";
 import { GlassSurface } from "../../components/GlassSurface";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import {
-  useMobileEnvironmentConnectionActions,
-  useMobileEnvironmentPresentation,
-} from "../../connection/useMobileEnvironmentData";
-import { useMobileTerminalActions } from "../../connection/mobileTerminalEnvironment";
+  useEnvironmentConnectionActions,
+  useEnvironmentPresentation,
+} from "../../connection/useEnvironmentData";
+import { useTerminalActions } from "../../connection/terminalEnvironment";
+import { useWorkspaceState } from "../../connection/useWorkspace";
 import { buildThreadTerminalNavigation } from "../../lib/routes";
-import { useRemoteEnvironmentState } from "../../state/use-remote-environment-registry";
 import {
   useAttachedTerminalSession,
   useKnownTerminalSessions,
@@ -155,10 +155,10 @@ function pickRunningTerminalSessionForBootstrap(
 
 export function ThreadTerminalRouteScreen() {
   const router = useRouter();
-  const terminalActions = useMobileTerminalActions();
-  const environmentActions = useMobileEnvironmentConnectionActions();
+  const terminalActions = useTerminalActions();
+  const environmentActions = useEnvironmentConnectionActions();
   const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
-  const { isLoadingSavedConnection } = useRemoteEnvironmentState();
+  const { state: workspaceState } = useWorkspaceState();
   const params = useLocalSearchParams<{
     environmentId?: string | string[];
     threadId?: string | string[];
@@ -173,7 +173,7 @@ export function ThreadTerminalRouteScreen() {
     ? EnvironmentId.make(routeEnvironmentIdRaw)
     : null;
   const routeThreadId = routeThreadIdRaw ? ThreadId.make(routeThreadIdRaw) : null;
-  const environment = useMobileEnvironmentPresentation(routeEnvironmentId);
+  const environment = useEnvironmentPresentation(routeEnvironmentId);
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const requestedTerminalId = firstRouteParam(params.terminalId);
   const terminalId = requestedTerminalId ?? DEFAULT_TERMINAL_ID;
@@ -865,7 +865,7 @@ export function ThreadTerminalRouteScreen() {
   }, [environmentActions, routeEnvironmentId]);
 
   if (!selectedThread) {
-    if (isLoadingSavedConnection) {
+    if (workspaceState.isLoadingConnections) {
       return <LoadingScreen message="Opening terminal…" />;
     }
 

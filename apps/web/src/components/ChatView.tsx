@@ -24,11 +24,13 @@ import {
 import {
   connectionStatusText,
   type EnvironmentConnectionPresentation,
+} from "@t3tools/client-runtime/connection";
+import {
   parseScopedThreadKey,
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/environment";
 import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
@@ -73,12 +75,6 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
-import {
-  selectProjectsAcrossEnvironments,
-  selectThreadsAcrossEnvironments,
-  useStore,
-} from "../store";
-import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 import {
   buildPlanImplementationThreadTitle,
@@ -139,20 +135,26 @@ import {
 } from "../lib/terminalContext";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import {
-  useWebKnownTerminalSessions,
-  useWebThreadRunningTerminalIds,
-} from "../connection/webTerminalSessions";
-import { useWebProjectActions } from "../connection/webProjectEnvironment";
-import { useWebServerActions } from "../connection/webServerEnvironment";
-import { useWebTerminalActions } from "../connection/webTerminalEnvironment";
-import { useWebThreadActions } from "../connection/webThreadEnvironment";
-import { useWebThreadDetail } from "../connection/webAppQueries";
+  useKnownTerminalSessions,
+  useThreadRunningTerminalIds,
+} from "../connection/terminalSessions";
+import { useProjectActions } from "../connection/projectEnvironment";
+import { useServerActions } from "../connection/serverEnvironment";
+import { useTerminalActions } from "../connection/terminalEnvironment";
+import { useThreadActions } from "../connection/threadEnvironment";
 import {
-  useWebEnvironmentActions,
-  useWebEnvironmentHttpBaseUrl,
-  useWebEnvironments,
-  useWebPrimaryEnvironment,
-} from "../connection/useWebEnvironments";
+  useEnvironmentActions,
+  useEnvironmentHttpBaseUrl,
+  useEnvironments,
+  usePrimaryEnvironment,
+} from "../connection/useEnvironments";
+import {
+  useProject,
+  useProjects,
+  useThreadDetail,
+  useThreadProposedPlans,
+  useThreadRefs,
+} from "../connection/entityState";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -183,7 +185,6 @@ import {
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
-  shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -202,7 +203,6 @@ import {
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
-const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
@@ -213,119 +213,6 @@ type EnvironmentUnavailableState = {
 };
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
-
-function useThreadPlanCatalog(threadIds: readonly ThreadId[]): ThreadPlanCatalogEntry[] {
-  return useStore(
-    useMemo(() => {
-      let previousThreadIds: readonly ThreadId[] = [];
-      let previousResult: ThreadPlanCatalogEntry[] = [];
-      let previousEntries = new Map<
-        ThreadId,
-        {
-          shell: object | null;
-          proposedPlanIds: readonly string[] | undefined;
-          proposedPlansById: Record<string, Thread["proposedPlans"][number]> | undefined;
-          entry: ThreadPlanCatalogEntry;
-        }
-      >();
-
-      return (state) => {
-        const sameThreadIds =
-          previousThreadIds.length === threadIds.length &&
-          previousThreadIds.every((id, index) => id === threadIds[index]);
-        const nextEntries = new Map<
-          ThreadId,
-          {
-            shell: object | null;
-            proposedPlanIds: readonly string[] | undefined;
-            proposedPlansById: Record<string, Thread["proposedPlans"][number]> | undefined;
-            entry: ThreadPlanCatalogEntry;
-          }
-        >();
-        const nextResult: ThreadPlanCatalogEntry[] = [];
-        let changed = !sameThreadIds;
-
-        for (const threadId of threadIds) {
-          let shell: object | undefined;
-          let proposedPlanIds: readonly string[] | undefined;
-          let proposedPlansById: Record<string, Thread["proposedPlans"][number]> | undefined;
-
-          for (const environmentState of Object.values(state.environmentStateById)) {
-            const matchedShell = environmentState.threadShellById[threadId];
-            if (!matchedShell) {
-              continue;
-            }
-            shell = matchedShell;
-            proposedPlanIds = environmentState.proposedPlanIdsByThreadId[threadId];
-            proposedPlansById = environmentState.proposedPlanByThreadId[threadId] as
-              | Record<string, Thread["proposedPlans"][number]>
-              | undefined;
-            break;
-          }
-
-          if (!shell) {
-            const previous = previousEntries.get(threadId);
-            if (
-              previous &&
-              previous.shell === null &&
-              previous.proposedPlanIds === undefined &&
-              previous.proposedPlansById === undefined
-            ) {
-              nextEntries.set(threadId, previous);
-              continue;
-            }
-            changed = true;
-            nextEntries.set(threadId, {
-              shell: null,
-              proposedPlanIds: undefined,
-              proposedPlansById: undefined,
-              entry: { id: threadId, proposedPlans: EMPTY_PROPOSED_PLANS },
-            });
-            continue;
-          }
-
-          const previous = previousEntries.get(threadId);
-          if (
-            previous &&
-            previous.shell === shell &&
-            previous.proposedPlanIds === proposedPlanIds &&
-            previous.proposedPlansById === proposedPlansById
-          ) {
-            nextEntries.set(threadId, previous);
-            nextResult.push(previous.entry);
-            continue;
-          }
-
-          changed = true;
-          const proposedPlans =
-            proposedPlanIds && proposedPlanIds.length > 0 && proposedPlansById
-              ? proposedPlanIds.flatMap((planId) => {
-                  const proposedPlan = proposedPlansById?.[planId];
-                  return proposedPlan ? [proposedPlan] : [];
-                })
-              : EMPTY_PROPOSED_PLANS;
-          const entry = { id: threadId, proposedPlans };
-          nextEntries.set(threadId, {
-            shell,
-            proposedPlanIds,
-            proposedPlansById,
-            entry,
-          });
-          nextResult.push(entry);
-        }
-
-        if (!changed && previousResult.length === nextResult.length) {
-          return previousResult;
-        }
-
-        previousThreadIds = threadIds;
-        previousEntries = nextEntries;
-        previousResult = nextResult;
-        return nextResult;
-      };
-    }, [threadIds]),
-  );
-}
 
 function formatOutgoingPrompt(params: {
   provider: ProviderDriverKind;
@@ -498,19 +385,19 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   keybindings,
   onAddTerminalContext,
 }: PersistentThreadTerminalDrawerProps) {
-  const terminalActions = useWebTerminalActions();
-  const serverThread = useStore(useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]));
+  const terminalActions = useTerminalActions();
+  const serverThread = useThreadDetail(threadRef);
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
   const projectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
     : draftThread
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
-  const project = useStore(useMemo(() => createProjectSelectorByRef(projectRef), [projectRef]));
+  const project = useProject(projectRef);
   const terminalUiState = useTerminalUiStateStore((state) =>
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef),
   );
-  const knownTerminalSessions = useWebKnownTerminalSessions({
+  const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: threadRef.environmentId,
     threadId,
   });
@@ -548,7 +435,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         cwd: launchContext?.cwd ?? summary.cwd,
         worktreePath: worktreePathForLaunch,
         runtimeEnv: projectScriptRuntimeEnv({
-          project: { cwd: project.cwd },
+          project: { cwd: project.workspaceRoot },
           worktreePath: worktreePathForLaunch,
         }),
       });
@@ -591,7 +478,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       launchContext?.cwd ??
       (project
         ? projectScriptCwd({
-            project: { cwd: project.cwd },
+            project: { cwd: project.workspaceRoot },
             worktreePath: effectiveWorktreePath,
           })
         : null),
@@ -601,7 +488,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     () =>
       project
         ? projectScriptRuntimeEnv({
-            project: { cwd: project.cwd },
+            project: { cwd: project.workspaceRoot },
             worktreePath: effectiveWorktreePath,
           })
         : {},
@@ -804,38 +691,21 @@ export default function ChatView(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
-  const projectActions = useWebProjectActions();
-  const serverActions = useWebServerActions();
-  const terminalActions = useWebTerminalActions();
-  const threadActions = useWebThreadActions();
-  const { environments } = useWebEnvironments();
-  const primaryEnvironment = useWebPrimaryEnvironment();
-  const { retryEnvironment } = useWebEnvironmentActions();
+  const projectActions = useProjectActions();
+  const serverActions = useServerActions();
+  const terminalActions = useTerminalActions();
+  const threadActions = useThreadActions();
+  const { environments } = useEnvironments();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
+  const { retryEnvironment } = useEnvironmentActions();
   const environmentById = useMemo(
     () => new Map(environments.map((environment) => [environment.environmentId, environment])),
     [environments],
   );
-  const routeThreadDetail = useWebThreadDetail(
-    routeKind === "server" ? environmentId : null,
-    routeKind === "server" ? threadId : null,
-  );
-  const environmentHttpBaseUrl = useWebEnvironmentHttpBaseUrl(environmentId);
   const composerDraftTarget: ScopedThreadRef | DraftId =
     routeKind === "server" ? routeThreadRef : props.draftId;
-  const serverThread = useStore(
-    useMemo(
-      () => createThreadSelectorByRef(routeKind === "server" ? routeThreadRef : null),
-      [routeKind, routeThreadRef],
-    ),
-  );
-  const setStoreThreadError = useStore((store) => store.setError);
-  useEffect(() => {
-    if (routeThreadDetail.data !== null) {
-      useStore
-        .getState()
-        .syncServerThreadDetail(routeThreadDetail.data, environmentId, environmentHttpBaseUrl);
-    }
-  }, [environmentHttpBaseUrl, environmentId, routeThreadDetail.data]);
+  const serverThread = useThreadDetail(routeKind === "server" ? routeThreadRef : null);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const activeThreadLastVisitedAt = useUiStateStore((store) =>
     routeKind === "server" ? store.threadLastVisitedAtById[routeThreadKey] : undefined,
@@ -901,6 +771,9 @@ export default function ChatView(props: ChatViewProps) {
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
     Record<string, string | null>
   >({});
+  const [localServerErrorsByThreadKey, setLocalServerErrorsByThreadKey] = useState<
+    Record<string, string | null>
+  >({});
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
@@ -958,13 +831,8 @@ export default function ChatView(props: ChatViewProps) {
   const storeNewTerminal = useTerminalUiStateStore((s) => s.newTerminal);
   const storeSetActiveTerminal = useTerminalUiStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((s) => s.closeTerminal);
-  const serverThreadKeys = useStore(
-    useShallow((state) =>
-      selectThreadsAcrossEnvironments(state).map((thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      ),
-    ),
-  );
+  const serverThreadRefs = useThreadRefs();
+  const serverThreadKeys = useMemo(() => serverThreadRefs.map(scopedThreadKey), [serverThreadRefs]);
   const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
   const draftThreadKeys = useMemo(
     () =>
@@ -986,13 +854,12 @@ export default function ChatView(props: ChatViewProps) {
   const fallbackDraftProjectRef = draftThread
     ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
     : null;
-  const fallbackDraftProject = useStore(
-    useMemo(() => createProjectSelectorByRef(fallbackDraftProjectRef), [fallbackDraftProjectRef]),
-  );
+  const fallbackDraftProject = useProject(fallbackDraftProjectRef);
   const localDraftError =
     routeKind === "server" && serverThread
       ? null
       : ((draftId ? localDraftErrorsByDraftId[draftId] : null) ?? null);
+  const localServerError = localServerErrorsByThreadKey[routeThreadKey] ?? null;
   const localDraftThread = useMemo(
     () =>
       draftThread
@@ -1003,13 +870,15 @@ export default function ChatView(props: ChatViewProps) {
               instanceId: ProviderInstanceId.make("codex"),
               model: DEFAULT_MODEL,
             },
-            localDraftError,
           )
         : undefined,
-    [draftThread, fallbackDraftProject?.defaultModelSelection, localDraftError, threadId],
+    [draftThread, fallbackDraftProject?.defaultModelSelection, threadId],
   );
-  const isServerThread = routeKind === "server" && serverThread !== undefined;
+  const isServerThread = routeKind === "server" && serverThread !== null;
   const activeThread = isServerThread ? serverThread : localDraftThread;
+  const threadError = isServerThread
+    ? (localServerError ?? serverThread?.session?.lastError ?? null)
+    : localDraftError;
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
@@ -1017,11 +886,11 @@ export default function ChatView(props: ChatViewProps) {
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
-  const runningTerminalIds = useWebThreadRunningTerminalIds({
+  const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: activeThread?.environmentId ?? null,
     threadId: activeThreadId,
   });
-  const activeThreadKnownSessionsRaw = useWebKnownTerminalSessions({
+  const activeThreadKnownSessionsRaw = useKnownTerminalSessions({
     environmentId: activeThread?.environmentId ?? null,
     threadId: activeThreadId,
   });
@@ -1076,19 +945,29 @@ export default function ChatView(props: ChatViewProps) {
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
   }, [draftThreadKeys, openTerminalThreadKeys, serverThreadKeys]);
   const activeLatestTurn = activeThread?.latestTurn ?? null;
-  const threadPlanCatalog = useThreadPlanCatalog(
-    useMemo(() => {
-      const threadIds: ThreadId[] = [];
-      if (activeThread?.id) {
-        threadIds.push(activeThread.id);
-      }
-      const sourceThreadId = activeLatestTurn?.sourceProposedPlan?.threadId;
-      if (sourceThreadId && sourceThreadId !== activeThread?.id) {
-        threadIds.push(sourceThreadId);
-      }
-      return threadIds;
-    }, [activeLatestTurn?.sourceProposedPlan?.threadId, activeThread?.id]),
-  );
+  const sourcePlanThreadRef = useMemo(() => {
+    const sourceThreadId = activeLatestTurn?.sourceProposedPlan?.threadId;
+    if (!activeThread || !sourceThreadId || sourceThreadId === activeThread.id) {
+      return null;
+    }
+    return scopeThreadRef(activeThread.environmentId, sourceThreadId);
+  }, [activeLatestTurn?.sourceProposedPlan?.threadId, activeThread]);
+  const sourceThreadProposedPlans = useThreadProposedPlans(sourcePlanThreadRef);
+  const threadPlanCatalog = useMemo<ThreadPlanCatalogEntry[]>(() => {
+    if (!activeThread) {
+      return [];
+    }
+    const entries: ThreadPlanCatalogEntry[] = [
+      { id: activeThread.id, proposedPlans: activeThread.proposedPlans },
+    ];
+    if (sourcePlanThreadRef) {
+      entries.push({
+        id: sourcePlanThreadRef.threadId,
+        proposedPlans: sourceThreadProposedPlans,
+      });
+    }
+    return entries;
+  }, [activeThread, sourcePlanThreadRef, sourceThreadProposedPlans]);
   useEffect(() => {
     setMountedTerminalThreadKeys((currentThreadIds) => {
       const nextThreadIds = reconcileMountedTerminalThreadIds({
@@ -1108,16 +987,14 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectRef = activeThread
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
-  const activeProject = useStore(
-    useMemo(() => createProjectSelectorByRef(activeProjectRef), [activeProjectRef]),
-  );
+  const activeProject = useProject(activeProjectRef);
 
   // Compute the list of environments this logical project spans, used to
   // drive the environment picker in BranchToolbar.
-  const allProjects = useStore(useShallow(selectProjectsAcrossEnvironments));
+  const allProjects = useProjects();
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const activeEnvironment =
-    activeThread === undefined ? null : (environmentById.get(activeThread.environmentId) ?? null);
+    activeThread == null ? null : (environmentById.get(activeThread.environmentId) ?? null);
   const activeEnvironmentConnectionPhase = activeEnvironment?.connection.phase ?? "available";
   const activeEnvironmentUnavailable =
     activeEnvironment !== null && activeEnvironmentConnectionPhase !== "connected";
@@ -1336,18 +1213,10 @@ export default function ChatView(props: ChatViewProps) {
   const showVersionMismatchBanner =
     versionMismatch !== null && versionMismatchDismissKey !== null && !versionMismatchDismissed;
   const hasMultipleRegisteredEnvironments = environments.length > 1;
-  const versionMismatchServerLabel = useMemo(() => {
-    if (!hasMultipleRegisteredEnvironments || !activeThread) {
-      return "server";
-    }
-
-    return `${environmentById.get(activeThread.environmentId)?.label ?? serverConfig?.environment.label ?? activeThread.environmentId} server`;
-  }, [
-    activeThread,
-    environmentById,
-    hasMultipleRegisteredEnvironments,
-    serverConfig?.environment.label,
-  ]);
+  const versionMismatchServerLabel =
+    hasMultipleRegisteredEnvironments && activeThread
+      ? `${environmentById.get(activeThread.environmentId)?.label ?? serverConfig?.environment.label ?? activeThread.environmentId} server`
+      : "server";
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
     if (activeEnvironmentUnavailableState) {
@@ -1514,7 +1383,7 @@ export default function ChatView(props: ChatViewProps) {
     phase,
     activePendingApproval: activePendingApproval?.requestId ?? null,
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
-    threadError: activeThread?.error,
+    threadError,
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
@@ -1583,12 +1452,37 @@ export default function ChatView(props: ChatViewProps) {
     });
   }, []);
   const serverMessages = activeThread?.messages;
+  const displayServerMessages = useMemo<ReadonlyArray<ChatMessage>>(() => {
+    if (environmentHttpBaseUrl === null || !serverMessages) {
+      return serverMessages ?? [];
+    }
+    return serverMessages.map((message) => {
+      if (!message.attachments || message.attachments.length === 0) {
+        return message;
+      }
+      return {
+        ...message,
+        attachments: message.attachments.map((attachment) => ({
+          ...attachment,
+          previewUrl: new URL(
+            `/attachments/${encodeURIComponent(attachment.id)}`,
+            environmentHttpBaseUrl,
+          ).toString(),
+        })),
+      };
+    });
+  }, [environmentHttpBaseUrl, serverMessages]);
   useEffect(() => {
-    if (typeof Image === "undefined" || !serverMessages || serverMessages.length === 0) {
+    if (typeof Image === "undefined" || displayServerMessages.length === 0) {
       return;
     }
 
     const cleanups: Array<() => void> = [];
+    const userMessagesById = new Map<string, ChatMessage>(
+      displayServerMessages
+        .filter((message) => message.role === "user")
+        .map((message) => [String(message.id), message] as const),
+    );
 
     for (const [messageId, handoffPreviewUrls] of Object.entries(
       attachmentPreviewHandoffByMessageId,
@@ -1597,9 +1491,7 @@ export default function ChatView(props: ChatViewProps) {
         continue;
       }
 
-      const serverMessage = serverMessages.find(
-        (message) => message.id === messageId && message.role === "user",
-      );
+      const serverMessage = userMessagesById.get(messageId);
       if (!serverMessage?.attachments || serverMessage.attachments.length === 0) {
         continue;
       }
@@ -1663,9 +1555,9 @@ export default function ChatView(props: ChatViewProps) {
         cleanup();
       }
     };
-  }, [attachmentPreviewHandoffByMessageId, clearAttachmentPreviewHandoff, serverMessages]);
+  }, [attachmentPreviewHandoffByMessageId, clearAttachmentPreviewHandoff, displayServerMessages]);
   const timelineMessages = useMemo(() => {
-    const messages = serverMessages ?? [];
+    const messages = displayServerMessages;
     const serverMessagesWithPreviewHandoff =
       Object.keys(attachmentPreviewHandoffByMessageId).length === 0
         ? messages
@@ -1716,7 +1608,7 @@ export default function ChatView(props: ChatViewProps) {
       return serverMessagesWithPreviewHandoff;
     }
     return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
-  }, [serverMessages, attachmentPreviewHandoffByMessageId, optimisticUserMessages]);
+  }, [attachmentPreviewHandoffByMessageId, displayServerMessages, optimisticUserMessages]);
   const timelineEntries = useMemo(
     () =>
       deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
@@ -1786,7 +1678,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeLatestTurn, completionSummary, latestTurnSettled, timelineEntries]);
   const gitCwd = activeProject
     ? projectScriptCwd({
-        project: { cwd: activeProject.cwd },
+        project: { cwd: activeProject.workspaceRoot },
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
@@ -1811,7 +1703,7 @@ export default function ChatView(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
-  const activeProjectCwd = activeProject?.cwd ?? null;
+  const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
   const activeTerminalLaunchContext =
@@ -1880,7 +1772,7 @@ export default function ChatView(props: ChatViewProps) {
   const envLocked = Boolean(
     activeThread &&
     (activeThread.messages.length > 0 ||
-      (activeThread.session !== null && activeThread.session.status !== "closed")),
+      (activeThread.session !== null && activeThread.session.status !== "stopped")),
   );
 
   // Handle environment change for draft threads.  When the user picks a
@@ -1914,13 +1806,21 @@ export default function ChatView(props: ChatViewProps) {
     (targetThreadId: ThreadId | null, error: string | null) => {
       if (!targetThreadId) return;
       const nextError = sanitizeThreadErrorMessage(error);
-      const isCurrentServerThread = shouldWriteThreadErrorToCurrentServerThread({
-        serverThread,
-        routeThreadRef,
-        targetThreadId,
-      });
-      if (isCurrentServerThread) {
-        setStoreThreadError(targetThreadId, nextError);
+      if (
+        serverThread &&
+        targetThreadId === routeThreadRef.threadId &&
+        serverThread.environmentId === routeThreadRef.environmentId &&
+        serverThread.id === targetThreadId
+      ) {
+        setLocalServerErrorsByThreadKey((existing) => {
+          if ((existing[routeThreadKey] ?? null) === nextError) {
+            return existing;
+          }
+          return {
+            ...existing,
+            [routeThreadKey]: nextError,
+          };
+        });
         return;
       }
       const localDraftErrorKey = draftId ?? targetThreadId;
@@ -1934,7 +1834,7 @@ export default function ChatView(props: ChatViewProps) {
         };
       });
     },
-    [draftId, routeThreadRef, serverThread, setStoreThreadError],
+    [draftId, routeThreadKey, routeThreadRef, serverThread],
   );
 
   const focusComposer = useCallback(() => {
@@ -1963,7 +1863,7 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || hasReachedSplitLimit || !activeThreadId || !activeProject) {
       return;
     }
-    const cwdForOpen = gitCwd ?? activeProject.cwd;
+    const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
     if (!cwdForOpen) {
       return;
     }
@@ -1980,7 +1880,7 @@ export default function ChatView(props: ChatViewProps) {
             cwd: cwdForOpen,
             ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
             env: projectScriptRuntimeEnv({
-              project: { cwd: activeProject.cwd },
+              project: { cwd: activeProject.workspaceRoot },
               worktreePath: activeThreadWorktreePath,
             }),
           },
@@ -2005,7 +1905,7 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !activeThreadId || !activeProject) {
       return;
     }
-    const cwdForOpen = gitCwd ?? activeProject.cwd;
+    const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
     if (!cwdForOpen) {
       return;
     }
@@ -2022,7 +1922,7 @@ export default function ChatView(props: ChatViewProps) {
             cwd: cwdForOpen,
             ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
             env: projectScriptRuntimeEnv({
-              project: { cwd: activeProject.cwd },
+              project: { cwd: activeProject.workspaceRoot },
               worktreePath: activeThreadWorktreePath,
             }),
           },
@@ -2101,7 +2001,7 @@ export default function ChatView(props: ChatViewProps) {
           return { ...current, [activeProject.id]: script.id };
         });
       }
-      const targetCwd = options?.cwd ?? gitCwd ?? activeProject.cwd;
+      const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
       const baseTerminalId =
         terminalUiState.activeTerminalId || activeKnownTerminalIds[0] || DEFAULT_THREAD_TERMINAL_ID;
       const isBaseTerminalBusy = runningTerminalIds.includes(baseTerminalId);
@@ -2122,7 +2022,7 @@ export default function ChatView(props: ChatViewProps) {
 
       const runtimeEnv = projectScriptRuntimeEnv({
         project: {
-          cwd: activeProject.cwd,
+          cwd: activeProject.workspaceRoot,
         },
         worktreePath: targetWorktreePath,
         ...(options?.env ? { extraEnv: options.env } : {}),
@@ -2194,8 +2094,8 @@ export default function ChatView(props: ChatViewProps) {
     async (input: {
       projectId: ProjectId;
       projectCwd: string;
-      previousScripts: ProjectScript[];
-      nextScripts: ProjectScript[];
+      previousScripts: ReadonlyArray<ProjectScript>;
+      nextScripts: ReadonlyArray<ProjectScript>;
       keybinding?: string | null;
       keybindingCommand: KeybindingCommand;
     }) => {
@@ -2246,7 +2146,7 @@ export default function ChatView(props: ChatViewProps) {
 
       await persistProjectScripts({
         projectId: activeProject.id,
-        projectCwd: activeProject.cwd,
+        projectCwd: activeProject.workspaceRoot,
         previousScripts: activeProject.scripts,
         nextScripts,
         keybinding: input.keybinding,
@@ -2280,7 +2180,7 @@ export default function ChatView(props: ChatViewProps) {
 
       await persistProjectScripts({
         projectId: activeProject.id,
-        projectCwd: activeProject.cwd,
+        projectCwd: activeProject.workspaceRoot,
         previousScripts: activeProject.scripts,
         nextScripts,
         keybinding: input.keybinding,
@@ -2299,7 +2199,7 @@ export default function ChatView(props: ChatViewProps) {
       try {
         await persistProjectScripts({
           projectId: activeProject.id,
-          projectCwd: activeProject.cwd,
+          projectCwd: activeProject.workspaceRoot,
           previousScripts: activeProject.scripts,
           nextScripts,
           keybinding: null,
@@ -2941,7 +2841,9 @@ export default function ChatView(props: ChatViewProps) {
         role: "user",
         text: outgoingMessageText,
         ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+        turnId: null,
         createdAt: messageCreatedAt,
+        updatedAt: messageCreatedAt,
         streaming: false,
       },
     ]);
@@ -3032,7 +2934,7 @@ export default function ChatView(props: ChatViewProps) {
               ...(baseBranchForWorktree
                 ? {
                     prepareWorktree: {
-                      projectCwd: activeProject.cwd,
+                      projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
                       branch: buildTemporaryWorktreeBranchName(randomHex),
                     },
@@ -3332,7 +3234,9 @@ export default function ChatView(props: ChatViewProps) {
           id: messageIdForSend,
           role: "user",
           text: outgoingMessageText,
+          turnId: null,
           createdAt: messageCreatedAt,
+          updatedAt: messageCreatedAt,
           streaming: false,
         },
       ]);
@@ -3703,7 +3607,7 @@ export default function ChatView(props: ChatViewProps) {
           activeThreadId={activeThread.id}
           {...(routeKind === "draft" && draftId ? { draftId } : {})}
           activeThreadTitle={activeThread.title}
-          activeProjectName={activeProject?.name}
+          activeProjectName={activeProject?.title}
           isGitRepo={isGitRepo}
           openInCwd={gitCwd}
           activeProjectScripts={activeProject?.scripts}
@@ -3712,7 +3616,7 @@ export default function ChatView(props: ChatViewProps) {
           }
           keybindings={keybindings}
           availableEditors={availableEditors}
-          terminalAvailable={activeProject !== undefined}
+          terminalAvailable={activeProject !== null}
           terminalOpen={terminalUiState.terminalOpen}
           terminalToggleShortcutLabel={terminalToggleShortcutLabel}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
@@ -3730,7 +3634,7 @@ export default function ChatView(props: ChatViewProps) {
       {/* Error banner */}
       <ProviderStatusBanner status={activeProviderStatus} />
       <ThreadErrorBanner
-        error={activeThread.error}
+        error={threadError}
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
       {/* Main content area with optional plan sidebar */}
@@ -3896,7 +3800,7 @@ export default function ChatView(props: ChatViewProps) {
               open
               environmentId={activeThread.environmentId}
               threadId={activeThread.id}
-              cwd={activeProject?.cwd ?? null}
+              cwd={activeProject?.workspaceRoot ?? null}
               initialReference={pullRequestDialogState.initialReference}
               onOpenChange={(open) => {
                 if (!open) {
