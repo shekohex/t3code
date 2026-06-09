@@ -49,7 +49,7 @@ export interface EnvironmentCatalogState {
   readonly entries: ReadonlyMap<EnvironmentIdType, ConnectionCatalogEntry>;
 }
 
-export const EMPTY_ENVIRONMENT_CATALOG_STATE: EnvironmentCatalogState = Object.freeze({
+const EMPTY_ENVIRONMENT_CATALOG_STATE: EnvironmentCatalogState = Object.freeze({
   isReady: false,
   entries: new Map(),
 });
@@ -128,7 +128,7 @@ function runStreamInEnvironment<A, E, R extends EnvironmentServices>(
   );
 }
 
-export function createEnvironmentQueryAtomFamily<
+function createEnvironmentQueryAtomFamily<
   R,
   ER,
   Input,
@@ -228,7 +228,7 @@ export function createEnvironmentMutation<
     .pipe(Atom.withLabel(options.label));
 }
 
-export function createEnvironmentStreamMutation<
+function createEnvironmentStreamMutation<
   R,
   ER,
   Input,

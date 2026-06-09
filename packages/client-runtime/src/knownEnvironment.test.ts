@@ -1,7 +1,7 @@
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { createKnownEnvironment, getKnownEnvironmentHttpBaseUrl } from "./knownEnvironment.ts";
+import { createKnownEnvironment } from "./knownEnvironment.ts";
 import {
   parseScopedProjectKey,
   parseScopedThreadKey,
@@ -31,32 +31,6 @@ describe("known environment bootstrap helpers", () => {
         wsBaseUrl: "wss://remote.example.com",
       },
     });
-  });
-
-  it("returns the explicit fetchable http origin", () => {
-    expect(
-      getKnownEnvironmentHttpBaseUrl(
-        createKnownEnvironment({
-          label: "Local environment",
-          target: {
-            httpBaseUrl: "http://localhost:3773",
-            wsBaseUrl: "ws://localhost:3773",
-          },
-        }),
-      ),
-    ).toBe("http://localhost:3773");
-
-    expect(
-      getKnownEnvironmentHttpBaseUrl(
-        createKnownEnvironment({
-          label: "Remote environment",
-          target: {
-            httpBaseUrl: "https://remote.example.com/api",
-            wsBaseUrl: "wss://remote.example.com/api",
-          },
-        }),
-      ),
-    ).toBe("https://remote.example.com/api");
   });
 });
 
