@@ -14,7 +14,7 @@ import {
   getProjectOrderKey,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import { useProjects, useThreadDetail } from "../connection/entityState";
+import { useProjects, useThreadDetail } from "../state/entities";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useUiStateStore } from "../uiStateStore";
 import { useSettings } from "./useSettings";

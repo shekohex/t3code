@@ -13,7 +13,7 @@ import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { useRunStackedGitActionState } from "../connection/useEnvironmentData";
+import { useRunStackedGitActionState } from "./git";
 import { appAtomRegistry } from "./atom-registry";
 
 function setVcsActionState(target: VcsActionTarget, state: VcsActionState): void {

@@ -13,8 +13,8 @@ import {
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 
-import { useThreadActions } from "../../connection/threadEnvironment";
-import { useThreadShells } from "../../connection/entityState";
+import { useThreadActions } from "../../state/threads";
+import { useThreadShells } from "../../state/entities";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { uuidv4 } from "../../lib/uuid";

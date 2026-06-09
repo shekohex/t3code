@@ -13,7 +13,7 @@ import { useThemeColor } from "../../lib/useThemeColor";
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import type { WorkspaceState } from "../../connection/workspaceModel";
+import type { WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";

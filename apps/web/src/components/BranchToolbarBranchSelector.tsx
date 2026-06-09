@@ -15,10 +15,10 @@ import {
 } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
-import { usePaginatedBranches, useRepositoryStatus } from "../connection/appQueries";
-import { useProject, useThreadDetail } from "../connection/entityState";
-import { useThreadActions } from "../connection/threadEnvironment";
-import { useVcsActions } from "../connection/vcsEnvironment";
+import { usePaginatedBranches, useRepositoryStatus } from "../state/queries";
+import { useProject, useThreadDetail } from "../state/entities";
+import { useThreadActions } from "../state/threads";
+import { useVcsActions } from "../state/vcs";
 import { cn } from "../lib/utils";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";

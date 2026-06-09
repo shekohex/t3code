@@ -8,7 +8,7 @@ import {
 import * as Effect from "effect/Effect";
 import { type ReactNode, useEffect, useRef } from "react";
 
-import { useEnvironmentConnectionActions } from "../../connection/connectionState";
+import { useEnvironmentConnectionActions } from "../../state/environments";
 import { runtime } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import {

@@ -42,14 +42,10 @@ import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
-import { ServerStateProjection } from "../connection/ServerStateProjection";
-import { useShellActions } from "../connection/shellEnvironment";
-import { useEnvironments, usePrimaryEnvironment } from "../connection/useEnvironments";
-import {
-  readProject,
-  setActiveEnvironmentId,
-  useActiveEnvironmentId,
-} from "../connection/entityState";
+import { ServerStateProjection } from "../rpc/ServerStateProjection";
+import { useShellActions } from "../state/shell";
+import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;

@@ -37,8 +37,8 @@ import {
   useServerKeybindings,
   useServerKeybindingsConfigPath,
 } from "../../rpc/serverState";
-import { useServerActions } from "../../connection/serverEnvironment";
-import { usePrimaryEnvironment } from "../../connection/useEnvironments";
+import { useServerActions } from "../../state/server";
+import { usePrimaryEnvironment } from "../../state/environments";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Kbd, KbdGroup } from "../ui/kbd";

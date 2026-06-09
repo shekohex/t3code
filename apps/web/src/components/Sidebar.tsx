@@ -70,9 +70,9 @@ import {
   useProjects,
   useThreadShells,
   useThreadShellsForProjectRefs,
-} from "../connection/entityState";
+} from "../state/entities";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { useThreadRunningTerminalIds } from "../connection/terminalSessions";
+import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useUiStateStore } from "../uiStateStore";
 import {
   resolveShortcutCommand,
@@ -90,10 +90,10 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 
 import { useThreadActions } from "../hooks/useThreadActions";
-import { useEnvironmentThread } from "../connection/useEnvironmentData";
-import { useProjectActions } from "../connection/projectEnvironment";
-import { useThreadActions as useThreadEnvironmentActions } from "../connection/threadEnvironment";
-import { useEnvironments, usePrimaryEnvironment } from "../connection/useEnvironments";
+import { useEnvironmentThread } from "../state/threads";
+import { useProjectActions } from "../state/projects";
+import { useThreadActions as useThreadEnvironmentActions } from "../state/threads";
+import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
   buildThreadRouteParams,
   resolveThreadRouteRef,

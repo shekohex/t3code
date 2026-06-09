@@ -2,7 +2,7 @@ import { useLocalSearchParams } from "expo-router";
 import { useMemo } from "react";
 import { EnvironmentId, ThreadId, type ScopedProjectRef } from "@t3tools/contracts";
 
-import { useProject, useThreadShell } from "../connection/entityState";
+import { useProject, useThreadShell } from "../state/entities";
 import {
   useRemoteEnvironmentRuntime,
   useSavedRemoteConnection,

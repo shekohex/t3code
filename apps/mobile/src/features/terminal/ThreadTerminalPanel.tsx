@@ -4,7 +4,7 @@ import { memo, useCallback, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { useTerminalActions } from "../../connection/terminalEnvironment";
+import { useTerminalActions } from "../../state/terminal";
 import { useAttachedTerminalSession } from "../../state/use-terminal-session";
 import { TerminalSurface } from "./NativeTerminalSurface";
 import { hasNativeTerminalSurface } from "./nativeTerminalModule";

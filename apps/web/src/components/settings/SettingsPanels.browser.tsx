@@ -190,18 +190,13 @@ vi.mock("@clerk/react", () => ({
   }),
 }));
 
-vi.mock("../../connection/connectionRuntime", async () => {
+vi.mock("../../cloud/linkEnvironmentAtoms", async () => {
   const Effect = await import("effect/Effect");
   const { Atom } = await import("effect/unstable/reactivity");
 
   return {
     linkPrimaryEnvironment: Atom.fn(() => Effect.void),
     unlinkPrimaryEnvironment: Atom.fn(() => Effect.void),
-    environmentData: {
-      queries: {
-        vcsListRefsAtom: vi.fn(),
-      },
-    },
   };
 });
 
@@ -325,8 +320,9 @@ vi.mock("../../lib/sourceControlDiscoveryState", async () => {
   };
 });
 
-vi.mock("../../connection/useEnvironmentData", async () => {
+vi.mock("../../state/server", async () => {
   const React = await import("react");
+  const actual = await vi.importActual<typeof import("../../state/server")>("../../state/server");
   const { useServerConfig } = await import("../../rpc/serverState");
   const idleRefresh = async () => undefined;
   const emptyQuery = {
@@ -373,21 +369,12 @@ vi.mock("../../connection/useEnvironmentData", async () => {
 
   const useEmptyQuery = () => emptyQuery;
   return {
-    useEnvironmentConnectionState: useEmptyQuery,
-    useEnvironmentConfig: useEmptyQuery,
-    useEnvironmentShell: useEmptyQuery,
-    useEnvironmentThread: useEmptyQuery,
-    useFilesystemBrowse: useEmptyQuery,
-    useProjectSearchEntries: useEmptyQuery,
-    useVcsListRefs: useEmptyQuery,
-    useVcsStatus: useEmptyQuery,
-    useReviewDiffPreview: useEmptyQuery,
+    ...actual,
     useServerConfig: () => ({
       ...emptyQuery,
       data: useServerConfig(),
     }),
     useServerSettings: useEmptyQuery,
-    useSourceControlDiscovery: useEmptyQuery,
     useTraceDiagnostics: (environmentId: EnvironmentId | null) =>
       useNativeQuery(
         () =>
@@ -417,17 +404,29 @@ vi.mock("../../connection/useEnvironmentData", async () => {
             : window.nativeApi?.server.getProcessResourceHistory(target.input),
         [target?.environmentId, target?.input.windowMs, target?.input.bucketMs],
       ),
-    useSourceControlRepository: useEmptyQuery,
-    usePullRequestResolution: useEmptyQuery,
-    useTurnDiff: useEmptyQuery,
-    useFullThreadDiff: useEmptyQuery,
-    useArchivedShellSnapshot: useEmptyQuery,
-    useRelayClientStatus: useEmptyQuery,
-    useTerminalAttach: useEmptyQuery,
-    useTerminalEvents: useEmptyQuery,
-    useTerminalMetadata: useEmptyQuery,
     useServerConfigChanges: useEmptyQuery,
     useServerLifecycleChanges: useEmptyQuery,
+    useServerActions: () => ({
+      refreshProviders: mockRefreshProviders,
+      updateProvider: mockUpdateProvider,
+      signalProcess: async ({
+        input,
+      }: {
+        readonly input: Parameters<LocalApi["server"]["signalProcess"]>[0];
+      }) => window.nativeApi?.server.signalProcess(input),
+      upsertKeybinding: vi.fn(),
+      removeKeybinding: vi.fn(),
+      updateSettings: vi.fn(),
+    }),
+  };
+});
+
+vi.mock("../../state/auth", async () => {
+  const React = await import("react");
+  const actual = await vi.importActual<typeof import("../../state/auth")>("../../state/auth");
+
+  return {
+    ...actual,
     useAuthAccessChanges: (environmentId: EnvironmentId | null) => {
       const event = React.useSyncExternalStore(
         authAccessHarness.subscribe,
@@ -440,40 +439,28 @@ vi.mock("../../connection/useEnvironmentData", async () => {
         isPending: false,
       };
     },
-    useActions: () => ({
-      server: {
-        refreshProviders: mockRefreshProviders,
-        updateProvider: mockUpdateProvider,
-        signalProcess: async ({
-          input,
-        }: {
-          readonly input: Parameters<LocalApi["server"]["signalProcess"]>[0];
-        }) => window.nativeApi?.server.signalProcess(input),
-      },
-      shell: {
-        openInEditor: async ({
-          input,
-        }: {
-          readonly input: Parameters<LocalApi["shell"]["openInEditor"]>[0] extends never
-            ? never
-            : {
-                readonly cwd: string;
-                readonly editor: Parameters<LocalApi["shell"]["openInEditor"]>[1];
-              };
-        }) => window.nativeApi?.shell.openInEditor(input.cwd, input.editor),
-      },
-    }),
-    useEnvironmentConnectionActions: () => ({
-      register: vi.fn(),
-      remove: vi.fn(),
-      retryNow: vi.fn(),
-    }),
-    useRunStackedGitActionState: useEmptyQuery,
-    useEnvironmentActions: () => ({}),
   };
 });
 
-vi.mock("../../connection/useEnvironments", async () => {
+vi.mock("../../state/shell", async () => {
+  const actual = await vi.importActual<typeof import("../../state/shell")>("../../state/shell");
+
+  return {
+    ...actual,
+    useShellActions: () => ({
+      openInEditor: async ({
+        input,
+      }: {
+        readonly input: {
+          readonly cwd: string;
+          readonly editor: Parameters<LocalApi["shell"]["openInEditor"]>[1];
+        };
+      }) => window.nativeApi?.shell.openInEditor(input.cwd, input.editor),
+    }),
+  };
+});
+
+vi.mock("../../state/environments", async () => {
   const React = await import("react");
   const EffectOption = await import("effect/Option");
   const { EnvironmentId: EnvironmentIdSchema } = await import("@t3tools/contracts");

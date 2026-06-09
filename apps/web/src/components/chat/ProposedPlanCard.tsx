@@ -25,7 +25,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { useProjectActions } from "~/connection/projectEnvironment";
+import { useProjectActions } from "~/state/projects";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({

@@ -12,9 +12,9 @@ import {
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
 
-import { useGitActions } from "../connection/gitEnvironment";
-import { useThreadActions } from "../connection/threadEnvironment";
-import { useVcsActions } from "../connection/vcsEnvironment";
+import { useGitActions } from "../state/git";
+import { useThreadActions } from "../state/threads";
+import { useVcsActions } from "../state/vcs";
 import { uuidv4 } from "../lib/uuid";
 import { setPendingConnectionError } from "./use-remote-environment-registry";
 import {

@@ -22,7 +22,7 @@ import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
 import { StatusPill } from "../../components/StatusPill";
-import { useProjects, useThreadShells } from "../../connection/entityState";
+import { useProjects, useThreadShells } from "../../state/entities";
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";

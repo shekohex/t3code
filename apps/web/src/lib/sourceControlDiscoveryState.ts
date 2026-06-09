@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import { useSourceControlCapabilities } from "../connection/appQueries";
-import { usePrimaryEnvironment } from "../connection/useEnvironments";
+import { useSourceControlCapabilities } from "../state/queries";
+import { usePrimaryEnvironment } from "../state/environments";
 
 interface SourceControlDiscoveryTargetInput {
   readonly environmentId?: EnvironmentId | null;

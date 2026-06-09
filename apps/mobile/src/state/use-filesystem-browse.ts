@@ -1,6 +1,6 @@
 import type { EnvironmentId, FilesystemBrowseInput } from "@t3tools/contracts";
 
-import { useFilesystemDirectory } from "../connection/appQueries";
+import { useFilesystemDirectory } from "../state/queries";
 
 export function useFilesystemBrowse(
   environmentId: EnvironmentId | null,

@@ -30,9 +30,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
-import { useProjects, useServerConfigs } from "../../connection/entityState";
-import { useProjectActions } from "../../connection/projectEnvironment";
-import { useSourceControlActions } from "../../connection/sourceControlEnvironment";
+import { useProjects, useServerConfigs } from "../../state/entities";
+import { useProjectActions } from "../../state/projects";
+import { useSourceControlActions } from "../../state/sourceControl";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { ErrorBanner } from "../../components/ErrorBanner";
 import { SourceControlIcon } from "../../components/SourceControlIcon";

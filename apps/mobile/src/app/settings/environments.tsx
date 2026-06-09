@@ -22,7 +22,7 @@ import { AppText as Text } from "../../components/AppText";
 import {
   type RelayEnvironmentView,
   useConnectionController,
-} from "../../connection/useConnectionController";
+} from "../../features/connection/useConnectionController";
 import { hasCloudPublicConfig } from "../../features/cloud/publicConfig";
 import { availableCloudEnvironmentPresentation } from "../../features/cloud/cloudEnvironmentPresentation";
 import { ConnectionEnvironmentRow } from "../../features/connection/ConnectionEnvironmentRow";

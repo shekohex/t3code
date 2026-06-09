@@ -16,10 +16,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
-import {
-  useEnvironmentConnectionActions,
-  useEnvironmentPresentation,
-} from "../../connection/useEnvironmentData";
+import { useEnvironmentConnectionActions } from "../../state/environments";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";

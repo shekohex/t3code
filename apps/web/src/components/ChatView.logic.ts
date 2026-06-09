@@ -13,7 +13,7 @@ import { type ChatMessage, type SessionPhase, type Thread } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { environmentThreadDetails } from "../connection/connectionRuntime";
+import { environmentThreadDetails } from "../state/threads";
 import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,

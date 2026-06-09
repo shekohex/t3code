@@ -4,7 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { ApprovalRequestId, type ProviderApprovalDecision } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
-import { useThreadActions } from "../connection/threadEnvironment";
+import { useThreadActions } from "../state/threads";
 import { scopedRequestKey } from "../lib/scopedEntities";
 import {
   buildPendingUserInputAnswers,

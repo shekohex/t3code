@@ -131,27 +131,24 @@ import {
   type TerminalContextSelection,
 } from "../lib/terminalContext";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import {
-  useKnownTerminalSessions,
-  useThreadRunningTerminalIds,
-} from "../connection/terminalSessions";
-import { useProjectActions } from "../connection/projectEnvironment";
-import { useServerActions } from "../connection/serverEnvironment";
-import { useTerminalActions } from "../connection/terminalEnvironment";
-import { useThreadActions } from "../connection/threadEnvironment";
+import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
+import { useProjectActions } from "../state/projects";
+import { useServerActions } from "../state/server";
+import { useTerminalActions } from "../state/terminal";
+import { useThreadActions } from "../state/threads";
 import {
   useEnvironmentActions,
   useEnvironmentHttpBaseUrl,
   useEnvironments,
   usePrimaryEnvironment,
-} from "../connection/useEnvironments";
+} from "../state/environments";
 import {
   useProject,
   useProjects,
   useThreadDetail,
   useThreadProposedPlans,
   useThreadRefs,
-} from "../connection/entityState";
+} from "../state/entities";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";

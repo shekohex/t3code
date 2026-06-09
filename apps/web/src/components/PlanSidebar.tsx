@@ -25,7 +25,7 @@ import {
   stripDisplayedPlanMarkdown,
 } from "../proposedPlan";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
-import { useProjectActions } from "~/connection/projectEnvironment";
+import { useProjectActions } from "~/state/projects";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 

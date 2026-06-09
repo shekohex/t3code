@@ -46,9 +46,9 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
-import { useServerActions } from "../../connection/serverEnvironment";
-import { usePrimaryEnvironment } from "../../connection/useEnvironments";
-import { useProjects } from "../../connection/entityState";
+import { useServerActions } from "../../state/server";
+import { usePrimaryEnvironment } from "../../state/environments";
+import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";

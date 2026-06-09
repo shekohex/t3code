@@ -14,7 +14,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
-import { usePrimaryEnvironment } from "../../connection/useEnvironments";
+import { usePrimaryEnvironment } from "../../state/environments";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;

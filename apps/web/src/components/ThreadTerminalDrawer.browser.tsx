@@ -126,7 +126,7 @@ vi.mock("@xterm/xterm", () => ({
   },
 }));
 
-vi.mock("../connection/terminalSessions", () => ({
+vi.mock("../state/terminalSessions", () => ({
   useTerminalController: (input: { environmentId: string }) => {
     useTerminalControllerMock(input);
     const controller = terminalControllerByEnvironmentId.get(input.environmentId);
@@ -137,7 +137,7 @@ vi.mock("../connection/terminalSessions", () => ({
   },
 }));
 
-vi.mock("../connection/useEnvironmentData", () => ({
+vi.mock("../state/server", () => ({
   useServerConfig: () => ({
     data: { availableEditors: [] },
     error: null,

@@ -71,10 +71,10 @@ import {
   useVcsInitAction,
   useVcsPullAction,
 } from "~/lib/sourceControlActions";
-import { useRepositoryStatus } from "~/connection/appQueries";
-import { useThreadDetail } from "~/connection/entityState";
-import { useServerConfig } from "~/connection/useEnvironmentData";
-import { useThreadActions } from "~/connection/threadEnvironment";
+import { useRepositoryStatus } from "~/state/queries";
+import { useThreadDetail } from "~/state/entities";
+import { useServerConfig } from "~/state/server";
+import { useThreadActions } from "~/state/threads";
 import { useSourceControlDiscovery } from "~/lib/sourceControlDiscoveryState";
 import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";

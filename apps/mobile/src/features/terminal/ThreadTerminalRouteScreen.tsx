@@ -19,12 +19,10 @@ import {
 import { EmptyState } from "../../components/EmptyState";
 import { GlassSurface } from "../../components/GlassSurface";
 import { LoadingScreen } from "../../components/LoadingScreen";
-import {
-  useEnvironmentConnectionActions,
-  useEnvironmentPresentation,
-} from "../../connection/useEnvironmentData";
-import { useTerminalActions } from "../../connection/terminalEnvironment";
-import { useWorkspaceState } from "../../connection/useWorkspace";
+import { useEnvironmentConnectionActions } from "../../state/environments";
+import { useEnvironmentPresentation } from "../../state/presentation";
+import { useTerminalActions } from "../../state/terminal";
+import { useWorkspaceState } from "../../state/workspace";
 import { buildThreadTerminalNavigation } from "../../lib/routes";
 import {
   useAttachedTerminalSession,

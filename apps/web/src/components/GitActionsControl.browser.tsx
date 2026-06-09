@@ -157,7 +157,7 @@ vi.mock("~/composerDraftStore", async () => {
   };
 });
 
-vi.mock("~/connection/entityState", () => ({
+vi.mock("~/state/entities", () => ({
   useThreadDetail: (threadRef: { environmentId: string; threadId: string } | null) =>
     threadRef && hasServerThreadRef.current
       ? {
@@ -169,7 +169,7 @@ vi.mock("~/connection/entityState", () => ({
       : null,
 }));
 
-vi.mock("~/connection/threadEnvironment", () => ({
+vi.mock("~/state/threads", () => ({
   useThreadActions: () => ({
     updateMetadata: setThreadBranchSpy,
   }),

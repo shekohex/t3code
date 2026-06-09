@@ -1,6 +1,6 @@
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 
-import { useBranches } from "../connection/appQueries";
+import { useBranches } from "../state/queries";
 
 export function useVcsRefs(target: VcsRefTarget) {
   const state = useBranches(target);

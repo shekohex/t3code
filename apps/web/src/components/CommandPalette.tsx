@@ -40,11 +40,11 @@ import { useCommandPaletteStore } from "../commandPaletteStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSettings } from "../hooks/useSettings";
 import { readLocalApi } from "../localApi";
-import { useFilesystemDirectory, useSourceControlCapabilities } from "../connection/appQueries";
-import { useProjectActions } from "../connection/projectEnvironment";
-import { useSourceControlActions } from "../connection/sourceControlEnvironment";
-import { useEnvironments, usePrimaryEnvironment } from "../connection/useEnvironments";
-import { useProjects, useThreadShells } from "../connection/entityState";
+import { useFilesystemDirectory, useSourceControlCapabilities } from "../state/queries";
+import { useProjectActions } from "../state/projects";
+import { useSourceControlActions } from "../state/sourceControl";
+import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import { useProjects, useThreadShells } from "../state/entities";
 import {
   startNewThreadInProjectFromContext,
   startNewThreadFromContext,

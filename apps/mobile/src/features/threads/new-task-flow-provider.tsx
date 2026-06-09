@@ -10,11 +10,7 @@ import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "@t3tool
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
-import {
-  useEnvironmentServerConfig,
-  useProjects,
-  useThreadShells,
-} from "../../connection/entityState";
+import { useEnvironmentServerConfig, useProjects, useThreadShells } from "../../state/entities";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";

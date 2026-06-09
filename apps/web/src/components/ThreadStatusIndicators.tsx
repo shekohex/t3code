@@ -6,10 +6,10 @@ import {
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { CloudIcon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
-import { useEnvironments, usePrimaryEnvironment } from "../connection/useEnvironments";
-import { useProject } from "../connection/entityState";
+import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import { useProject } from "../state/entities";
 import { useVcsStatus } from "../lib/vcsStatusState";
-import { useThreadRunningTerminalIds } from "../connection/terminalSessions";
+import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useUiStateStore } from "../uiStateStore";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";

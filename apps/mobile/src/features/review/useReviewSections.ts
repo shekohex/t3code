@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo } from "react";
 
 import type { EnvironmentId, OrchestrationCheckpointSummary, ThreadId } from "@t3tools/contracts";
 
-import { useCheckpointDiff } from "../../connection/appQueries";
+import { useCheckpointDiff } from "../../state/queries";
 import { useSelectedThreadDetail } from "../../state/use-thread-detail";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useReviewDiffPreview } from "./reviewDiffPreviewState";
