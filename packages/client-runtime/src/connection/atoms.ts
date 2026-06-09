@@ -6,13 +6,13 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import { AVAILABLE_CONNECTION_STATE, type PreparedConnection } from "./model.ts";
-import type { EnvironmentOperationsService } from "./operations.ts";
 import { presentEnvironmentConnection, type EnvironmentPresentation } from "./presentation.ts";
 import { projectEnvironmentCatalog } from "./readModel.ts";
 import {
@@ -24,9 +24,19 @@ import {
   EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
   RelayEnvironmentDiscovery,
 } from "./relayDiscovery.ts";
-import type { EnvironmentShellState } from "./runtime.ts";
-import type { EnvironmentRuntimeService } from "./runtime.ts";
-import { EMPTY_ENVIRONMENT_THREAD_STATE } from "./threads.ts";
+import {
+  EnvironmentConfig,
+  EnvironmentRpc,
+  type EnvironmentRpcInput,
+  type EnvironmentServices,
+  EnvironmentShell,
+  type EnvironmentShellState,
+  type EnvironmentStreamCommandRpcTag,
+  type EnvironmentSubscriptionRpcTag,
+  type EnvironmentUnaryRpcTag,
+} from "./runtime.ts";
+import { EnvironmentSupervisor } from "./supervisor.ts";
+import { EMPTY_ENVIRONMENT_THREAD_STATE, EnvironmentThreads } from "./threads.ts";
 
 const EMPTY_SHELL_STATE: EnvironmentShellState = {
   snapshot: Option.none(),
@@ -62,43 +72,37 @@ function parseThreadAtomKey(key: string): {
   };
 }
 
-export interface EnvironmentOperationTarget<Input> {
+export interface EnvironmentRpcTarget<Input> {
   readonly environmentId: EnvironmentIdType;
   readonly input: Input;
 }
 
-interface EnvironmentOperationAtomOptions<Input, A, E> {
+interface EnvironmentAtomOptions<Input, A, E, R extends EnvironmentServices> {
   readonly label: string;
-  readonly execute: (
-    operations: EnvironmentOperationsService,
-    input: Input,
-    runtime: EnvironmentRuntimeService,
-  ) => Effect.Effect<A, E>;
+  readonly execute: (input: Input) => Effect.Effect<A, E, R>;
 }
 
-interface EnvironmentQueryAtomOptions<Input, A, E> extends EnvironmentOperationAtomOptions<
+interface EnvironmentQueryAtomOptions<
   Input,
   A,
-  E
-> {
+  E,
+  R extends EnvironmentServices,
+> extends EnvironmentAtomOptions<Input, A, E, R> {
   readonly staleTimeMs?: number;
   readonly idleTtlMs?: number;
 }
 
-interface EnvironmentSubscriptionAtomOptions<Input, A, E> {
+interface EnvironmentSubscriptionAtomOptions<Input, A, E, R extends EnvironmentServices> {
   readonly label: string;
-  readonly subscribe: (
-    operations: EnvironmentOperationsService,
-    input: Input,
-  ) => Stream.Stream<A, E>;
+  readonly subscribe: (input: Input) => Stream.Stream<A, E, R>;
   readonly idleTtlMs?: number;
 }
 
-function environmentOperationKey<Input>(target: EnvironmentOperationTarget<Input>): string {
+function environmentRpcKey<Input>(target: EnvironmentRpcTarget<Input>): string {
   return JSON.stringify([target.environmentId, target.input]);
 }
 
-function parseEnvironmentOperationKey<Input>(key: string): EnvironmentOperationTarget<Input> {
+function parseEnvironmentRpcKey<Input>(key: string): EnvironmentRpcTarget<Input> {
   const decoded = JSON.parse(key) as [EnvironmentIdType, Input];
   return {
     environmentId: EnvironmentId.make(decoded[0]),
@@ -106,36 +110,53 @@ function parseEnvironmentOperationKey<Input>(key: string): EnvironmentOperationT
   };
 }
 
-function withEnvironmentOperations<A, E>(
+function runInEnvironment<A, E, R extends EnvironmentServices>(
   environmentId: EnvironmentIdType,
-  use: (
-    operations: EnvironmentOperationsService,
-    runtime: EnvironmentRuntimeService,
-  ) => Effect.Effect<A, E>,
+  effect: Effect.Effect<A, E, R>,
 ) {
   return EnvironmentRegistry.pipe(
-    Effect.flatMap((registry) =>
-      registry.withRuntime(environmentId, (environmentRuntime) =>
-        use(environmentRuntime.operations, environmentRuntime),
-      ),
-    ),
+    Effect.flatMap((registry) => registry.run(environmentId, effect)),
   );
 }
 
-export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
+function runStreamInEnvironment<A, E, R extends EnvironmentServices>(
+  environmentId: EnvironmentIdType,
+  stream: Stream.Stream<A, E, R>,
+) {
+  return Stream.unwrap(
+    EnvironmentRegistry.pipe(Effect.map((registry) => registry.runStream(environmentId, stream))),
+  );
+}
+
+export function createEnvironmentQueryAtomFamily<
+  R,
+  ER,
+  Input,
+  A,
+  E,
+  REnvironment extends EnvironmentServices,
+>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
-  options: EnvironmentQueryAtomOptions<Input, A, E>,
-): (
-  target: EnvironmentOperationTarget<Input>,
-) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
+  options: EnvironmentQueryAtomOptions<Input, A, E, REnvironment>,
+): (target: EnvironmentRpcTarget<Input>) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
   const rpcGenerationAtom = Atom.family((environmentId: EnvironmentIdType) =>
     runtime.atom(
-      Stream.unwrap(
-        EnvironmentRegistry.pipe(
-          Effect.map((registry) =>
-            registry
-              .rpcGenerationChanges(environmentId)
-              .pipe(Stream.map<number, number | null>((generation) => generation)),
+      runStreamInEnvironment(
+        environmentId,
+        Stream.unwrap(
+          EnvironmentSupervisor.pipe(
+            Effect.map((supervisor) =>
+              Stream.concat(
+                Stream.fromEffect(SubscriptionRef.get(supervisor.state)),
+                SubscriptionRef.changes(supervisor.state),
+              ).pipe(
+                Stream.filterMap((state) =>
+                  state.phase === "connected" ? Result.succeed(state.generation) : Result.failVoid,
+                ),
+                Stream.changes,
+                Stream.map<number, number | null>((generation) => generation),
+              ),
+            ),
           ),
         ),
       ),
@@ -143,7 +164,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
     ),
   );
   const family = Atom.family((key: string) => {
-    const target = parseEnvironmentOperationKey<Input>(key);
+    const target = parseEnvironmentRpcKey<Input>(key);
     return runtime
       .atom((get) => {
         const generation = Option.getOrNull(
@@ -152,9 +173,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         if (generation === null) {
           return Effect.never;
         }
-        return withEnvironmentOperations(target.environmentId, (operations, environmentRuntime) =>
-          options.execute(operations, target.input, environmentRuntime),
-        );
+        return runInEnvironment(target.environmentId, options.execute(target.input));
       })
       .pipe(
         Atom.swr({
@@ -165,63 +184,141 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         Atom.withLabel(`${options.label}:${key}`),
       );
   });
-  return (target) => family(environmentOperationKey(target));
+  return (target) => family(environmentRpcKey(target));
 }
 
-export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
+export function createEnvironmentSubscriptionAtomFamily<
+  R,
+  ER,
+  Input,
+  A,
+  E,
+  REnvironment extends EnvironmentServices,
+>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
-  options: EnvironmentSubscriptionAtomOptions<Input, A, E>,
+  options: EnvironmentSubscriptionAtomOptions<Input, A, E, REnvironment>,
 ) {
   const family = Atom.family((key: string) => {
-    const target = parseEnvironmentOperationKey<Input>(key);
+    const target = parseEnvironmentRpcKey<Input>(key);
     return runtime
-      .atom(
-        Stream.unwrap(
-          withEnvironmentOperations(target.environmentId, (operations) =>
-            Effect.succeed(options.subscribe(operations, target.input)),
-          ),
-        ),
-      )
+      .atom(runStreamInEnvironment(target.environmentId, options.subscribe(target.input)))
       .pipe(
         Atom.setIdleTTL(options.idleTtlMs ?? 5 * 60_000),
         Atom.withLabel(`${options.label}:${key}`),
       );
   });
-  return (target: EnvironmentOperationTarget<Input>) => family(environmentOperationKey(target));
+  return (target: EnvironmentRpcTarget<Input>) => family(environmentRpcKey(target));
 }
 
-export function createEnvironmentMutation<R, ER, Input, A, E>(
+export function createEnvironmentMutation<
+  R,
+  ER,
+  Input,
+  A,
+  E,
+  REnvironment extends EnvironmentServices,
+>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
-  options: EnvironmentOperationAtomOptions<Input, A, E>,
+  options: EnvironmentAtomOptions<Input, A, E, REnvironment>,
 ) {
   return runtime
-    .fn<EnvironmentOperationTarget<Input>>()((target) =>
-      withEnvironmentOperations(target.environmentId, (operations, environmentRuntime) =>
-        options.execute(operations, target.input, environmentRuntime),
+    .fn<EnvironmentRpcTarget<Input>>()((target) =>
+      runInEnvironment(target.environmentId, options.execute(target.input)),
+    )
+    .pipe(Atom.withLabel(options.label));
+}
+
+export function createEnvironmentStreamMutation<
+  R,
+  ER,
+  Input,
+  A,
+  E,
+  REnvironment extends EnvironmentServices,
+>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
+  options: {
+    readonly label: string;
+    readonly execute: (input: Input) => Stream.Stream<A, E, REnvironment>;
+  },
+) {
+  return runtime
+    .fn<EnvironmentRpcTarget<Input>>()<E | EnvironmentNotRegisteredError, A>((target) =>
+      runStreamInEnvironment(target.environmentId, options.execute(target.input)).pipe(
+        Stream.withSpan(options.label),
       ),
     )
     .pipe(Atom.withLabel(options.label));
 }
 
-export function createEnvironmentStreamMutation<R, ER, Input, A, E>(
+export function createEnvironmentRpcQueryAtomFamily<R, ER, TTag extends EnvironmentUnaryRpcTag>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
   options: {
     readonly label: string;
-    readonly execute: (
-      operations: EnvironmentOperationsService,
-      input: Input,
-    ) => Stream.Stream<A, E>;
+    readonly tag: TTag;
+    readonly staleTimeMs?: number;
+    readonly idleTtlMs?: number;
   },
 ) {
-  return runtime
-    .fn<EnvironmentOperationTarget<Input>>()<E | EnvironmentNotRegisteredError, A>((target) =>
-      Stream.unwrap(
-        withEnvironmentOperations(target.environmentId, (operations) =>
-          Effect.succeed(options.execute(operations, target.input)),
-        ),
-      ).pipe(Stream.withSpan(options.label)),
-    )
-    .pipe(Atom.withLabel(options.label));
+  return createEnvironmentQueryAtomFamily(runtime, {
+    label: options.label,
+    ...(options.staleTimeMs === undefined ? {} : { staleTimeMs: options.staleTimeMs }),
+    ...(options.idleTtlMs === undefined ? {} : { idleTtlMs: options.idleTtlMs }),
+    execute: (input: EnvironmentRpcInput<TTag>) =>
+      EnvironmentRpc.pipe(Effect.flatMap((rpc) => rpc.request(options.tag, input))),
+  });
+}
+
+export function createEnvironmentRpcSubscriptionAtomFamily<
+  R,
+  ER,
+  TTag extends EnvironmentSubscriptionRpcTag,
+>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
+  options: {
+    readonly label: string;
+    readonly tag: TTag;
+    readonly idleTtlMs?: number;
+  },
+) {
+  return createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: options.label,
+    ...(options.idleTtlMs === undefined ? {} : { idleTtlMs: options.idleTtlMs }),
+    subscribe: (input: EnvironmentRpcInput<TTag>) =>
+      Stream.unwrap(EnvironmentRpc.pipe(Effect.map((rpc) => rpc.subscribe(options.tag, input)))),
+  });
+}
+
+export function createEnvironmentRpcMutation<R, ER, TTag extends EnvironmentUnaryRpcTag>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
+  options: {
+    readonly label: string;
+    readonly tag: TTag;
+  },
+) {
+  return createEnvironmentMutation(runtime, {
+    label: options.label,
+    execute: (input: EnvironmentRpcInput<TTag>) =>
+      EnvironmentRpc.pipe(Effect.flatMap((rpc) => rpc.request(options.tag, input))),
+  });
+}
+
+export function createEnvironmentRpcStreamMutation<
+  R,
+  ER,
+  TTag extends EnvironmentStreamCommandRpcTag,
+>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
+  options: {
+    readonly label: string;
+    readonly tag: TTag;
+  },
+) {
+  return createEnvironmentStreamMutation(runtime, {
+    label: options.label,
+    execute: (input: EnvironmentRpcInput<TTag>) =>
+      Stream.unwrap(EnvironmentRpc.pipe(Effect.map((rpc) => rpc.runStream(options.tag, input)))),
+  });
 }
 
 export function createEnvironmentConnectionAtoms<R, E>(
@@ -262,9 +359,10 @@ export function createEnvironmentConnectionAtoms<R, E>(
   );
   const shellStateAtom = Atom.family((environmentId: EnvironmentId) =>
     runtime.atom(
-      Stream.unwrap(
-        EnvironmentRegistry.pipe(
-          Effect.map((registry) => registry.shellStateChanges(environmentId)),
+      runStreamInEnvironment(
+        environmentId,
+        Stream.unwrap(
+          EnvironmentShell.pipe(Effect.map((shell) => SubscriptionRef.changes(shell.state))),
         ),
       ),
       { initialValue: EMPTY_SHELL_STATE },
@@ -272,17 +370,23 @@ export function createEnvironmentConnectionAtoms<R, E>(
   );
   const configAtom = Atom.family((environmentId: EnvironmentId) =>
     runtime.atom(
-      Stream.unwrap(
-        EnvironmentRegistry.pipe(Effect.map((registry) => registry.configChanges(environmentId))),
+      runStreamInEnvironment(
+        environmentId,
+        Stream.unwrap(
+          EnvironmentConfig.pipe(Effect.map((config) => SubscriptionRef.changes(config.state))),
+        ),
       ),
       { initialValue: Option.none() },
     ),
   );
   const preparedConnectionAtom = Atom.family((environmentId: EnvironmentId) =>
     runtime.atom(
-      Stream.unwrap(
-        EnvironmentRegistry.pipe(
-          Effect.map((registry) => registry.preparedConnectionChanges(environmentId)),
+      runStreamInEnvironment(
+        environmentId,
+        Stream.unwrap(
+          EnvironmentSupervisor.pipe(
+            Effect.map((supervisor) => SubscriptionRef.changes(supervisor.prepared)),
+          ),
         ),
       ),
       { initialValue: Option.none<PreparedConnection>() },
@@ -298,10 +402,9 @@ export function createEnvironmentConnectionAtoms<R, E>(
   const threadStateFamily = Atom.family((key: string) => {
     const { environmentId, threadId } = parseThreadAtomKey(key);
     return runtime.atom(
-      Stream.unwrap(
-        EnvironmentRegistry.pipe(
-          Effect.map((registry) => registry.threadStateChanges(environmentId, threadId)),
-        ),
+      runStreamInEnvironment(
+        environmentId,
+        Stream.unwrap(EnvironmentThreads.pipe(Effect.map((threads) => threads.changes(threadId)))),
       ),
       { initialValue: EMPTY_ENVIRONMENT_THREAD_STATE },
     );

@@ -5,7 +5,9 @@ import { useCallback, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
-import { useWebActions } from "../connection/useWebEnvironmentData";
+import { useWebTerminalActions } from "../connection/webTerminalEnvironment";
+import { useWebThreadActions } from "../connection/webThreadEnvironment";
+import { useWebVcsActions } from "../connection/webVcsEnvironment";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
 import { readLocalApi } from "../localApi";
@@ -22,7 +24,9 @@ import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useSettings } from "./useSettings";
 
 export function useThreadActions() {
-  const actions = useWebActions();
+  const terminalActions = useWebTerminalActions();
+  const threadActions = useWebThreadActions();
+  const vcsActions = useWebVcsActions();
   const sidebarThreadSortOrder = useSettings((settings) => settings.sidebarThreadSortOrder);
   const confirmThreadDelete = useSettings((settings) => settings.confirmThreadDelete);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
@@ -68,7 +72,7 @@ export function useThreadActions() {
       const shouldNavigateToDraft =
         currentRouteThreadRef?.threadId === threadRef.threadId &&
         currentRouteThreadRef.environmentId === threadRef.environmentId;
-      const archiveCommand = actions.threads.archive({
+      const archiveCommand = threadActions.archive({
         environmentId: threadRef.environmentId,
         input: { threadId: threadRef.threadId },
       });
@@ -80,18 +84,18 @@ export function useThreadActions() {
       await archiveCommand;
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
     },
-    [actions.threads, getCurrentRouteThreadRef, resolveThreadTarget],
+    [getCurrentRouteThreadRef, resolveThreadTarget, threadActions],
   );
 
   const unarchiveThread = useCallback(
     async (target: ScopedThreadRef) => {
-      await actions.threads.unarchive({
+      await threadActions.unarchive({
         environmentId: target.environmentId,
         input: { threadId: target.threadId },
       });
       refreshArchivedThreadsForEnvironment(target.environmentId);
     },
-    [actions.threads],
+    [threadActions],
   );
 
   const deleteThread = useCallback(
@@ -99,7 +103,7 @@ export function useThreadActions() {
       const resolved = resolveThreadTarget(target);
       if (!resolved) {
         // Thread not in main store (e.g. archived thread) — dispatch delete directly.
-        await actions.threads.delete({
+        await threadActions.delete({
           environmentId: target.environmentId,
           input: { threadId: target.threadId },
         });
@@ -148,7 +152,7 @@ export function useThreadActions() {
         ));
 
       if (thread.session && thread.session.status !== "closed") {
-        await actions.threads
+        await threadActions
           .stopSession({
             environmentId: threadRef.environmentId,
             input: { threadId: threadRef.threadId },
@@ -157,7 +161,7 @@ export function useThreadActions() {
       }
 
       try {
-        await actions.terminal.close({
+        await terminalActions.close({
           environmentId: threadRef.environmentId,
           input: { threadId: threadRef.threadId, deleteHistory: true },
         });
@@ -176,7 +180,7 @@ export function useThreadActions() {
         deletedThreadIds,
         sortOrder: sidebarThreadSortOrder,
       });
-      await actions.threads.delete({
+      await threadActions.delete({
         environmentId: threadRef.environmentId,
         input: { threadId: threadRef.threadId },
       });
@@ -215,7 +219,7 @@ export function useThreadActions() {
       }
 
       try {
-        await actions.vcs.removeWorktree({
+        await vcsActions.removeWorktree({
           environmentId: threadRef.environmentId,
           input: {
             cwd: threadProject.cwd,
@@ -223,7 +227,7 @@ export function useThreadActions() {
             force: true,
           },
         });
-        await actions.vcs.refreshStatus({
+        await vcsActions.refreshStatus({
           environmentId: threadRef.environmentId,
           input: { cwd: threadProject.cwd },
         });
@@ -245,9 +249,6 @@ export function useThreadActions() {
       }
     },
     [
-      actions.terminal,
-      actions.threads,
-      actions.vcs,
       clearComposerDraftForThread,
       clearProjectDraftThreadById,
       clearTerminalUiState,
@@ -255,6 +256,9 @@ export function useThreadActions() {
       router,
       resolveThreadTarget,
       sidebarThreadSortOrder,
+      terminalActions,
+      threadActions,
+      vcsActions,
     ],
   );
 

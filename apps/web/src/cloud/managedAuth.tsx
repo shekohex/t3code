@@ -7,7 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 import { useEffect, useRef, type ReactNode } from "react";
 
-import { webEnvironmentReact } from "../connection/webConnectionRuntime";
+import { useWebEnvironmentConnectionActions } from "../connection/webConnectionState";
 import { webRuntime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
@@ -22,7 +22,7 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
   const { getToken, isLoaded, isSignedIn, userId } = useAuth({
     treatPendingAsSignedOut: false,
   });
-  const { removeRelayEnvironments } = webEnvironmentReact.useConnectionActions();
+  const { removeRelayEnvironments } = useWebEnvironmentConnectionActions();
   const observedAccountRef = useRef<string | null | undefined>(undefined);
   const accountTransitionRef = useRef(Promise.resolve());
 

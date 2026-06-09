@@ -4,7 +4,8 @@ import * as Option from "effect/Option";
 import { useEffect, useRef } from "react";
 
 import { useStore } from "../store";
-import { webEnvironmentConnections, webEnvironmentReact } from "./webConnectionRuntime";
+import { useWebEnvironmentThread } from "./webConnectionState";
+import { webEnvironmentConnections } from "./webConnectionRuntime";
 import { useWebEnvironmentHttpBaseUrl } from "./useWebEnvironments";
 import { WebServerStateProjection } from "./WebServerStateProjection";
 
@@ -47,7 +48,7 @@ export function WebEnvironmentThreadProjection(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
-  const state = webEnvironmentReact.useThread(props.environmentId, props.threadId);
+  const state = useWebEnvironmentThread(props.environmentId, props.threadId);
   const httpBaseUrl = useWebEnvironmentHttpBaseUrl(props.environmentId);
 
   useEffect(() => {

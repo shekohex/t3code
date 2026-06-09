@@ -37,7 +37,7 @@ import {
   useServerKeybindings,
   useServerKeybindingsConfigPath,
 } from "../../rpc/serverState";
-import { useWebActions } from "../../connection/useWebEnvironmentData";
+import { useWebServerActions } from "../../connection/webServerEnvironment";
 import { useWebPrimaryEnvironment } from "../../connection/useWebEnvironments";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -1068,7 +1068,7 @@ export function KeybindingsSettingsPanel() {
   const keybindingsConfigPath = useServerKeybindingsConfigPath();
   const availableEditors = useServerAvailableEditors();
   const primaryEnvironment = useWebPrimaryEnvironment();
-  const actions = useWebActions();
+  const serverActions = useWebServerActions();
   const openInPreferredEditor = useOpenInPreferredEditor(
     primaryEnvironment?.environmentId ?? null,
     availableEditors,
@@ -1129,7 +1129,7 @@ export function KeybindingsSettingsPanel() {
         ...(input.when?.trim() ? { when: input.when.trim() } : {}),
         ...(input.replace ? { replace: input.replace } : {}),
       };
-      void actions.server
+      void serverActions
         .upsertKeybinding({
           environmentId: primaryEnvironment.environmentId,
           input: payload,
@@ -1148,14 +1148,14 @@ export function KeybindingsSettingsPanel() {
           setSavingCommand(null);
         });
     },
-    [actions.server, primaryEnvironment],
+    [primaryEnvironment, serverActions],
   );
 
   const removeKeybinding = useCallback(
     (row: KeybindingRow) => {
       if (!primaryEnvironment) return;
       setSavingCommand(row.command);
-      void actions.server
+      void serverActions
         .removeKeybinding({
           environmentId: primaryEnvironment.environmentId,
           input: rowKeybindingTarget(row),
@@ -1171,7 +1171,7 @@ export function KeybindingsSettingsPanel() {
           setSavingCommand(null);
         });
     },
-    [actions.server, primaryEnvironment],
+    [primaryEnvironment, serverActions],
   );
 
   const resetKeybinding = useCallback(

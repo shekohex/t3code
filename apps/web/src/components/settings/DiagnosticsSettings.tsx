@@ -21,11 +21,12 @@ import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { formatRelativeTime } from "../../timestampFormat";
 import { useServerAvailableEditors, useServerObservability } from "../../rpc/serverState";
 import {
-  useWebActions,
   useWebProcessDiagnostics,
   useWebProcessResourceHistory,
   useWebTraceDiagnostics,
 } from "../../connection/useWebEnvironmentData";
+import { useWebServerActions } from "../../connection/webServerEnvironment";
+import { useWebShellActions } from "../../connection/webShellEnvironment";
 import { useWebPrimaryEnvironment } from "../../connection/useWebEnvironments";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
@@ -808,7 +809,8 @@ export function DiagnosticsSettingsPanel() {
   const availableEditors = useServerAvailableEditors();
   const primaryEnvironment = useWebPrimaryEnvironment();
   const environmentId = primaryEnvironment?.environmentId ?? null;
-  const actions = useWebActions();
+  const serverActions = useWebServerActions();
+  const shellActions = useWebShellActions();
   const [resourceWindowMs, setResourceWindowMs] = useState(15 * 60_000);
   const selectedResourceWindow =
     RESOURCE_HISTORY_WINDOWS.find((option) => option.windowMs === resourceWindowMs) ??
@@ -856,7 +858,7 @@ export function DiagnosticsSettingsPanel() {
 
     setIsOpeningLogsDirectory(true);
     setOpenLogsDirectoryError(null);
-    void actions.shell
+    void shellActions
       .openInEditor({
         environmentId,
         input: {
@@ -872,7 +874,7 @@ export function DiagnosticsSettingsPanel() {
       .finally(() => {
         setIsOpeningLogsDirectory(false);
       });
-  }, [actions.shell, availableEditors, environmentId, observability?.logsDirectoryPath]);
+  }, [availableEditors, environmentId, observability?.logsDirectoryPath, shellActions]);
 
   const isInitialLoading = isPending && data === null;
   const isProcessInitialLoading = isProcessPending && processData === null;
@@ -889,7 +891,7 @@ export function DiagnosticsSettingsPanel() {
       }
 
       setSignalingPid(pid);
-      void actions.server
+      void serverActions
         .signalProcess({
           environmentId,
           input: { pid, signal },
@@ -928,7 +930,7 @@ export function DiagnosticsSettingsPanel() {
           setSignalingPid(null);
         });
     },
-    [actions.server, environmentId, refreshProcesses],
+    [environmentId, refreshProcesses, serverActions],
   );
 
   const processDiagnosticsError = processData ? Option.getOrNull(processData.error) : null;

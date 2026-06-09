@@ -13,7 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 
-import { useMobileActions } from "../../connection/useMobileEnvironmentData";
+import { useMobileThreadActions } from "../../connection/mobileThreadEnvironment";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { uuidv4 } from "../../lib/uuid";
@@ -31,7 +31,7 @@ function deriveThreadTitleFromPrompt(value: string): string {
 }
 
 export function useProjectActions() {
-  const actions = useMobileActions();
+  const threadActions = useMobileThreadActions();
   const { threads } = useRemoteCatalog();
 
   const onCreateThreadWithOptions = useCallback(
@@ -59,7 +59,7 @@ export function useProjectActions() {
       }
 
       const isWorktree = input.envMode === "worktree";
-      await actions.threads.startTurn({
+      await threadActions.startTurn({
         environmentId: input.project.environmentId,
         input: {
           commandId: CommandId.make(metadata.commandId),
@@ -105,7 +105,7 @@ export function useProjectActions() {
         threadId,
       };
     },
-    [actions.threads],
+    [threadActions],
   );
 
   const onCreateThread = useCallback(

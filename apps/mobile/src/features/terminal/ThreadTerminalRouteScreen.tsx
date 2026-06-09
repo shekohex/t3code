@@ -20,10 +20,10 @@ import { EmptyState } from "../../components/EmptyState";
 import { GlassSurface } from "../../components/GlassSurface";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import {
-  useMobileActions,
   useMobileEnvironmentConnectionActions,
   useMobileEnvironmentPresentation,
 } from "../../connection/useMobileEnvironmentData";
+import { useMobileTerminalActions } from "../../connection/mobileTerminalEnvironment";
 import { buildThreadTerminalNavigation } from "../../lib/routes";
 import { useRemoteEnvironmentState } from "../../state/use-remote-environment-registry";
 import {
@@ -155,7 +155,7 @@ function pickRunningTerminalSessionForBootstrap(
 
 export function ThreadTerminalRouteScreen() {
   const router = useRouter();
-  const actions = useMobileActions();
+  const terminalActions = useMobileTerminalActions();
   const environmentActions = useMobileEnvironmentConnectionActions();
   const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
   const { isLoadingSavedConnection } = useRemoteEnvironmentState();
@@ -558,7 +558,7 @@ export function ThreadTerminalRouteScreen() {
       return;
     }
     sentInitialInputKeyRef.current = launchTargetKey;
-    void actions.terminal.write({
+    void terminalActions.write({
       environmentId: selectedThread.environmentId,
       input: {
         threadId: selectedThread.id,
@@ -567,7 +567,7 @@ export function ThreadTerminalRouteScreen() {
       },
     });
   }, [
-    actions.terminal,
+    terminalActions,
     launchTargetKey,
     pendingLaunch?.initialInput,
     selectedThread,
@@ -677,7 +677,7 @@ export function ThreadTerminalRouteScreen() {
         return;
       }
 
-      void actions.terminal.write({
+      void terminalActions.write({
         environmentId: selectedThread.environmentId,
         input: {
           threadId: selectedThread.id,
@@ -686,7 +686,7 @@ export function ThreadTerminalRouteScreen() {
         },
       });
     },
-    [actions.terminal, isRunning, selectedThread, terminalId],
+    [terminalActions, isRunning, selectedThread, terminalId],
   );
 
   const handleInput = useCallback(
@@ -738,7 +738,7 @@ export function ThreadTerminalRouteScreen() {
         return;
       }
 
-      void actions.terminal.resize({
+      void terminalActions.resize({
         environmentId: selectedThread.environmentId,
         input: {
           threadId: selectedThread.id,
@@ -749,7 +749,7 @@ export function ThreadTerminalRouteScreen() {
       });
     },
     [
-      actions.terminal,
+      terminalActions,
       isRunning,
       lastGridSize.cols,
       lastGridSize.rows,
@@ -811,14 +811,14 @@ export function ThreadTerminalRouteScreen() {
     }
 
     setPendingModifierState({ terminalId, value: null });
-    void actions.terminal.clear({
+    void terminalActions.clear({
       environmentId: selectedThread.environmentId,
       input: {
         threadId: selectedThread.id,
         terminalId,
       },
     });
-  }, [actions.terminal, selectedThread, terminalId]);
+  }, [terminalActions, selectedThread, terminalId]);
 
   const handleToolbarActionPress = useCallback(
     (action: TerminalToolbarAction) => {

@@ -45,7 +45,8 @@ import {
   useWebFilesystemDirectory,
   useWebSourceControlCapabilities,
 } from "../connection/webAppQueries";
-import { useWebActions } from "../connection/useWebEnvironmentData";
+import { useWebProjectActions } from "../connection/webProjectEnvironment";
+import { useWebSourceControlActions } from "../connection/webSourceControlEnvironment";
 import { useWebEnvironments, useWebPrimaryEnvironment } from "../connection/useWebEnvironments";
 import {
   startNewThreadInProjectFromContext,
@@ -395,7 +396,8 @@ function OpenCommandPaletteDialog() {
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const settings = useSettings();
-  const actions = useWebActions();
+  const projectActions = useWebProjectActions();
+  const sourceControlActions = useWebSourceControlActions();
   const { environments } = useWebEnvironments();
   const primaryEnvironment = useWebPrimaryEnvironment();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
@@ -1044,7 +1046,7 @@ function OpenCommandPaletteDialog() {
 
       try {
         const projectId = newProjectId();
-        await actions.projects.create({
+        await projectActions.create({
           environmentId: browseEnvironmentId,
           input: {
             projectId,
@@ -1072,11 +1074,11 @@ function OpenCommandPaletteDialog() {
       }
     },
     [
-      actions.projects,
       browseEnvironmentId,
       browseEnvironmentPlatform,
       currentProjectCwdForBrowse,
       handleNewThread,
+      projectActions,
       navigate,
       projects,
       setOpen,
@@ -1120,7 +1122,7 @@ function OpenCommandPaletteDialog() {
 
       setIsRemoteProjectLookingUp(true);
       try {
-        const repository = await actions.sourceControl.lookupRepository({
+        const repository = await sourceControlActions.lookupRepository({
           environmentId: addProjectCloneFlow.environmentId,
           input: {
             provider,
@@ -1190,7 +1192,7 @@ function OpenCommandPaletteDialog() {
 
     setIsRemoteProjectCloning(true);
     try {
-      const result = await actions.sourceControl.cloneRepository({
+      const result = await sourceControlActions.cloneRepository({
         environmentId: addProjectCloneFlow.environmentId,
         input: {
           remoteUrl: addProjectCloneFlow.remoteUrl,

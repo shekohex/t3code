@@ -1,11 +1,9 @@
 import {
   connectionApplicationLayer,
   ConnectionOnboarding,
-  createEnvironmentDataAtoms,
   createEnvironmentConnectionAtoms,
   createRelayEnvironmentDiscoveryAtoms,
 } from "@t3tools/client-runtime";
-import { createEnvironmentReactFacade } from "@t3tools/client-runtime/connection/react";
 import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -30,13 +28,6 @@ export const webConnectionLayer = connectionApplicationLayer.pipe(
 export const webConnectionAtomRuntime = Atom.runtime(webConnectionLayer);
 
 export const webEnvironmentConnections = createEnvironmentConnectionAtoms(webConnectionAtomRuntime);
-
-export const webEnvironmentData = createEnvironmentDataAtoms(webConnectionAtomRuntime);
-
-export const webEnvironmentReact = createEnvironmentReactFacade(
-  webEnvironmentConnections,
-  webEnvironmentData,
-);
 
 export const webRelayEnvironmentDiscovery =
   createRelayEnvironmentDiscoveryAtoms(webConnectionAtomRuntime);

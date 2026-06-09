@@ -1,10 +1,19 @@
-import { CommandId, type ClientOrchestrationCommand } from "@t3tools/contracts";
+import {
+  CommandId,
+  ORCHESTRATION_WS_METHODS,
+  type ClientOrchestrationCommand,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
-import type { EnvironmentOperationsService } from "./operations.ts";
+import type {
+  EnvironmentRpcFailure,
+  EnvironmentRpcService,
+  EnvironmentRpcSuccess,
+  EnvironmentRpcUnavailableError,
+} from "./runtime.ts";
 
 type CommandType = ClientOrchestrationCommand["type"];
 type CommandOf<T extends CommandType> = Extract<ClientOrchestrationCommand, { readonly type: T }>;
@@ -36,20 +45,22 @@ export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.resp
 export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert">;
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
 
-type DispatchResult = Effect.Success<
-  ReturnType<EnvironmentOperationsService["orchestration"]["dispatchCommand"]>
->;
-type DispatchError = Effect.Error<
-  ReturnType<EnvironmentOperationsService["orchestration"]["dispatchCommand"]>
->;
+type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
+type DispatchResult = EnvironmentRpcSuccess<DispatchTag>;
+type DispatchError = EnvironmentRpcFailure<DispatchTag> | EnvironmentRpcUnavailableError;
 
-export interface EnvironmentProjectCommands {
+export interface EnvironmentProjectCommandsService {
   readonly create: (input: CreateProjectInput) => Effect.Effect<DispatchResult, DispatchError>;
   readonly update: (input: UpdateProjectInput) => Effect.Effect<DispatchResult, DispatchError>;
   readonly delete: (input: DeleteProjectInput) => Effect.Effect<DispatchResult, DispatchError>;
 }
 
-export interface EnvironmentThreadCommands {
+export class EnvironmentProjectCommands extends Context.Service<
+  EnvironmentProjectCommands,
+  EnvironmentProjectCommandsService
+>()("@t3tools/client-runtime/connection/commands/EnvironmentProjectCommands") {}
+
+export interface EnvironmentThreadCommandsService {
   readonly create: (input: CreateThreadInput) => Effect.Effect<DispatchResult, DispatchError>;
   readonly delete: (input: DeleteThreadInput) => Effect.Effect<DispatchResult, DispatchError>;
   readonly archive: (input: ArchiveThreadInput) => Effect.Effect<DispatchResult, DispatchError>;
@@ -81,15 +92,10 @@ export interface EnvironmentThreadCommands {
   ) => Effect.Effect<DispatchResult, DispatchError>;
 }
 
-export interface EnvironmentCommandsService {
-  readonly projects: EnvironmentProjectCommands;
-  readonly threads: EnvironmentThreadCommands;
-}
-
-export class EnvironmentCommands extends Context.Service<
-  EnvironmentCommands,
-  EnvironmentCommandsService
->()("@t3tools/client-runtime/connection/commands/EnvironmentCommands") {}
+export class EnvironmentThreadCommands extends Context.Service<
+  EnvironmentThreadCommands,
+  EnvironmentThreadCommandsService
+>()("@t3tools/client-runtime/connection/commands/EnvironmentThreadCommands") {}
 
 function commandId(
   crypto: Crypto.Crypto,
@@ -118,43 +124,59 @@ function timestampedCommandMetadata(
   });
 }
 
-export const makeEnvironmentCommands = Effect.fn("EnvironmentCommands.make")(function* (
-  operations: EnvironmentOperationsService,
+export const makeEnvironmentProjectCommands = Effect.fn("EnvironmentProjectCommands.make")(
+  function* (rpc: EnvironmentRpcService) {
+    const crypto = yield* Crypto.Crypto;
+    const dispatch = (command: ClientOrchestrationCommand) =>
+      rpc.request(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
+
+    const create = Effect.fn("EnvironmentProjectCommands.create")(function* (
+      input: CreateProjectInput,
+    ) {
+      const metadata = yield* timestampedCommandMetadata(crypto, input);
+      return yield* dispatch({
+        ...input,
+        type: "project.create",
+        commandId: metadata.commandId,
+        createdAt: metadata.createdAt,
+      });
+    });
+    const update = Effect.fn("EnvironmentProjectCommands.update")(function* (
+      input: UpdateProjectInput,
+    ) {
+      const nextCommandId = yield* commandId(crypto, input);
+      return yield* dispatch({
+        ...input,
+        type: "project.meta.update",
+        commandId: nextCommandId,
+      });
+    });
+    const deleteProject = Effect.fn("EnvironmentProjectCommands.delete")(function* (
+      input: DeleteProjectInput,
+    ) {
+      const nextCommandId = yield* commandId(crypto, input);
+      return yield* dispatch({
+        ...input,
+        type: "project.delete",
+        commandId: nextCommandId,
+      });
+    });
+
+    return EnvironmentProjectCommands.of({
+      create,
+      update,
+      delete: deleteProject,
+    });
+  },
+);
+
+export const makeEnvironmentThreadCommands = Effect.fn("EnvironmentThreadCommands.make")(function* (
+  rpc: EnvironmentRpcService,
 ) {
   const crypto = yield* Crypto.Crypto;
-  const dispatch = operations.orchestration.dispatchCommand;
+  const dispatch = (command: ClientOrchestrationCommand) =>
+    rpc.request(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
 
-  const createProject = Effect.fn("EnvironmentProjectCommands.create")(function* (
-    input: CreateProjectInput,
-  ) {
-    const metadata = yield* timestampedCommandMetadata(crypto, input);
-    return yield* dispatch({
-      ...input,
-      type: "project.create",
-      commandId: metadata.commandId,
-      createdAt: metadata.createdAt,
-    });
-  });
-  const updateProject = Effect.fn("EnvironmentProjectCommands.update")(function* (
-    input: UpdateProjectInput,
-  ) {
-    const nextCommandId = yield* commandId(crypto, input);
-    return yield* dispatch({
-      ...input,
-      type: "project.meta.update",
-      commandId: nextCommandId,
-    });
-  });
-  const deleteProject = Effect.fn("EnvironmentProjectCommands.delete")(function* (
-    input: DeleteProjectInput,
-  ) {
-    const nextCommandId = yield* commandId(crypto, input);
-    return yield* dispatch({
-      ...input,
-      type: "project.delete",
-      commandId: nextCommandId,
-    });
-  });
   const createThread = Effect.fn("EnvironmentThreadCommands.create")(function* (
     input: CreateThreadInput,
   ) {
@@ -295,26 +317,19 @@ export const makeEnvironmentCommands = Effect.fn("EnvironmentCommands.make")(fun
     });
   });
 
-  return EnvironmentCommands.of({
-    projects: {
-      create: createProject,
-      update: updateProject,
-      delete: deleteProject,
-    },
-    threads: {
-      create: createThread,
-      delete: deleteThread,
-      archive: archiveThread,
-      unarchive: unarchiveThread,
-      updateMetadata: updateThreadMetadata,
-      setRuntimeMode: setThreadRuntimeMode,
-      setInteractionMode: setThreadInteractionMode,
-      startTurn: startThreadTurn,
-      interruptTurn: interruptThreadTurn,
-      respondToApproval: respondToThreadApproval,
-      respondToUserInput: respondToThreadUserInput,
-      revertCheckpoint: revertThreadCheckpoint,
-      stopSession: stopThreadSession,
-    },
+  return EnvironmentThreadCommands.of({
+    create: createThread,
+    delete: deleteThread,
+    archive: archiveThread,
+    unarchive: unarchiveThread,
+    updateMetadata: updateThreadMetadata,
+    setRuntimeMode: setThreadRuntimeMode,
+    setInteractionMode: setThreadInteractionMode,
+    startTurn: startThreadTurn,
+    interruptTurn: interruptThreadTurn,
+    respondToApproval: respondToThreadApproval,
+    respondToUserInput: respondToThreadUserInput,
+    revertCheckpoint: revertThreadCheckpoint,
+    stopSession: stopThreadSession,
   });
 });

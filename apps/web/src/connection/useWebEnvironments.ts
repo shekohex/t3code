@@ -15,9 +15,9 @@ import {
   connectWebPairing,
   connectWebSshEnvironment,
   webEnvironmentConnections,
-  webEnvironmentReact,
   webRelayEnvironmentDiscovery,
 } from "./webConnectionRuntime";
+import { useWebEnvironmentConnectionActions, useWebPreparedConnection } from "./webConnectionState";
 
 export interface WebEnvironmentPresentation extends EnvironmentPresentation {
   readonly environmentId: EnvironmentId;
@@ -68,7 +68,7 @@ export function useWebPrimaryEnvironment(): WebEnvironmentPresentation | null {
 }
 
 export function useWebEnvironmentHttpBaseUrl(environmentId: EnvironmentId): string | null {
-  const prepared = webEnvironmentReact.usePreparedConnection(environmentId);
+  const prepared = useWebPreparedConnection(environmentId);
   return Option.isSome(prepared) ? prepared.value.httpBaseUrl : null;
 }
 
@@ -77,7 +77,7 @@ export function useWebRelayEnvironmentDiscovery() {
 }
 
 export function useWebEnvironmentActions() {
-  const { register, remove, retryNow } = webEnvironmentReact.useConnectionActions();
+  const { register, remove, retryNow } = useWebEnvironmentConnectionActions();
   const connectPairing = useAtomSet(connectWebPairing, {
     mode: "promise",
   });

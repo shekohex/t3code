@@ -19,15 +19,19 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { applyShellStreamEvent } from "../shellSnapshotReducer.ts";
 import type { WsRpcProtocolClient } from "../wsRpcProtocol.ts";
 import type { ConnectionCatalogEntry } from "./catalog.ts";
+import {
+  EnvironmentProjectCommands,
+  EnvironmentThreadCommands,
+  makeEnvironmentProjectCommands,
+  makeEnvironmentThreadCommands,
+} from "./commands.ts";
 import { Connectivity } from "./connectivity.ts";
 import { ConnectionDriver } from "./driver.ts";
 import { connectionProjectionPhase } from "./model.ts";
-import type { ConnectionAttemptError, ConnectionTarget } from "./model.ts";
-import { makeEnvironmentCommands, type EnvironmentCommandsService } from "./commands.ts";
-import { makeEnvironmentOperations, type EnvironmentOperationsService } from "./operations.ts";
+import type { ConnectionAttemptError } from "./model.ts";
 import { EnvironmentCacheStore } from "./persistence.ts";
-import { type EnvironmentSupervisorService, makeEnvironmentSupervisor } from "./supervisor.ts";
-import { makeEnvironmentThreads, type EnvironmentThreadsService } from "./threads.ts";
+import { EnvironmentSupervisor, type EnvironmentSupervisorService } from "./supervisor.ts";
+import { EnvironmentThreads, makeEnvironmentThreads } from "./threads.ts";
 import { ConnectionWakeups } from "./wakeups.ts";
 
 export class EnvironmentRpcUnavailableError extends Schema.TaggedErrorClass<EnvironmentRpcUnavailableError>()(
@@ -122,32 +126,34 @@ export class EnvironmentShell extends Context.Service<EnvironmentShell, Environm
   "@t3tools/client-runtime/connection/runtime/EnvironmentShell",
 ) {}
 
-export interface EnvironmentRuntimeService {
-  readonly target: ConnectionTarget;
-  readonly supervisor: EnvironmentSupervisorService;
-  readonly config: SubscriptionRef.SubscriptionRef<Option.Option<ServerConfig>>;
-  readonly rpc: EnvironmentRpcService;
-  readonly operations: EnvironmentOperationsService;
-  readonly commands: EnvironmentCommandsService;
-  readonly shell: EnvironmentShellService;
-  readonly threads: EnvironmentThreadsService;
+export interface EnvironmentConfigService {
+  readonly state: SubscriptionRef.SubscriptionRef<Option.Option<ServerConfig>>;
 }
 
-export class EnvironmentRuntime extends Context.Service<
-  EnvironmentRuntime,
-  EnvironmentRuntimeService
->()("@t3tools/client-runtime/connection/runtime/EnvironmentRuntime") {}
+export class EnvironmentConfig extends Context.Service<
+  EnvironmentConfig,
+  EnvironmentConfigService
+>()("@t3tools/client-runtime/connection/runtime/EnvironmentConfig") {}
 
-export interface EnvironmentRuntimeFactoryService {
+export type EnvironmentServices =
+  | EnvironmentSupervisor
+  | EnvironmentRpc
+  | EnvironmentConfig
+  | EnvironmentProjectCommands
+  | EnvironmentThreadCommands
+  | EnvironmentShell
+  | EnvironmentThreads;
+
+export interface EnvironmentServicesFactoryService {
   readonly make: (
     entry: ConnectionCatalogEntry,
-  ) => Effect.Effect<EnvironmentRuntimeService, never, Scope.Scope>;
+  ) => Effect.Effect<Context.Context<EnvironmentServices>, never, Scope.Scope>;
 }
 
-export class EnvironmentRuntimeFactory extends Context.Service<
-  EnvironmentRuntimeFactory,
-  EnvironmentRuntimeFactoryService
->()("@t3tools/client-runtime/connection/runtime/EnvironmentRuntimeFactory") {}
+export class EnvironmentServicesFactory extends Context.Service<
+  EnvironmentServicesFactory,
+  EnvironmentServicesFactoryService
+>()("@t3tools/client-runtime/connection/runtime/EnvironmentServicesFactory") {}
 
 function shellStatusForSnapshot(
   snapshot: Option.Option<OrchestrationShellSnapshot>,
@@ -350,7 +356,7 @@ export const makeEnvironmentShell = Effect.fn("EnvironmentShell.make")(function*
   return EnvironmentShell.of({ state });
 });
 
-const makeEnvironmentConfig = Effect.fn("EnvironmentConfig.make")(function* (
+export const makeEnvironmentConfig = Effect.fn("EnvironmentConfig.make")(function* (
   supervisor: EnvironmentSupervisorService,
 ) {
   const state = yield* SubscriptionRef.make<Option.Option<ServerConfig>>(Option.none());
@@ -368,53 +374,87 @@ const makeEnvironmentConfig = Effect.fn("EnvironmentConfig.make")(function* (
     Effect.forkScoped,
   );
 
-  return state;
+  return EnvironmentConfig.of({ state });
 });
 
-export function environmentRuntimeLayer(
+export const environmentRpcLayer = Layer.effect(
+  EnvironmentRpc,
+  EnvironmentSupervisor.pipe(Effect.flatMap(makeEnvironmentRpc)),
+);
+
+export const environmentConfigLayer = Layer.effect(
+  EnvironmentConfig,
+  EnvironmentSupervisor.pipe(Effect.flatMap(makeEnvironmentConfig)),
+);
+
+export const environmentShellLayer = Layer.effect(
+  EnvironmentShell,
+  Effect.gen(function* () {
+    const supervisor = yield* EnvironmentSupervisor;
+    const rpc = yield* EnvironmentRpc;
+    const cache = yield* EnvironmentCacheStore;
+    return yield* makeEnvironmentShell(supervisor, rpc, cache);
+  }),
+);
+
+export const environmentProjectCommandsLayer = Layer.effect(
+  EnvironmentProjectCommands,
+  Effect.gen(function* () {
+    const rpc = yield* EnvironmentRpc;
+    return yield* makeEnvironmentProjectCommands(rpc);
+  }),
+);
+
+export const environmentThreadCommandsLayer = Layer.effect(
+  EnvironmentThreadCommands,
+  Effect.gen(function* () {
+    const rpc = yield* EnvironmentRpc;
+    return yield* makeEnvironmentThreadCommands(rpc);
+  }),
+);
+
+export const environmentThreadsLayer = Layer.effect(
+  EnvironmentThreads,
+  Effect.gen(function* () {
+    const supervisor = yield* EnvironmentSupervisor;
+    const rpc = yield* EnvironmentRpc;
+    return yield* makeEnvironmentThreads(supervisor, rpc);
+  }),
+);
+
+export function environmentServicesLayer(
   entry: ConnectionCatalogEntry,
 ): Layer.Layer<
-  EnvironmentRuntime,
+  EnvironmentServices,
   never,
   EnvironmentCacheStore | Connectivity | ConnectionWakeups | ConnectionDriver | Crypto.Crypto
 > {
-  return Layer.effect(EnvironmentRuntime, makeEnvironmentRuntime(entry));
-}
-
-export const makeEnvironmentRuntime = Effect.fn("EnvironmentRuntime.make")(function* (
-  entry: ConnectionCatalogEntry,
-) {
-  const target = entry.target;
-  const cache = yield* EnvironmentCacheStore;
-  const supervisor = yield* makeEnvironmentSupervisor(entry, {
+  const supervisorLayer = EnvironmentSupervisor.layer(entry, {
     initiallyDesired: false,
   });
-  const rpc = yield* makeEnvironmentRpc(supervisor);
-  const operations = yield* makeEnvironmentOperations(rpc);
-  const commands = yield* makeEnvironmentCommands(operations);
-  const shell = yield* makeEnvironmentShell(supervisor, rpc, cache);
-  const threads = yield* makeEnvironmentThreads(supervisor, rpc);
-  const config = yield* makeEnvironmentConfig(supervisor);
-  return EnvironmentRuntime.of({
-    target,
-    supervisor,
-    config,
-    rpc,
-    operations,
-    commands,
-    shell,
-    threads,
-  });
-});
+  const connectionLayer = Layer.mergeAll(environmentRpcLayer, environmentConfigLayer).pipe(
+    Layer.provideMerge(supervisorLayer),
+  );
+  return Layer.mergeAll(
+    environmentProjectCommandsLayer,
+    environmentThreadCommandsLayer,
+    environmentShellLayer,
+    environmentThreadsLayer,
+  ).pipe(Layer.provideMerge(connectionLayer));
+}
 
-export const environmentRuntimeFactoryLayer = Layer.effect(
-  EnvironmentRuntimeFactory,
+export const environmentServicesFactoryLayer = Layer.effect(
+  EnvironmentServicesFactory,
   Effect.gen(function* () {
     const dependencies = yield* Effect.context<
       EnvironmentCacheStore | Connectivity | ConnectionWakeups | ConnectionDriver | Crypto.Crypto
     >();
-    return EnvironmentRuntimeFactory.of({
-      make: (entry) => makeEnvironmentRuntime(entry).pipe(Effect.provide(dependencies)),
+    return EnvironmentServicesFactory.of({
+      make: (entry) =>
+        Effect.gen(function* () {
+          const scope = yield* Effect.scope;
+          return yield* Layer.buildWithScope(Layer.fresh(environmentServicesLayer(entry)), scope);
+        }).pipe(Effect.provide(dependencies)),
     });
   }),
 );

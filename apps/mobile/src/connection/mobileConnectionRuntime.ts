@@ -1,11 +1,9 @@
 import {
   connectionApplicationLayer,
   ConnectionOnboarding,
-  createEnvironmentDataAtoms,
   createEnvironmentConnectionAtoms,
   createRelayEnvironmentDiscoveryAtoms,
 } from "@t3tools/client-runtime";
-import { createEnvironmentReactFacade } from "@t3tools/client-runtime/connection/react";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/unstable/reactivity";
@@ -26,13 +24,6 @@ export const mobileConnectionAtomRuntime = Atom.runtime(mobileConnectionLayer);
 
 export const mobileEnvironmentConnections = createEnvironmentConnectionAtoms(
   mobileConnectionAtomRuntime,
-);
-
-export const mobileEnvironmentData = createEnvironmentDataAtoms(mobileConnectionAtomRuntime);
-
-export const mobileEnvironmentReact = createEnvironmentReactFacade(
-  mobileEnvironmentConnections,
-  mobileEnvironmentData,
 );
 
 export const mobileRelayEnvironmentDiscovery = createRelayEnvironmentDiscoveryAtoms(

@@ -13,9 +13,9 @@ import { useCallback, useMemo } from "react";
 import {
   connectMobilePairingUrl,
   mobileEnvironmentConnections,
-  mobileEnvironmentReact,
   mobileRelayEnvironmentDiscovery,
 } from "./mobileConnectionRuntime";
+import { useMobileEnvironmentConnectionActions } from "./mobileConnectionState";
 
 export interface MobileEnvironmentPresentation extends EnvironmentPresentation {
   readonly environmentId: EnvironmentId;
@@ -58,7 +58,7 @@ export function useMobileEnvironmentActions() {
   const connectPairingUrl = useAtomSet(connectMobilePairingUrl, {
     mode: "promise",
   });
-  const { register, remove, retryNow } = mobileEnvironmentReact.useConnectionActions();
+  const { register, remove, retryNow } = useMobileEnvironmentConnectionActions();
   const refreshRelayEnvironments = useAtomSet(mobileRelayEnvironmentDiscovery.refresh, {
     mode: "promise",
   });

@@ -32,7 +32,7 @@ import {
   WebStormIcon,
 } from "../JetBrainsIcons";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
-import { useWebActions } from "~/connection/useWebEnvironmentData";
+import { useWebShellActions } from "~/connection/webShellEnvironment";
 
 const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
   const baseOptions: ReadonlyArray<{ label: string; Icon: Icon; value: EditorId }> = [
@@ -161,7 +161,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
 }) {
-  const actions = useWebActions();
+  const shellActions = useWebShellActions();
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
   const options = useMemo(
     () => resolveOptions(navigator.platform, availableEditors),
@@ -174,7 +174,7 @@ export const OpenInPicker = memo(function OpenInPicker({
       if (!openInCwd) return;
       const editor = editorId ?? preferredEditor;
       if (!editor) return;
-      void actions.shell.openInEditor({
+      void shellActions.openInEditor({
         environmentId,
         input: {
           cwd: openInCwd,
@@ -183,7 +183,7 @@ export const OpenInPicker = memo(function OpenInPicker({
       });
       setPreferredEditor(editor);
     },
-    [actions.shell, environmentId, openInCwd, preferredEditor, setPreferredEditor],
+    [environmentId, openInCwd, preferredEditor, setPreferredEditor, shellActions],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -198,7 +198,7 @@ export const OpenInPicker = memo(function OpenInPicker({
       if (!preferredEditor) return;
 
       e.preventDefault();
-      void actions.shell.openInEditor({
+      void shellActions.openInEditor({
         environmentId,
         input: {
           cwd: openInCwd,
@@ -208,7 +208,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [actions.shell, environmentId, keybindings, openInCwd, preferredEditor]);
+  }, [environmentId, keybindings, openInCwd, preferredEditor, shellActions]);
 
   return (
     <Group aria-label="Subscription actions">
