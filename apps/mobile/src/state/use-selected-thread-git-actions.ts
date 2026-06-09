@@ -13,7 +13,9 @@ import {
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
 
-import { useMobileActions } from "../connection/useMobileEnvironmentData";
+import { useMobileGitActions } from "../connection/mobileGitEnvironment";
+import { useMobileThreadActions } from "../connection/mobileThreadEnvironment";
+import { useMobileVcsActions } from "../connection/mobileVcsEnvironment";
 import { uuidv4 } from "../lib/uuid";
 import { setPendingConnectionError } from "./use-remote-environment-registry";
 import {
@@ -27,7 +29,9 @@ import { useThreadSelection } from "./use-thread-selection";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
 
 export function useSelectedThreadGitActions() {
-  const actions = useMobileActions();
+  const gitActions = useMobileGitActions();
+  const threadActions = useMobileThreadActions();
+  const vcsActions = useMobileVcsActions();
   const { selectedThread, selectedThreadProject } = useThreadSelection();
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
 
@@ -49,7 +53,7 @@ export function useSelectedThreadGitActions() {
         readonly worktreePath?: string | null;
       },
     ) => {
-      await actions.threads.updateMetadata({
+      await threadActions.updateMetadata({
         environmentId: thread.environmentId,
         input: {
           threadId: thread.id,
@@ -58,7 +62,7 @@ export function useSelectedThreadGitActions() {
         },
       });
     },
-    [actions.threads],
+    [threadActions],
   );
 
   const refreshSelectedThreadGitStatus = useCallback(
@@ -80,7 +84,7 @@ export function useSelectedThreadGitActions() {
         });
       }
       try {
-        const result = await actions.vcs.refreshStatus({
+        const result = await vcsActions.refreshStatus({
           environmentId: selectedThread.environmentId,
           input: { cwd },
         });
@@ -98,7 +102,7 @@ export function useSelectedThreadGitActions() {
         return null;
       }
     },
-    [actions.vcs, selectedThread, selectedThreadCwd, selectedThreadProject],
+    [selectedThread, selectedThreadCwd, selectedThreadProject, vcsActions],
   );
 
   useEffect(() => {
@@ -178,7 +182,7 @@ export function useSelectedThreadGitActions() {
         "switch_ref",
         "Switching branch",
         async ({ thread, cwd }) => {
-          const result = await actions.vcs.switchRef({
+          const result = await vcsActions.switchRef({
             environmentId: thread.environmentId,
             input: { cwd, refName: branch },
           });
@@ -194,10 +198,10 @@ export function useSelectedThreadGitActions() {
       );
     },
     [
-      actions.vcs,
       runSelectedThreadGitMutation,
       selectedThreadWorktreePath,
       syncSelectedThreadBranchState,
+      vcsActions,
     ],
   );
 
@@ -207,7 +211,7 @@ export function useSelectedThreadGitActions() {
         "create_ref",
         "Creating branch",
         async ({ thread, cwd }) => {
-          const result = await actions.vcs.createRef({
+          const result = await vcsActions.createRef({
             environmentId: thread.environmentId,
             input: { cwd, refName: branch, switchRef: true },
           });
@@ -223,10 +227,10 @@ export function useSelectedThreadGitActions() {
       );
     },
     [
-      actions.vcs,
       runSelectedThreadGitMutation,
       selectedThreadWorktreePath,
       syncSelectedThreadBranchState,
+      vcsActions,
     ],
   );
 
@@ -236,7 +240,7 @@ export function useSelectedThreadGitActions() {
         "create_worktree",
         "Creating worktree",
         async ({ thread, project }) => {
-          const result = await actions.vcs.createWorktree({
+          const result = await vcsActions.createWorktree({
             environmentId: thread.environmentId,
             input: {
               cwd: project.workspaceRoot,
@@ -256,7 +260,7 @@ export function useSelectedThreadGitActions() {
         },
       );
     },
-    [actions.vcs, runSelectedThreadGitMutation, syncSelectedThreadBranchState],
+    [runSelectedThreadGitMutation, syncSelectedThreadBranchState, vcsActions],
   );
 
   const onPullSelectedThreadBranch = useCallback(async () => {
@@ -264,7 +268,7 @@ export function useSelectedThreadGitActions() {
       "pull",
       "Pulling latest changes",
       async ({ thread, cwd }) => {
-        const result = await actions.vcs.pull({
+        const result = await vcsActions.pull({
           environmentId: thread.environmentId,
           input: { cwd },
         });
@@ -278,7 +282,7 @@ export function useSelectedThreadGitActions() {
         });
       },
     );
-  }, [actions.vcs, refreshSelectedThreadGitStatus, runSelectedThreadGitMutation]);
+  }, [refreshSelectedThreadGitStatus, runSelectedThreadGitMutation, vcsActions]);
 
   const onRunSelectedThreadGitAction = useCallback(
     async (input: GitActionRequestInput): Promise<GitRunStackedActionResult | null> => {
@@ -286,7 +290,7 @@ export function useSelectedThreadGitActions() {
         "run_change_request",
         "Running source control action",
         async ({ thread, cwd }) => {
-          const event = await actions.git.runStackedAction({
+          const event = await gitActions.runStackedAction({
             environmentId: thread.environmentId,
             input: {
               cwd,
@@ -329,7 +333,7 @@ export function useSelectedThreadGitActions() {
       );
     },
     [
-      actions.git,
+      gitActions,
       refreshSelectedThreadGitStatus,
       runSelectedThreadGitMutation,
       selectedThreadWorktreePath,

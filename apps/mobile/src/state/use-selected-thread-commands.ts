@@ -6,7 +6,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 
-import { useMobileActions } from "../connection/useMobileEnvironmentData";
+import { useMobileThreadActions } from "../connection/mobileThreadEnvironment";
 import { useThreadSelection } from "./use-thread-selection";
 
 export function useSelectedThreadCommands(input: {
@@ -15,7 +15,7 @@ export function useSelectedThreadCommands(input: {
     readonly cwd?: string | null;
   }) => Promise<unknown>;
 }) {
-  const actions = useMobileActions();
+  const threadActions = useMobileThreadActions();
   const { refreshSelectedThreadGitStatus } = input;
   const { selectedThread } = useThreadSelection();
 
@@ -31,7 +31,7 @@ export function useSelectedThreadCommands(input: {
         return;
       }
 
-      await actions.threads.updateMetadata({
+      await threadActions.updateMetadata({
         environmentId: selectedThread.environmentId,
         input: {
           threadId: selectedThread.id,
@@ -39,7 +39,7 @@ export function useSelectedThreadCommands(input: {
         },
       });
     },
-    [actions.threads, selectedThread],
+    [threadActions, selectedThread],
   );
 
   const onUpdateThreadRuntimeMode = useCallback(
@@ -48,7 +48,7 @@ export function useSelectedThreadCommands(input: {
         return;
       }
 
-      await actions.threads.setRuntimeMode({
+      await threadActions.setRuntimeMode({
         environmentId: selectedThread.environmentId,
         input: {
           threadId: selectedThread.id,
@@ -56,7 +56,7 @@ export function useSelectedThreadCommands(input: {
         },
       });
     },
-    [actions.threads, selectedThread],
+    [threadActions, selectedThread],
   );
 
   const onUpdateThreadInteractionMode = useCallback(
@@ -65,7 +65,7 @@ export function useSelectedThreadCommands(input: {
         return;
       }
 
-      await actions.threads.setInteractionMode({
+      await threadActions.setInteractionMode({
         environmentId: selectedThread.environmentId,
         input: {
           threadId: selectedThread.id,
@@ -73,7 +73,7 @@ export function useSelectedThreadCommands(input: {
         },
       });
     },
-    [actions.threads, selectedThread],
+    [threadActions, selectedThread],
   );
 
   const onStopThread = useCallback(async () => {
@@ -88,7 +88,7 @@ export function useSelectedThreadCommands(input: {
       return;
     }
 
-    await actions.threads.interruptTurn({
+    await threadActions.interruptTurn({
       environmentId: selectedThread.environmentId,
       input: {
         threadId: selectedThread.id,
@@ -97,7 +97,7 @@ export function useSelectedThreadCommands(input: {
           : {}),
       },
     });
-  }, [actions.threads, selectedThread]);
+  }, [threadActions, selectedThread]);
 
   const onRenameThread = useCallback(
     async (title: string) => {
@@ -110,7 +110,7 @@ export function useSelectedThreadCommands(input: {
         return;
       }
 
-      await actions.threads.updateMetadata({
+      await threadActions.updateMetadata({
         environmentId: selectedThread.environmentId,
         input: {
           threadId: selectedThread.id,
@@ -118,7 +118,7 @@ export function useSelectedThreadCommands(input: {
         },
       });
     },
-    [actions.threads, selectedThread],
+    [threadActions, selectedThread],
   );
 
   return {

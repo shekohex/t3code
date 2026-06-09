@@ -1,5 +1,6 @@
 import {
   CommandId,
+  ORCHESTRATION_WS_METHODS,
   ProjectId,
   ThreadId,
   type ClientOrchestrationCommand,
@@ -9,8 +10,8 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { makeEnvironmentCommands } from "./commands.ts";
-import type { EnvironmentOperationsService } from "./operations.ts";
+import { makeEnvironmentProjectCommands, makeEnvironmentThreadCommands } from "./commands.ts";
+import type { EnvironmentRpcService } from "./runtime.ts";
 
 const TEST_CRYPTO_LAYER = Layer.succeed(
   Crypto.Crypto,
@@ -20,25 +21,35 @@ const TEST_CRYPTO_LAYER = Layer.succeed(
   }),
 );
 
-function makeOperations(dispatched: ClientOrchestrationCommand[]) {
+function makeRpc(dispatched: ClientOrchestrationCommand[]): EnvironmentRpcService {
   return {
-    orchestration: {
-      dispatchCommand: (command: ClientOrchestrationCommand) =>
-        Effect.sync(() => {
-          dispatched.push(command);
-          return { sequence: dispatched.length };
-        }),
-    },
-  } as unknown as EnvironmentOperationsService;
+    config: Effect.never,
+    request: ((tag: string, input: unknown) => {
+      if (tag !== ORCHESTRATION_WS_METHODS.dispatchCommand) {
+        return Effect.die(new Error(`Unexpected RPC method: ${tag}`));
+      }
+      return Effect.sync(() => {
+        const command = input as ClientOrchestrationCommand;
+        dispatched.push(command);
+        return { sequence: dispatched.length };
+      });
+    }) as EnvironmentRpcService["request"],
+    runStream: (() => {
+      throw new Error("Unexpected stream RPC.");
+    }) as EnvironmentRpcService["runStream"],
+    subscribe: (() => {
+      throw new Error("Unexpected subscription RPC.");
+    }) as EnvironmentRpcService["subscribe"],
+  };
 }
 
-describe("EnvironmentCommands", () => {
+describe("environment command services", () => {
   it.effect("adds generated command metadata inside the service", () =>
     Effect.gen(function* () {
       const dispatched: ClientOrchestrationCommand[] = [];
-      const commands = yield* makeEnvironmentCommands(makeOperations(dispatched));
+      const commands = yield* makeEnvironmentProjectCommands(makeRpc(dispatched));
 
-      const result = yield* commands.projects.create({
+      const result = yield* commands.create({
         projectId: ProjectId.make("project-1"),
         title: "Project",
         workspaceRoot: "/workspace/project",
@@ -62,9 +73,9 @@ describe("EnvironmentCommands", () => {
   it.effect("preserves caller metadata for idempotent queued commands", () =>
     Effect.gen(function* () {
       const dispatched: ClientOrchestrationCommand[] = [];
-      const commands = yield* makeEnvironmentCommands(makeOperations(dispatched));
+      const commands = yield* makeEnvironmentThreadCommands(makeRpc(dispatched));
 
-      yield* commands.threads.stopSession({
+      yield* commands.stopSession({
         commandId: CommandId.make("queued-command"),
         threadId: ThreadId.make("thread-1"),
         createdAt: "2026-06-06T00:01:00.000Z",
@@ -84,9 +95,9 @@ describe("EnvironmentCommands", () => {
   it.effect("does not add timestamps to commands without createdAt", () =>
     Effect.gen(function* () {
       const dispatched: ClientOrchestrationCommand[] = [];
-      const commands = yield* makeEnvironmentCommands(makeOperations(dispatched));
+      const commands = yield* makeEnvironmentThreadCommands(makeRpc(dispatched));
 
-      yield* commands.threads.archive({
+      yield* commands.archive({
         commandId: CommandId.make("archive-command"),
         threadId: ThreadId.make("thread-1"),
       });

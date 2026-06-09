@@ -4,7 +4,7 @@ import { memo, useCallback, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { useMobileActions } from "../../connection/useMobileEnvironmentData";
+import { useMobileTerminalActions } from "../../connection/mobileTerminalEnvironment";
 import { useAttachedTerminalSession } from "../../state/use-terminal-session";
 import { TerminalSurface } from "./NativeTerminalSurface";
 import { hasNativeTerminalSurface } from "./nativeTerminalModule";
@@ -24,7 +24,7 @@ const DEFAULT_TERMINAL_ROWS = 24;
 export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
   props: ThreadTerminalPanelProps,
 ) {
-  const actions = useMobileActions();
+  const terminalActions = useMobileTerminalActions();
   const nativeTerminalAvailable = hasNativeTerminalSurface();
   const terminalId = DEFAULT_TERMINAL_ID;
   const [lastGridSize, setLastGridSize] = useState({
@@ -67,7 +67,7 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
         return;
       }
 
-      void actions.terminal.write({
+      void terminalActions.write({
         environmentId: props.environmentId,
         input: {
           threadId: props.threadId,
@@ -76,7 +76,7 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
         },
       });
     },
-    [actions.terminal, isRunning, props.environmentId, props.threadId, terminalId],
+    [terminalActions, isRunning, props.environmentId, props.threadId, terminalId],
   );
 
   const handleResize = useCallback(
@@ -90,7 +90,7 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
         return;
       }
 
-      void actions.terminal.resize({
+      void terminalActions.resize({
         environmentId: props.environmentId,
         input: {
           threadId: props.threadId,
@@ -101,7 +101,7 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
       });
     },
     [
-      actions.terminal,
+      terminalActions,
       isRunning,
       lastGridSize.cols,
       lastGridSize.rows,

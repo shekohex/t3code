@@ -44,7 +44,7 @@ import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { WebConnectionProjections } from "../connection/WebEnvironmentProjection";
-import { useWebActions } from "../connection/useWebEnvironmentData";
+import { useWebShellActions } from "../connection/webShellEnvironment";
 import { useWebEnvironments, useWebPrimaryEnvironment } from "../connection/useWebEnvironments";
 
 export const Route = createRootRouteWithContext<{
@@ -238,7 +238,7 @@ function EventRouter() {
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
   const primaryEnvironment = useWebPrimaryEnvironment();
-  const actions = useWebActions();
+  const shellActions = useWebShellActions();
   const readPathname = useEffectEvent(() => pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
   const seenServerConfigUpdateIdRef = useRef(getServerConfigUpdatedNotification()?.id ?? 0);
@@ -332,7 +332,7 @@ function EventRouter() {
               if (!editor) {
                 return;
               }
-              void actions.shell
+              void shellActions
                 .openInEditor({
                   environmentId: primaryEnvironment.environmentId,
                   input: {

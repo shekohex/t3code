@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
@@ -56,7 +57,8 @@ import {
 } from "./persistence.ts";
 import { EnvironmentRegistry, environmentRegistryLayer } from "./registry.ts";
 import { RpcSessionFactory, type RpcSession } from "./rpcSession.ts";
-import { environmentRuntimeFactoryLayer } from "./runtime.ts";
+import { EnvironmentShell, environmentServicesFactoryLayer } from "./runtime.ts";
+import { EnvironmentSupervisor } from "./supervisor.ts";
 import { ConnectionWakeups } from "./wakeups.ts";
 
 const TARGET = new PrimaryConnectionTarget({
@@ -385,7 +387,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       ),
     ),
   );
-  const runtimeFactoryLayer = environmentRuntimeFactoryLayer.pipe(
+  const servicesFactoryLayer = environmentServicesFactoryLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
         cacheLayer,
@@ -408,7 +410,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         Layer.succeed(Connectivity, connectivity),
         cacheLayer,
         Layer.succeed(EnvironmentOwnedDataCleanup, ownedDataCleanup),
-        runtimeFactoryLayer,
+        servicesFactoryLayer,
       ),
     ),
   );
@@ -451,15 +453,25 @@ function awaitShellStatus(
   status: "cached" | "synchronizing" | "live",
 ) {
   return Effect.gen(function* () {
-    const current = yield* registry.shellState(environmentId);
+    const current = yield* registry.run(
+      environmentId,
+      EnvironmentShell.pipe(Effect.flatMap((shell) => SubscriptionRef.get(shell.state))),
+    );
     if (current.status === status) {
       return current;
     }
-    return yield* registry.shellStateChanges(environmentId).pipe(
-      Stream.filter((state) => state.status === status),
-      Stream.runHead,
-      Effect.map(Option.getOrThrow),
-    );
+    return yield* registry
+      .runStream(
+        environmentId,
+        Stream.unwrap(
+          EnvironmentShell.pipe(Effect.map((shell) => SubscriptionRef.changes(shell.state))),
+        ),
+      )
+      .pipe(
+        Stream.filter((state) => state.status === status),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
   });
 }
 
@@ -543,7 +555,26 @@ describe("EnvironmentRegistry", () => {
         );
 
         const generation = yield* registry
-          .rpcGenerationChanges(TARGET.environmentId)
+          .runStream(
+            TARGET.environmentId,
+            Stream.unwrap(
+              EnvironmentSupervisor.pipe(
+                Effect.map((supervisor) =>
+                  Stream.concat(
+                    Stream.fromEffect(SubscriptionRef.get(supervisor.state)),
+                    SubscriptionRef.changes(supervisor.state),
+                  ).pipe(
+                    Stream.filterMap((state) =>
+                      state.phase === "connected"
+                        ? Result.succeed(state.generation)
+                        : Result.failVoid,
+                    ),
+                    Stream.changes,
+                  ),
+                ),
+              ),
+            ),
+          )
           .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
 
         expect(generation).toBe(1);

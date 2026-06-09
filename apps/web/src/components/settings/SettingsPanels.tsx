@@ -46,7 +46,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
-import { useWebActions } from "../../connection/useWebEnvironmentData";
+import { useWebServerActions } from "../../connection/webServerEnvironment";
 import { useWebPrimaryEnvironment } from "../../connection/useWebEnvironments";
 import { useShallow } from "zustand/react/shallow";
 import { selectProjectsAcrossEnvironments, useStore } from "../../store";
@@ -923,7 +923,7 @@ export function ProviderSettingsPanel() {
   const { updateSettings } = useUpdateSettings();
   const serverProviders = useServerProviders();
   const primaryEnvironment = useWebPrimaryEnvironment();
-  const actions = useWebActions();
+  const serverActions = useWebServerActions();
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
   const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
@@ -967,7 +967,7 @@ export function ProviderSettingsPanel() {
       setIsRefreshingProviders(false);
       return;
     }
-    void actions.server
+    void serverActions
       .refreshProviders({
         environmentId: primaryEnvironment.environmentId,
         input: {},
@@ -979,7 +979,7 @@ export function ProviderSettingsPanel() {
         refreshingRef.current = false;
         setIsRefreshingProviders(false);
       });
-  }, [actions.server, primaryEnvironment]);
+  }, [primaryEnvironment, serverActions]);
 
   const runProviderUpdate = useCallback(
     async (candidate: ProviderUpdateCandidate) => {
@@ -999,7 +999,7 @@ export function ProviderSettingsPanel() {
       }
 
       try {
-        await actions.server.updateProvider({
+        await serverActions.updateProvider({
           environmentId: primaryEnvironment.environmentId,
           input: {
             provider: candidate.driver,
@@ -1028,7 +1028,7 @@ export function ProviderSettingsPanel() {
         });
       }
     },
-    [actions.server, primaryEnvironment],
+    [primaryEnvironment, serverActions],
   );
 
   interface InstanceRow {

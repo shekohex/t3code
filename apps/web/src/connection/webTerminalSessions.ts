@@ -8,11 +8,8 @@ import {
 import { ThreadId, type EnvironmentId, type TerminalAttachInput } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
 
-import {
-  useWebActions,
-  useWebTerminalAttach,
-  useWebTerminalMetadata,
-} from "./useWebEnvironmentData";
+import { useWebTerminalAttach, useWebTerminalMetadata } from "./useWebEnvironmentData";
+import { useWebTerminalActions } from "./webTerminalEnvironment";
 
 export function useWebAttachedTerminalSession(input: {
   readonly environmentId: EnvironmentId | null;
@@ -83,13 +80,13 @@ export function useWebTerminalController(input: {
   readonly environmentId: EnvironmentId;
   readonly terminal: TerminalAttachInput;
 }) {
-  const actions = useWebActions();
+  const terminalActions = useWebTerminalActions();
   const session = useWebAttachedTerminalSession(input);
   const { environmentId, terminal } = input;
 
   const write = useCallback(
     (data: string) =>
-      actions.terminal.write({
+      terminalActions.write({
         environmentId,
         input: {
           threadId: terminal.threadId,
@@ -97,11 +94,11 @@ export function useWebTerminalController(input: {
           data,
         },
       }),
-    [actions.terminal, environmentId, terminal.terminalId, terminal.threadId],
+    [environmentId, terminal.terminalId, terminal.threadId, terminalActions],
   );
   const resize = useCallback(
     (cols: number, rows: number) =>
-      actions.terminal.resize({
+      terminalActions.resize({
         environmentId,
         input: {
           threadId: terminal.threadId,
@@ -110,18 +107,18 @@ export function useWebTerminalController(input: {
           rows,
         },
       }),
-    [actions.terminal, environmentId, terminal.terminalId, terminal.threadId],
+    [environmentId, terminal.terminalId, terminal.threadId, terminalActions],
   );
   const clear = useCallback(
     () =>
-      actions.terminal.clear({
+      terminalActions.clear({
         environmentId,
         input: {
           threadId: terminal.threadId,
           terminalId: terminal.terminalId,
         },
       }),
-    [actions.terminal, environmentId, terminal.terminalId, terminal.threadId],
+    [environmentId, terminal.terminalId, terminal.threadId, terminalActions],
   );
   const restart = useCallback(() => {
     if (terminal.cwd === undefined || terminal.cols === undefined || terminal.rows === undefined) {
@@ -129,7 +126,7 @@ export function useWebTerminalController(input: {
         new Error("Terminal restart requires the working directory and dimensions."),
       );
     }
-    return actions.terminal.restart({
+    return terminalActions.restart({
       environmentId,
       input: {
         threadId: terminal.threadId,
@@ -141,10 +138,10 @@ export function useWebTerminalController(input: {
         ...(terminal.env !== undefined ? { env: terminal.env } : {}),
       },
     });
-  }, [actions.terminal, environmentId, terminal]);
+  }, [environmentId, terminal, terminalActions]);
   const close = useCallback(
     (options?: { readonly deleteHistory?: boolean }) =>
-      actions.terminal.close({
+      terminalActions.close({
         environmentId,
         input: {
           threadId: terminal.threadId,
@@ -152,7 +149,7 @@ export function useWebTerminalController(input: {
           ...(options?.deleteHistory ? { deleteHistory: true } : {}),
         },
       }),
-    [actions.terminal, environmentId, terminal.terminalId, terminal.threadId],
+    [environmentId, terminal.terminalId, terminal.threadId, terminalActions],
   );
 
   return {

@@ -25,7 +25,7 @@ import {
   stripDisplayedPlanMarkdown,
 } from "../proposedPlan";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
-import { useWebActions } from "~/connection/useWebEnvironmentData";
+import { useWebProjectActions } from "~/connection/webProjectEnvironment";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
@@ -78,7 +78,7 @@ const PlanSidebar = memo(function PlanSidebar({
 }: PlanSidebarProps) {
   const [proposedPlanExpanded, setProposedPlanExpanded] = useState(false);
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
-  const actions = useWebActions();
+  const projectActions = useWebProjectActions();
   const { copyToClipboard, isCopied } = useCopyToClipboard();
 
   const planMarkdown = activeProposedPlan?.planMarkdown ?? null;
@@ -100,7 +100,7 @@ const PlanSidebar = memo(function PlanSidebar({
     if (!workspaceRoot || !planMarkdown) return;
     const filename = buildProposedPlanMarkdownFilename(planMarkdown);
     setIsSavingToWorkspace(true);
-    void actions.projects
+    void projectActions
       .writeFile({
         environmentId,
         input: {
@@ -129,7 +129,7 @@ const PlanSidebar = memo(function PlanSidebar({
         () => setIsSavingToWorkspace(false),
         () => setIsSavingToWorkspace(false),
       );
-  }, [actions.projects, environmentId, planMarkdown, workspaceRoot]);
+  }, [environmentId, planMarkdown, projectActions, workspaceRoot]);
 
   return (
     <div

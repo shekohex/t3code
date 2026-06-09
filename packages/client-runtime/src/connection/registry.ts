@@ -1,4 +1,4 @@
-import type { EnvironmentId, ServerConfig, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -6,7 +6,6 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -23,7 +22,7 @@ import {
   connectionRegistrationCatalogEntry,
 } from "./catalog.ts";
 import { Connectivity } from "./connectivity.ts";
-import type { NetworkStatus, PreparedConnection, SupervisorConnectionState } from "./model.ts";
+import type { NetworkStatus, SupervisorConnectionState } from "./model.ts";
 import type { ConnectionAttemptError } from "./model.ts";
 import {
   type ConnectionPersistenceError,
@@ -32,21 +31,8 @@ import {
   EnvironmentCacheStore,
   EnvironmentOwnedDataCleanup,
 } from "./persistence.ts";
-import {
-  type EnvironmentRpcFailure,
-  type EnvironmentRpcInput,
-  type EnvironmentRpcStreamFailure,
-  type EnvironmentRpcStreamValue,
-  type EnvironmentStreamCommandRpcTag,
-  type EnvironmentSubscriptionRpcTag,
-  type EnvironmentRpcUnavailableError,
-  type EnvironmentUnaryRpcTag,
-  EnvironmentRuntimeFactory,
-  type EnvironmentRuntimeService,
-  type EnvironmentRpcSuccess,
-  type EnvironmentShellState,
-} from "./runtime.ts";
-import type { EnvironmentThreadState } from "./threads.ts";
+import { type EnvironmentServices, EnvironmentServicesFactory } from "./runtime.ts";
+import { EnvironmentSupervisor } from "./supervisor.ts";
 
 const isSshConnectionProfile = Schema.is(SshConnectionProfile);
 
@@ -96,55 +82,14 @@ export interface EnvironmentRegistryService {
   readonly stateChanges: (
     environmentId: EnvironmentId,
   ) => Stream.Stream<SupervisorConnectionState, EnvironmentNotRegisteredError>;
-  readonly rpcGenerationChanges: (
+  readonly run: <A, E, R extends EnvironmentServices>(
     environmentId: EnvironmentId,
-  ) => Stream.Stream<number, EnvironmentNotRegisteredError>;
-  readonly preparedConnectionChanges: (
-    environmentId: EnvironmentId,
-  ) => Stream.Stream<Option.Option<PreparedConnection>, EnvironmentNotRegisteredError>;
-  readonly shellState: (
-    environmentId: EnvironmentId,
-  ) => Effect.Effect<EnvironmentShellState, EnvironmentNotRegisteredError>;
-  readonly shellStateChanges: (
-    environmentId: EnvironmentId,
-  ) => Stream.Stream<EnvironmentShellState, EnvironmentNotRegisteredError>;
-  readonly configChanges: (
-    environmentId: EnvironmentId,
-  ) => Stream.Stream<Option.Option<ServerConfig>, EnvironmentNotRegisteredError>;
-  readonly threadStateChanges: (
-    environmentId: EnvironmentId,
-    threadId: ThreadId,
-  ) => Stream.Stream<EnvironmentThreadState, EnvironmentNotRegisteredError>;
-  readonly request: <TTag extends EnvironmentUnaryRpcTag>(
-    environmentId: EnvironmentId,
-    tag: TTag,
-    input: EnvironmentRpcInput<TTag>,
-  ) => Effect.Effect<
-    EnvironmentRpcSuccess<TTag>,
-    EnvironmentRpcFailure<TTag> | EnvironmentNotRegisteredError | EnvironmentRpcUnavailableError
-  >;
-  readonly runStream: <TTag extends EnvironmentStreamCommandRpcTag>(
-    environmentId: EnvironmentId,
-    tag: TTag,
-    input: EnvironmentRpcInput<TTag>,
-  ) => Stream.Stream<
-    EnvironmentRpcStreamValue<TTag>,
-    | EnvironmentRpcStreamFailure<TTag>
-    | EnvironmentNotRegisteredError
-    | EnvironmentRpcUnavailableError
-  >;
-  readonly subscribe: <TTag extends EnvironmentSubscriptionRpcTag>(
-    environmentId: EnvironmentId,
-    tag: TTag,
-    input: EnvironmentRpcInput<TTag>,
-  ) => Stream.Stream<
-    EnvironmentRpcStreamValue<TTag>,
-    EnvironmentRpcStreamFailure<TTag> | EnvironmentNotRegisteredError
-  >;
-  readonly withRuntime: <A, E>(
-    environmentId: EnvironmentId,
-    use: (runtime: EnvironmentRuntimeService) => Effect.Effect<A, E>,
+    effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | EnvironmentNotRegisteredError>;
+  readonly runStream: <A, E, R extends EnvironmentServices>(
+    environmentId: EnvironmentId,
+    stream: Stream.Stream<A, E, R>,
+  ) => Stream.Stream<A, E | EnvironmentNotRegisteredError>;
 }
 
 export class EnvironmentRegistry extends Context.Service<
@@ -152,9 +97,9 @@ export class EnvironmentRegistry extends Context.Service<
   EnvironmentRegistryService
 >()("@t3tools/client-runtime/connection/registry/EnvironmentRegistry") {}
 
-interface EnvironmentRuntimeLease {
+interface EnvironmentServiceScope {
   readonly entry: ConnectionCatalogEntry;
-  readonly runtime: EnvironmentRuntimeService;
+  readonly context: Context.Context<EnvironmentServices>;
   readonly scope: Scope.Closeable;
 }
 
@@ -166,7 +111,7 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
   const profiles = yield* ConnectionProfileStore;
   const connectivity = yield* Connectivity;
   const ssh = yield* SshEnvironmentGateway;
-  const runtimeFactory = yield* EnvironmentRuntimeFactory;
+  const servicesFactory = yield* EnvironmentServicesFactory;
   const persistedTargets = yield* storage.list;
   const initialEntries = new Map(
     yield* Effect.forEach(
@@ -187,7 +132,9 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
   const entries =
     yield* SubscriptionRef.make<ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>>(initialEntries);
   const networkStatus = yield* SubscriptionRef.make(yield* connectivity.status);
-  const leases = yield* Ref.make<ReadonlyMap<EnvironmentId, EnvironmentRuntimeLease>>(new Map());
+  const serviceScopes = yield* Ref.make<ReadonlyMap<EnvironmentId, EnvironmentServiceScope>>(
+    new Map(),
+  );
   const platformEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(new Set());
   const leaseLocks = yield* Ref.make<ReadonlyMap<EnvironmentId, Semaphore.Semaphore>>(new Map());
   const leaseLocksGuard = yield* Semaphore.make(1);
@@ -223,62 +170,75 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
     return entry;
   });
 
-  const closeRuntimeLease = Effect.fn("EnvironmentRegistry.closeRuntimeLease")(function* (
+  const closeServiceScope = Effect.fn("EnvironmentRegistry.closeServiceScope")(function* (
     environmentId: EnvironmentId,
   ) {
-    const current = yield* Ref.get(leases);
+    const current = yield* Ref.get(serviceScopes);
     const lease = current.get(environmentId);
     if (lease === undefined) {
       return;
     }
     const next = new Map(current);
     next.delete(environmentId);
-    yield* Ref.set(leases, next);
+    yield* Ref.set(serviceScopes, next);
     yield* Scope.close(lease.scope, Exit.void);
   });
 
-  const createRuntimeLease = Effect.fn("EnvironmentRegistry.createRuntimeLease")(function* (
+  const createServiceScope = Effect.fn("EnvironmentRegistry.createServiceScope")(function* (
     entry: ConnectionCatalogEntry,
   ) {
     const environmentId = entry.target.environmentId;
     const scope = yield* Scope.make();
-    const runtime = yield* runtimeFactory.make(entry).pipe(
+    const context = yield* servicesFactory.make(entry).pipe(
       Scope.provide(scope),
       Effect.onError(() => Scope.close(scope, Exit.void)),
     );
-    yield* Ref.update(leases, (current) => {
+    yield* Ref.update(serviceScopes, (current) => {
       const next = new Map(current);
-      next.set(environmentId, { entry, runtime, scope });
+      next.set(environmentId, { entry, context, scope });
       return next;
     });
-    yield* runtime.supervisor.connect;
-    return runtime;
+    yield* Context.get(context, EnvironmentSupervisor).connect;
+    return context;
   });
 
-  const acquireRuntime = Effect.fn("EnvironmentRegistry.acquireRuntime")(function* (
+  const acquireContext = Effect.fn("EnvironmentRegistry.acquireContext")(function* (
     environmentId: EnvironmentId,
   ) {
     const leaseLock = yield* getLeaseLock(environmentId);
     return yield* leaseLock.withPermits(1)(
       Effect.gen(function* () {
         const entry = yield* getEntry(environmentId);
-        const existing = (yield* Ref.get(leases)).get(environmentId);
+        const existing = (yield* Ref.get(serviceScopes)).get(environmentId);
         if (existing !== undefined) {
           if (Equal.equals(existing.entry, entry)) {
-            return existing.runtime;
+            return existing.context;
           }
-          yield* closeRuntimeLease(environmentId);
+          yield* closeServiceScope(environmentId);
         }
-        return yield* createRuntimeLease(entry);
+        return yield* createServiceScope(entry);
       }),
     );
   });
 
-  const withRuntime: EnvironmentRegistryService["withRuntime"] = Effect.fn(
-    "EnvironmentRegistry.withRuntime",
-  )(function* (environmentId, use) {
-    return yield* use(yield* acquireRuntime(environmentId));
+  const run: EnvironmentRegistryService["run"] = Effect.fn("EnvironmentRegistry.run")(function* <
+    A,
+    E,
+    R extends EnvironmentServices,
+  >(environmentId: EnvironmentId, effect: Effect.Effect<A, E, R>) {
+    const context = yield* acquireContext(environmentId);
+    return yield* Effect.provide(effect, context as Context.Context<R>);
   });
+
+  const runStream: EnvironmentRegistryService["runStream"] = <A, E, R extends EnvironmentServices>(
+    environmentId: EnvironmentId,
+    stream: Stream.Stream<A, E, R>,
+  ) =>
+    Stream.unwrap(
+      acquireContext(environmentId).pipe(
+        Effect.map((context) => Stream.provide(stream, context as Context.Context<R>)),
+      ),
+    );
 
   const start = Effect.gen(function* () {
     if (yield* Ref.getAndSet(started, true)) {
@@ -287,7 +247,7 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
     yield* Effect.forEach(
       persistedTargets,
       (target) =>
-        acquireRuntime(target.environmentId).pipe(
+        acquireContext(target.environmentId).pipe(
           Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
         ),
       {
@@ -306,24 +266,24 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
     yield* leaseLock.withPermits(1)(
       Effect.gen(function* () {
         const previous = (yield* SubscriptionRef.get(entries)).get(target.environmentId);
-        const existingLease = (yield* Ref.get(leases)).get(target.environmentId);
+        const existingScope = (yield* Ref.get(serviceScopes)).get(target.environmentId);
         if (
           options?.retainEquivalentRuntime === true &&
           previous !== undefined &&
           Equal.equals(previous, entry) &&
-          existingLease !== undefined &&
-          Equal.equals(existingLease.entry, entry)
+          existingScope !== undefined &&
+          Equal.equals(existingScope.entry, entry)
         ) {
           return;
         }
 
-        yield* closeRuntimeLease(target.environmentId);
+        yield* closeServiceScope(target.environmentId);
         yield* SubscriptionRef.update(entries, (current) => {
           const next = new Map(current);
           next.set(target.environmentId, entry);
           return next;
         });
-        yield* createRuntimeLease(entry);
+        yield* createServiceScope(entry);
       }),
     );
   });
@@ -364,7 +324,7 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
             ? yield* profiles.get(target.connectionId)
             : Option.none();
 
-        yield* closeRuntimeLease(environmentId);
+        yield* closeServiceScope(environmentId);
 
         if (
           target._tag === "SshConnectionTarget" &&
@@ -423,79 +383,29 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
   );
 
   const retryNow = (environmentId: EnvironmentId) =>
-    withRuntime(environmentId, (runtime) => runtime.supervisor.retryNow).pipe(
-      Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
-    );
+    run(
+      environmentId,
+      EnvironmentSupervisor.pipe(Effect.flatMap((supervisor) => supervisor.retryNow)),
+    ).pipe(Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void));
   const state = (environmentId: EnvironmentId) =>
-    withRuntime(environmentId, (runtime) => SubscriptionRef.get(runtime.supervisor.state));
+    run(
+      environmentId,
+      EnvironmentSupervisor.pipe(
+        Effect.flatMap((supervisor) => SubscriptionRef.get(supervisor.state)),
+      ),
+    );
   const stateChanges = (environmentId: EnvironmentId) =>
-    Stream.unwrap(
-      Effect.gen(function* () {
-        const runtime = yield* acquireRuntime(environmentId);
-        return SubscriptionRef.changes(runtime.supervisor.state);
-      }),
-    );
-  const rpcGenerationChanges = (environmentId: EnvironmentId) =>
-    Stream.unwrap(
-      Effect.gen(function* () {
-        const runtime = yield* acquireRuntime(environmentId);
-        return Stream.concat(
-          Stream.fromEffect(SubscriptionRef.get(runtime.supervisor.state)),
-          SubscriptionRef.changes(runtime.supervisor.state),
-        ).pipe(
-          Stream.filterMap((state) =>
-            state.phase === "connected" ? Result.succeed(state.generation) : Result.failVoid,
-          ),
-          Stream.changes,
-        );
-      }),
-    );
-  const preparedConnectionChanges = (environmentId: EnvironmentId) =>
-    Stream.unwrap(
-      Effect.gen(function* () {
-        const runtime = yield* acquireRuntime(environmentId);
-        return SubscriptionRef.changes(runtime.supervisor.prepared);
-      }),
-    );
-  const shellState = (environmentId: EnvironmentId) =>
-    withRuntime(environmentId, (runtime) => SubscriptionRef.get(runtime.shell.state));
-  const shellStateChanges = (environmentId: EnvironmentId) =>
-    Stream.unwrap(
-      Effect.gen(function* () {
-        const runtime = yield* acquireRuntime(environmentId);
-        return SubscriptionRef.changes(runtime.shell.state);
-      }),
-    );
-  const configChanges = (environmentId: EnvironmentId) =>
-    Stream.unwrap(
-      Effect.gen(function* () {
-        const runtime = yield* acquireRuntime(environmentId);
-        return SubscriptionRef.changes(runtime.config);
-      }),
-    );
-  const threadStateChanges = (environmentId: EnvironmentId, threadId: ThreadId) =>
-    Stream.unwrap(
-      Effect.gen(function* () {
-        const runtime = yield* acquireRuntime(environmentId);
-        return runtime.threads.changes(threadId);
-      }),
-    );
-  const request: EnvironmentRegistryService["request"] = (environmentId, tag, input) =>
-    withRuntime(environmentId, (runtime) => runtime.rpc.request(tag, input));
-  const runStream: EnvironmentRegistryService["runStream"] = (environmentId, tag, input) =>
-    Stream.unwrap(
-      withRuntime(environmentId, (runtime) => Effect.succeed(runtime.rpc.runStream(tag, input))),
-    );
-  const subscribe: EnvironmentRegistryService["subscribe"] = (environmentId, tag, input) =>
-    Stream.unwrap(
-      Effect.gen(function* () {
-        const runtime = yield* acquireRuntime(environmentId);
-        return runtime.rpc.subscribe(tag, input);
-      }),
+    runStream(
+      environmentId,
+      Stream.unwrap(
+        EnvironmentSupervisor.pipe(
+          Effect.map((supervisor) => SubscriptionRef.changes(supervisor.state)),
+        ),
+      ),
     );
 
   yield* Effect.addFinalizer(() =>
-    Ref.get(leases).pipe(
+    Ref.get(serviceScopes).pipe(
       Effect.flatMap((current) =>
         Effect.forEach(current.values(), (lease) => Scope.close(lease.scope, Exit.void), {
           concurrency: "unbounded",
@@ -520,16 +430,8 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
     retryNow,
     state,
     stateChanges,
-    rpcGenerationChanges,
-    preparedConnectionChanges,
-    shellState,
-    shellStateChanges,
-    configChanges,
-    threadStateChanges,
-    request,
+    run,
     runStream,
-    subscribe,
-    withRuntime,
   });
 });
 
