@@ -1,10 +1,11 @@
+import { useAtomSet } from "@effect/atom-react";
 import { DEFAULT_TERMINAL_ID, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { SymbolView } from "expo-symbols";
 import { memo, useCallback, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { useTerminalActions } from "../../state/terminal";
+import { terminalEnvironment } from "../../state/terminal";
 import { useAttachedTerminalSession } from "../../state/use-terminal-session";
 import { TerminalSurface } from "./NativeTerminalSurface";
 import { hasNativeTerminalSurface } from "./nativeTerminalModule";
@@ -24,7 +25,8 @@ const DEFAULT_TERMINAL_ROWS = 24;
 export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
   props: ThreadTerminalPanelProps,
 ) {
-  const terminalActions = useTerminalActions();
+  const writeTerminal = useAtomSet(terminalEnvironment.write, { mode: "promise" });
+  const resizeTerminal = useAtomSet(terminalEnvironment.resize, { mode: "promise" });
   const nativeTerminalAvailable = hasNativeTerminalSurface();
   const terminalId = DEFAULT_TERMINAL_ID;
   const [lastGridSize, setLastGridSize] = useState({
@@ -67,7 +69,7 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
         return;
       }
 
-      void terminalActions.write({
+      void writeTerminal({
         environmentId: props.environmentId,
         input: {
           threadId: props.threadId,
@@ -76,7 +78,7 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
         },
       });
     },
-    [terminalActions, isRunning, props.environmentId, props.threadId, terminalId],
+    [isRunning, props.environmentId, props.threadId, terminalId, writeTerminal],
   );
 
   const handleResize = useCallback(
@@ -90,7 +92,7 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
         return;
       }
 
-      void terminalActions.resize({
+      void resizeTerminal({
         environmentId: props.environmentId,
         input: {
           threadId: props.threadId,
@@ -101,12 +103,12 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
       });
     },
     [
-      terminalActions,
       isRunning,
       lastGridSize.cols,
       lastGridSize.rows,
       props.environmentId,
       props.threadId,
+      resizeTerminal,
       terminalId,
     ],
   );

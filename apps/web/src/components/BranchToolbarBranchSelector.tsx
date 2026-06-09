@@ -1,5 +1,6 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, VcsRef, ThreadId } from "@t3tools/contracts";
+import { useAtomSet } from "@effect/atom-react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronDownIcon, GitBranchIcon, SearchIcon } from "lucide-react";
 import {
@@ -15,10 +16,11 @@ import {
 } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
-import { usePaginatedBranches, useRepositoryStatus } from "../state/queries";
+import { usePaginatedBranches } from "../state/queries";
 import { useProject, useThreadDetail } from "../state/entities";
-import { useThreadActions } from "../state/threads";
-import { useVcsActions } from "../state/vcs";
+import { useEnvironmentQuery } from "../state/query";
+import { threadEnvironment } from "../state/threads";
+import { vcsEnvironment } from "../state/vcs";
 import { cn } from "../lib/utils";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
@@ -87,8 +89,12 @@ export function BranchToolbarBranchSelector({
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
-  const threadActions = useThreadActions();
-  const vcsActions = useVcsActions();
+  const stopThreadSession = useAtomSet(threadEnvironment.stopSession, { mode: "promise" });
+  const updateThreadMetadata = useAtomSet(threadEnvironment.updateMetadata, {
+    mode: "promise",
+  });
+  const switchRef = useAtomSet(vcsEnvironment.switchRef, { mode: "promise" });
+  const createRefMutation = useAtomSet(vcsEnvironment.createRef, { mode: "promise" });
   // ---------------------------------------------------------------------------
   // Thread / project state (pushed down from parent to colocate with mutation)
   // ---------------------------------------------------------------------------
@@ -134,15 +140,13 @@ export function BranchToolbarBranchSelector({
     (branch: string | null, worktreePath: string | null) => {
       if (!activeThreadId || !activeProject) return;
       if (serverSession && worktreePath !== activeWorktreePath) {
-        void threadActions
-          .stopSession({
-            environmentId,
-            input: { threadId: activeThreadId },
-          })
-          .catch(() => undefined);
+        void stopThreadSession({
+          environmentId,
+          input: { threadId: activeThreadId },
+        }).catch(() => undefined);
       }
       if (hasServerThread) {
-        void threadActions.updateMetadata({
+        void updateThreadMetadata({
           environmentId,
           input: {
             threadId: activeThreadId,
@@ -179,7 +183,8 @@ export function BranchToolbarBranchSelector({
       threadRef,
       environmentId,
       effectiveEnvMode,
-      threadActions,
+      stopThreadSession,
+      updateThreadMetadata,
     ],
   );
 
@@ -190,7 +195,14 @@ export function BranchToolbarBranchSelector({
   const [branchQuery, setBranchQuery] = useState("");
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
-  const branchStatusQuery = useRepositoryStatus({ environmentId, cwd: branchCwd });
+  const branchStatusQuery = useEnvironmentQuery(
+    branchCwd === null
+      ? null
+      : vcsEnvironment.status({
+          environmentId,
+          input: { cwd: branchCwd },
+        }),
+  );
   const trimmedBranchQuery = branchQuery.trim();
   const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
   const branchRefTarget = useMemo(
@@ -324,7 +336,7 @@ export function BranchToolbarBranchSelector({
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(selectedBranchName);
       try {
-        const checkoutResult = await vcsActions.switchRef({
+        const checkoutResult = await switchRef({
           environmentId,
           input: {
             cwd: selectionTarget.checkoutCwd,
@@ -360,7 +372,7 @@ export function BranchToolbarBranchSelector({
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(name);
       try {
-        const createBranchResult = await vcsActions.createRef({
+        const createBranchResult = await createRefMutation({
           environmentId,
           input: {
             cwd: branchCwd,

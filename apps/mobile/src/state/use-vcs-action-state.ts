@@ -13,8 +13,8 @@ import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { useRunStackedGitActionState } from "./git";
 import { appAtomRegistry } from "./atom-registry";
+import { gitEnvironment } from "./git";
 
 function setVcsActionState(target: VcsActionTarget, state: VcsActionState): void {
   const targetKey = getVcsActionTargetKey(target);
@@ -58,7 +58,7 @@ export function failVcsAction(
 
 export function useVcsActionState(target: VcsActionTarget): VcsActionState {
   const targetKey = getVcsActionTargetKey(target);
-  const runStackedActionState = useRunStackedGitActionState();
+  const runStackedActionState = useAtomValue(gitEnvironment.runStackedAction);
   const state = useAtomValue(
     targetKey !== null ? vcsActionStateAtom(targetKey) : EMPTY_VCS_ACTION_ATOM,
   );

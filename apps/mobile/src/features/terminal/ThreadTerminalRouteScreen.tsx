@@ -1,3 +1,4 @@
+import { useAtomSet } from "@effect/atom-react";
 import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { SymbolView } from "expo-symbols";
@@ -21,7 +22,7 @@ import { GlassSurface } from "../../components/GlassSurface";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { useEnvironmentConnectionActions } from "../../state/environments";
 import { useEnvironmentPresentation } from "../../state/presentation";
-import { useTerminalActions } from "../../state/terminal";
+import { terminalEnvironment } from "../../state/terminal";
 import { useWorkspaceState } from "../../state/workspace";
 import { buildThreadTerminalNavigation } from "../../lib/routes";
 import {
@@ -153,7 +154,9 @@ function pickRunningTerminalSessionForBootstrap(
 
 export function ThreadTerminalRouteScreen() {
   const router = useRouter();
-  const terminalActions = useTerminalActions();
+  const writeTerminal = useAtomSet(terminalEnvironment.write, { mode: "promise" });
+  const resizeTerminal = useAtomSet(terminalEnvironment.resize, { mode: "promise" });
+  const clearTerminal = useAtomSet(terminalEnvironment.clear, { mode: "promise" });
   const environmentActions = useEnvironmentConnectionActions();
   const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
   const { state: workspaceState } = useWorkspaceState();
@@ -556,7 +559,7 @@ export function ThreadTerminalRouteScreen() {
       return;
     }
     sentInitialInputKeyRef.current = launchTargetKey;
-    void terminalActions.write({
+    void writeTerminal({
       environmentId: selectedThread.environmentId,
       input: {
         threadId: selectedThread.id,
@@ -565,12 +568,12 @@ export function ThreadTerminalRouteScreen() {
       },
     });
   }, [
-    terminalActions,
     launchTargetKey,
     pendingLaunch?.initialInput,
     selectedThread,
     terminal.version,
     terminalId,
+    writeTerminal,
   ]);
 
   useEffect(() => {
@@ -675,7 +678,7 @@ export function ThreadTerminalRouteScreen() {
         return;
       }
 
-      void terminalActions.write({
+      void writeTerminal({
         environmentId: selectedThread.environmentId,
         input: {
           threadId: selectedThread.id,
@@ -684,7 +687,7 @@ export function ThreadTerminalRouteScreen() {
         },
       });
     },
-    [terminalActions, isRunning, selectedThread, terminalId],
+    [isRunning, selectedThread, terminalId, writeTerminal],
   );
 
   const handleInput = useCallback(
@@ -736,7 +739,7 @@ export function ThreadTerminalRouteScreen() {
         return;
       }
 
-      void terminalActions.resize({
+      void resizeTerminal({
         environmentId: selectedThread.environmentId,
         input: {
           threadId: selectedThread.id,
@@ -747,7 +750,6 @@ export function ThreadTerminalRouteScreen() {
       });
     },
     [
-      terminalActions,
       isRunning,
       lastGridSize.cols,
       lastGridSize.rows,
@@ -755,6 +757,7 @@ export function ThreadTerminalRouteScreen() {
       readyBufferReplayKey,
       routeEnvironmentId,
       routeThreadId,
+      resizeTerminal,
       scheduleBufferReplayReady,
       selectedThread,
       terminalId,
@@ -809,14 +812,14 @@ export function ThreadTerminalRouteScreen() {
     }
 
     setPendingModifierState({ terminalId, value: null });
-    void terminalActions.clear({
+    void clearTerminal({
       environmentId: selectedThread.environmentId,
       input: {
         threadId: selectedThread.id,
         terminalId,
       },
     });
-  }, [terminalActions, selectedThread, terminalId]);
+  }, [clearTerminal, selectedThread, terminalId]);
 
   const handleToolbarActionPress = useCallback(
     (action: TerminalToolbarAction) => {

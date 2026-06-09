@@ -7,6 +7,7 @@ import {
   InfoIcon,
   RefreshCwIcon,
 } from "lucide-react";
+import { useAtomSet } from "@effect/atom-react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type {
   ServerProcessDiagnosticsEntry,
@@ -20,13 +21,9 @@ import { cn } from "../../lib/utils";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { formatRelativeTime } from "../../timestampFormat";
 import { useServerAvailableEditors, useServerObservability } from "../../rpc/serverState";
-import {
-  useProcessDiagnostics,
-  useProcessResourceHistory,
-  useTraceDiagnostics,
-} from "../../state/server";
-import { useServerActions } from "../../state/server";
-import { useShellActions } from "../../state/shell";
+import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
+import { shellEnvironment } from "../../state/shell";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
@@ -809,34 +806,42 @@ export function DiagnosticsSettingsPanel() {
   const availableEditors = useServerAvailableEditors();
   const primaryEnvironment = usePrimaryEnvironment();
   const environmentId = primaryEnvironment?.environmentId ?? null;
-  const serverActions = useServerActions();
-  const shellActions = useShellActions();
+  const signalServerProcess = useAtomSet(serverEnvironment.signalProcess, { mode: "promise" });
+  const openInEditor = useAtomSet(shellEnvironment.openInEditor, { mode: "promise" });
   const [resourceWindowMs, setResourceWindowMs] = useState(15 * 60_000);
   const selectedResourceWindow =
     RESOURCE_HISTORY_WINDOWS.find((option) => option.windowMs === resourceWindowMs) ??
     RESOURCE_HISTORY_WINDOWS[1];
-  const { data, error, isPending, refresh } = useTraceDiagnostics(environmentId);
+  const { data, error, isPending, refresh } = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : serverEnvironment.traceDiagnostics({ environmentId, input: {} }),
+  );
   const {
     data: processData,
     error: processError,
     isPending: isProcessPending,
     refresh: refreshProcesses,
-  } = useProcessDiagnostics(environmentId);
+  } = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : serverEnvironment.processDiagnostics({ environmentId, input: {} }),
+  );
   const {
     data: resourceData,
     error: resourceError,
     isPending: isResourcePending,
     refresh: refreshResources,
-  } = useProcessResourceHistory(
+  } = useEnvironmentQuery(
     environmentId === null
       ? null
-      : {
+      : serverEnvironment.processResourceHistory({
           environmentId,
           input: {
             windowMs: selectedResourceWindow.windowMs,
             bucketMs: selectedResourceWindow.bucketMs,
           },
-        },
+        }),
   );
   const [isOpeningLogsDirectory, setIsOpeningLogsDirectory] = useState(false);
   const [openLogsDirectoryError, setOpenLogsDirectoryError] = useState<string | null>(null);
@@ -858,14 +863,13 @@ export function DiagnosticsSettingsPanel() {
 
     setIsOpeningLogsDirectory(true);
     setOpenLogsDirectoryError(null);
-    void shellActions
-      .openInEditor({
-        environmentId,
-        input: {
-          cwd: logsDirectoryPath,
-          editor,
-        },
-      })
+    void openInEditor({
+      environmentId,
+      input: {
+        cwd: logsDirectoryPath,
+        editor,
+      },
+    })
       .catch((error: unknown) => {
         setOpenLogsDirectoryError(
           error instanceof Error ? error.message : "Unable to open logs folder.",
@@ -874,7 +878,7 @@ export function DiagnosticsSettingsPanel() {
       .finally(() => {
         setIsOpeningLogsDirectory(false);
       });
-  }, [availableEditors, environmentId, observability?.logsDirectoryPath, shellActions]);
+  }, [availableEditors, environmentId, observability?.logsDirectoryPath, openInEditor]);
 
   const isInitialLoading = isPending && data === null;
   const isProcessInitialLoading = isProcessPending && processData === null;
@@ -891,11 +895,10 @@ export function DiagnosticsSettingsPanel() {
       }
 
       setSignalingPid(pid);
-      void serverActions
-        .signalProcess({
-          environmentId,
-          input: { pid, signal },
-        })
+      void signalServerProcess({
+        environmentId,
+        input: { pid, signal },
+      })
         .then((result) => {
           if (!result.signaled) {
             const message = Option.getOrUndefined(result.message);
@@ -930,7 +933,7 @@ export function DiagnosticsSettingsPanel() {
           setSignalingPid(null);
         });
     },
-    [environmentId, refreshProcesses, serverActions],
+    [environmentId, refreshProcesses, signalServerProcess],
   );
 
   const processDiagnosticsError = processData ? Option.getOrNull(processData.error) : null;

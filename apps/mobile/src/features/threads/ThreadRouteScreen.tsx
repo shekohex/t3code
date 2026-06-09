@@ -6,8 +6,9 @@ import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/proje
 import { Pressable, ScrollView, Text as RNText, View, useColorScheme } from "react-native";
 import { useWorkspaceState } from "../../state/workspace";
 import { useThemeColor } from "../../lib/useThemeColor";
-import { useVcsStatus } from "../../state/use-vcs-status";
+import { useEnvironmentQuery } from "../../state/query";
 import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
+import { vcsEnvironment } from "../../state/vcs";
 
 import { EmptyState } from "../../components/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
@@ -94,10 +95,14 @@ export function ThreadRouteScreen() {
   const secondaryFg = isDark ? "#a3a3a3" : "#525252";
 
   /* ─── Git status for native header trigger ───────────────────────── */
-  const gitStatus = useVcsStatus({
-    environmentId: selectedThread?.environmentId ?? null,
-    cwd: selectedThreadCwd,
-  });
+  const gitStatus = useEnvironmentQuery(
+    selectedThread !== null && selectedThreadCwd !== null
+      ? vcsEnvironment.status({
+          environmentId: selectedThread.environmentId,
+          input: { cwd: selectedThreadCwd },
+        })
+      : null,
+  );
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: selectedThread?.environmentId ?? null,
     threadId: selectedThread?.id ?? null,

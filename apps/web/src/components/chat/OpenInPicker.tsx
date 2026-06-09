@@ -1,4 +1,5 @@
 import { EditorId, type EnvironmentId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { useAtomSet } from "@effect/atom-react";
 import { memo, useCallback, useEffect, useMemo } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
@@ -32,7 +33,7 @@ import {
   WebStormIcon,
 } from "../JetBrainsIcons";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
-import { useShellActions } from "~/state/shell";
+import { shellEnvironment } from "~/state/shell";
 
 const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
   const baseOptions: ReadonlyArray<{ label: string; Icon: Icon; value: EditorId }> = [
@@ -161,7 +162,9 @@ export const OpenInPicker = memo(function OpenInPicker({
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
 }) {
-  const shellActions = useShellActions();
+  const openInEditorMutation = useAtomSet(shellEnvironment.openInEditor, {
+    mode: "promise",
+  });
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
   const options = useMemo(
     () => resolveOptions(navigator.platform, availableEditors),
@@ -174,7 +177,7 @@ export const OpenInPicker = memo(function OpenInPicker({
       if (!openInCwd) return;
       const editor = editorId ?? preferredEditor;
       if (!editor) return;
-      void shellActions.openInEditor({
+      void openInEditorMutation({
         environmentId,
         input: {
           cwd: openInCwd,
@@ -183,7 +186,7 @@ export const OpenInPicker = memo(function OpenInPicker({
       });
       setPreferredEditor(editor);
     },
-    [environmentId, openInCwd, preferredEditor, setPreferredEditor, shellActions],
+    [environmentId, openInCwd, openInEditorMutation, preferredEditor, setPreferredEditor],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -198,7 +201,7 @@ export const OpenInPicker = memo(function OpenInPicker({
       if (!preferredEditor) return;
 
       e.preventDefault();
-      void shellActions.openInEditor({
+      void openInEditorMutation({
         environmentId,
         input: {
           cwd: openInCwd,
@@ -208,7 +211,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [environmentId, keybindings, openInCwd, preferredEditor, shellActions]);
+  }, [environmentId, keybindings, openInCwd, openInEditorMutation, preferredEditor]);
 
   return (
     <Group aria-label="Subscription actions">

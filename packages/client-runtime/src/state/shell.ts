@@ -19,7 +19,7 @@ import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribe } from "../rpc/client.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
-import { runStreamInEnvironment } from "./runtime.ts";
+import { followStreamInEnvironment } from "./runtime.ts";
 
 export type EnvironmentShellStatus = "empty" | "cached" | "synchronizing" | "live";
 
@@ -153,7 +153,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
 });
 
 export function shellStateChanges(environmentId: EnvironmentId) {
-  return runStreamInEnvironment(
+  return followStreamInEnvironment(
     environmentId,
     Stream.unwrap(makeEnvironmentShellState().pipe(Effect.map(SubscriptionRef.changes))),
   );

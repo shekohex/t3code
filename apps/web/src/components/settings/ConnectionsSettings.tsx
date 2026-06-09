@@ -111,7 +111,8 @@ import {
   linkPrimaryEnvironment as linkPrimaryEnvironmentAtom,
   unlinkPrimaryEnvironment as unlinkPrimaryEnvironmentAtom,
 } from "~/cloud/linkEnvironmentAtoms";
-import { useAuthAccessChanges } from "~/state/auth";
+import { authEnvironment } from "~/state/auth";
+import { useEnvironmentQuery } from "~/state/query";
 import {
   type EnvironmentPresentation,
   useEnvironmentActions,
@@ -1992,8 +1993,13 @@ export function ConnectionsSettings() {
   );
   const canManageLocalBackend = currentSessionScopes?.includes(AuthAccessWriteScope) ?? false;
   const canManageRelay = currentSessionScopes?.includes(AuthRelayWriteScope) ?? false;
-  const authAccessChanges = useAuthAccessChanges(
-    canManageLocalBackend ? primaryEnvironmentId : null,
+  const authAccessChanges = useEnvironmentQuery(
+    canManageLocalBackend && primaryEnvironmentId !== null
+      ? authEnvironment.accessChanges({
+          environmentId: primaryEnvironmentId,
+          input: null,
+        })
+      : null,
   );
   const isLocalBackendNetworkAccessible = desktopBridge
     ? desktopServerExposureState?.mode === "network-accessible"

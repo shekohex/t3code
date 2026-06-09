@@ -182,6 +182,47 @@ const mockUpdateProvider = vi.hoisted(() =>
     },
   ),
 );
+const directAtomMocks = vi.hoisted(() => ({
+  authAccessQuery: Symbol("auth-access-query"),
+  openInEditorAction: Symbol("open-in-editor-action"),
+  refreshProvidersAction: Symbol("refresh-providers-action"),
+  signalProcessAction: Symbol("signal-process-action"),
+  updateProviderAction: Symbol("update-provider-action"),
+}));
+
+vi.mock("@effect/atom-react", async () => {
+  const actual = await vi.importActual<typeof import("@effect/atom-react")>("@effect/atom-react");
+
+  return {
+    ...actual,
+    useAtomSet: (atom: unknown, options: unknown) => {
+      if (atom === directAtomMocks.refreshProvidersAction) {
+        return mockRefreshProviders;
+      }
+      if (atom === directAtomMocks.updateProviderAction) {
+        return mockUpdateProvider;
+      }
+      if (atom === directAtomMocks.signalProcessAction) {
+        return async ({
+          input,
+        }: {
+          readonly input: Parameters<LocalApi["server"]["signalProcess"]>[0];
+        }) => window.nativeApi?.server.signalProcess(input);
+      }
+      if (atom === directAtomMocks.openInEditorAction) {
+        return async ({
+          input,
+        }: {
+          readonly input: {
+            readonly cwd: string;
+            readonly editor: Parameters<LocalApi["shell"]["openInEditor"]>[1];
+          };
+        }) => window.nativeApi?.shell.openInEditor(input.cwd, input.editor);
+      }
+      return actual.useAtomSet(atom as never, options as never);
+    },
+  };
+});
 
 vi.mock("@clerk/react", () => ({
   useAuth: () => ({
@@ -210,8 +251,50 @@ vi.mock("../../lib/archivedThreadsState", () => ({
   }),
 }));
 
-vi.mock("../../lib/sourceControlDiscoveryState", async () => {
+const sourceControlDiscoveryQueryAtom = vi.hoisted(() => Symbol("source-control-discovery-query"));
+const serverQueryKinds = {
+  processDiagnostics: "process-diagnostics",
+  processResourceHistory: "process-resource-history",
+  traceDiagnostics: "trace-diagnostics",
+} as const;
+
+type ServerQueryMarker =
+  | {
+      readonly kind: typeof serverQueryKinds.processDiagnostics;
+    }
+  | {
+      readonly kind: typeof serverQueryKinds.processResourceHistory;
+      readonly input: Parameters<LocalApi["server"]["getProcessResourceHistory"]>[0];
+    }
+  | {
+      readonly kind: typeof serverQueryKinds.traceDiagnostics;
+    };
+
+function isServerQueryMarker(atom: unknown): atom is ServerQueryMarker {
+  if (typeof atom !== "object" || atom === null || !("kind" in atom)) {
+    return false;
+  }
+  return Object.values(serverQueryKinds).includes(
+    (atom as { readonly kind: ServerQueryMarker["kind"] }).kind,
+  );
+}
+
+vi.mock("../../state/sourceControl", async () => {
+  const actual = await vi.importActual<typeof import("../../state/sourceControl")>(
+    "../../state/sourceControl",
+  );
+  return {
+    ...actual,
+    sourceControlEnvironment: {
+      ...actual.sourceControlEnvironment,
+      discovery: () => sourceControlDiscoveryQueryAtom,
+    },
+  };
+});
+
+vi.mock("../../state/query", async () => {
   const React = await import("react");
+  const actual = await vi.importActual<typeof import("../../state/query")>("../../state/query");
   type Snapshot = {
     readonly data: SourceControlDiscoveryResult | null;
     readonly error: string | null;
@@ -222,6 +305,12 @@ vi.mock("../../lib/sourceControlDiscoveryState", async () => {
     snapshot: Snapshot;
     started: boolean;
     readonly listeners: Set<() => void>;
+  };
+  const disabledSnapshot: Snapshot = {
+    data: null,
+    error: null,
+    isPending: false,
+    refresh: () => undefined,
   };
   const states = new WeakMap<LocalApi, State>();
 
@@ -284,54 +373,31 @@ vi.mock("../../lib/sourceControlDiscoveryState", async () => {
     );
   };
 
-  return {
-    resetSourceControlDiscoveryStateForTests: () => undefined,
-    useSourceControlDiscovery: () => {
-      const api = window.nativeApi;
-      const state = React.useMemo(() => (api ? stateFor(api) : null), [api]);
-      const snapshot = React.useSyncExternalStore(
-        React.useCallback(
-          (listener) => {
-            state?.listeners.add(listener);
-            return () => {
-              state?.listeners.delete(listener);
-            };
-          },
-          [state],
-        ),
-        React.useCallback(
-          () =>
-            state?.snapshot ?? {
-              data: null,
-              error: null,
-              isPending: false,
-              refresh: () => undefined,
-            },
-          [state],
-        ),
-      );
-      React.useEffect(() => {
-        if (state && api) {
-          start(state, api);
-        }
-      }, [api, state]);
-      return snapshot;
-    },
+  const useSourceControlDiscoveryQuery = (enabled: boolean) => {
+    const api = enabled ? window.nativeApi : undefined;
+    const state = React.useMemo(() => (api ? stateFor(api) : null), [api]);
+    const snapshot = React.useSyncExternalStore(
+      React.useCallback(
+        (listener) => {
+          state?.listeners.add(listener);
+          return () => {
+            state?.listeners.delete(listener);
+          };
+        },
+        [state],
+      ),
+      React.useCallback(() => state?.snapshot ?? disabledSnapshot, [state]),
+    );
+    React.useEffect(() => {
+      if (state && api) {
+        start(state, api);
+      }
+    }, [api, state]);
+    return snapshot;
   };
-});
 
-vi.mock("../../state/server", async () => {
-  const React = await import("react");
-  const actual = await vi.importActual<typeof import("../../state/server")>("../../state/server");
-  const { useServerConfig } = await import("../../rpc/serverState");
-  const idleRefresh = async () => undefined;
-  const emptyQuery = {
-    data: null,
-    error: null,
-    isPending: false,
-    refresh: idleRefresh,
-  };
   const useNativeQuery = <A,>(
+    enabled: boolean,
     load: () => Promise<A> | undefined,
     dependencies: React.DependencyList,
   ) => {
@@ -342,9 +408,12 @@ vi.mock("../../state/server", async () => {
     }>({
       data: null,
       error: null,
-      isPending: true,
+      isPending: enabled,
     });
     const refresh = React.useCallback(async () => {
+      if (!enabled) {
+        return;
+      }
       setState((current) => ({ ...current, isPending: true }));
       try {
         const data = await load();
@@ -360,84 +429,106 @@ vi.mock("../../state/server", async () => {
           isPending: false,
         });
       }
-    }, dependencies);
+    }, [enabled, ...dependencies]);
     React.useEffect(() => {
-      void refresh();
-    }, [refresh]);
+      if (enabled) {
+        void refresh();
+      }
+    }, [enabled, refresh]);
     return { ...state, refresh };
   };
 
-  const useEmptyQuery = () => emptyQuery;
   return {
     ...actual,
-    useServerConfig: () => ({
-      ...emptyQuery,
-      data: useServerConfig(),
-    }),
-    useServerSettings: useEmptyQuery,
-    useTraceDiagnostics: (environmentId: EnvironmentId | null) =>
-      useNativeQuery(
-        () =>
-          environmentId === null
-            ? Promise.resolve(null)
-            : window.nativeApi?.server.getTraceDiagnostics(),
-        [environmentId],
-      ),
-    useProcessDiagnostics: (environmentId: EnvironmentId | null) =>
-      useNativeQuery(
-        () =>
-          environmentId === null
-            ? Promise.resolve(null)
-            : window.nativeApi?.server.getProcessDiagnostics(),
-        [environmentId],
-      ),
-    useProcessResourceHistory: (
-      target: {
-        readonly environmentId: EnvironmentId;
-        readonly input: Parameters<LocalApi["server"]["getProcessResourceHistory"]>[0];
-      } | null,
-    ) =>
-      useNativeQuery(
-        () =>
-          target === null
-            ? Promise.resolve(null)
-            : window.nativeApi?.server.getProcessResourceHistory(target.input),
-        [target?.environmentId, target?.input.windowMs, target?.input.bucketMs],
-      ),
-    useServerConfigChanges: useEmptyQuery,
-    useServerLifecycleChanges: useEmptyQuery,
-    useServerActions: () => ({
-      refreshProviders: mockRefreshProviders,
-      updateProvider: mockUpdateProvider,
-      signalProcess: async ({
-        input,
-      }: {
-        readonly input: Parameters<LocalApi["server"]["signalProcess"]>[0];
-      }) => window.nativeApi?.server.signalProcess(input),
-      upsertKeybinding: vi.fn(),
-      removeKeybinding: vi.fn(),
-      updateSettings: vi.fn(),
-    }),
-  };
-});
-
-vi.mock("../../state/auth", async () => {
-  const React = await import("react");
-  const actual = await vi.importActual<typeof import("../../state/auth")>("../../state/auth");
-
-  return {
-    ...actual,
-    useAuthAccessChanges: (environmentId: EnvironmentId | null) => {
-      const event = React.useSyncExternalStore(
+    useEnvironmentQuery: (atom: unknown) => {
+      const isSourceControlDiscovery = atom === sourceControlDiscoveryQueryAtom;
+      const isAuthAccess = atom === directAtomMocks.authAccessQuery;
+      const serverQuery = isServerQueryMarker(atom) ? atom : null;
+      const isMockedQuery = isSourceControlDiscovery || isAuthAccess || serverQuery !== null;
+      const query = actual.useEnvironmentQuery(isMockedQuery ? null : (atom as never));
+      const sourceControlDiscovery = useSourceControlDiscoveryQuery(isSourceControlDiscovery);
+      const authAccessEvent = React.useSyncExternalStore(
         authAccessHarness.subscribe,
         authAccessHarness.getSnapshot,
         authAccessHarness.getSnapshot,
       );
-      return {
-        data: environmentId === null ? null : event,
-        error: null,
-        isPending: false,
-      };
+      const traceDiagnostics = useNativeQuery(
+        serverQuery?.kind === serverQueryKinds.traceDiagnostics,
+        () => window.nativeApi?.server.getTraceDiagnostics(),
+        [],
+      );
+      const processDiagnostics = useNativeQuery(
+        serverQuery?.kind === serverQueryKinds.processDiagnostics,
+        () => window.nativeApi?.server.getProcessDiagnostics(),
+        [],
+      );
+      const resourceInput =
+        serverQuery?.kind === serverQueryKinds.processResourceHistory ? serverQuery.input : null;
+      const processResourceHistory = useNativeQuery(
+        resourceInput !== null,
+        () =>
+          resourceInput === null
+            ? Promise.resolve(undefined)
+            : window.nativeApi?.server.getProcessResourceHistory(resourceInput),
+        [resourceInput?.windowMs, resourceInput?.bucketMs],
+      );
+
+      if (isSourceControlDiscovery) {
+        return sourceControlDiscovery;
+      }
+      if (isAuthAccess) {
+        return {
+          data: authAccessEvent,
+          error: null,
+          isPending: false,
+          refresh: () => undefined,
+        };
+      }
+      switch (serverQuery?.kind) {
+        case serverQueryKinds.traceDiagnostics:
+          return traceDiagnostics;
+        case serverQueryKinds.processDiagnostics:
+          return processDiagnostics;
+        case serverQueryKinds.processResourceHistory:
+          return processResourceHistory;
+        default:
+          return query;
+      }
+    },
+  };
+});
+
+vi.mock("../../state/server", async () => {
+  const actual = await vi.importActual<typeof import("../../state/server")>("../../state/server");
+  return {
+    ...actual,
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      processDiagnostics: () => ({ kind: serverQueryKinds.processDiagnostics }),
+      processResourceHistory: ({
+        input,
+      }: {
+        readonly input: Parameters<LocalApi["server"]["getProcessResourceHistory"]>[0];
+      }) => ({
+        kind: serverQueryKinds.processResourceHistory,
+        input,
+      }),
+      refreshProviders: directAtomMocks.refreshProvidersAction,
+      signalProcess: directAtomMocks.signalProcessAction,
+      traceDiagnostics: () => ({ kind: serverQueryKinds.traceDiagnostics }),
+      updateProvider: directAtomMocks.updateProviderAction,
+    },
+  };
+});
+
+vi.mock("../../state/auth", async () => {
+  const actual = await vi.importActual<typeof import("../../state/auth")>("../../state/auth");
+
+  return {
+    ...actual,
+    authEnvironment: {
+      ...actual.authEnvironment,
+      accessChanges: () => directAtomMocks.authAccessQuery,
     },
   };
 });
@@ -447,16 +538,10 @@ vi.mock("../../state/shell", async () => {
 
   return {
     ...actual,
-    useShellActions: () => ({
-      openInEditor: async ({
-        input,
-      }: {
-        readonly input: {
-          readonly cwd: string;
-          readonly editor: Parameters<LocalApi["shell"]["openInEditor"]>[1];
-        };
-      }) => window.nativeApi?.shell.openInEditor(input.cwd, input.editor),
-    }),
+    shellEnvironment: {
+      ...actual.shellEnvironment,
+      openInEditor: directAtomMocks.openInEditorAction,
+    },
   };
 });
 

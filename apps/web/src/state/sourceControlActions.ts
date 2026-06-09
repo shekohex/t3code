@@ -1,3 +1,4 @@
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
   GitActionProgressEvent,
@@ -22,9 +23,10 @@ import {
   useTransition,
 } from "react";
 
-import { useGitActions, usePullRequestResolution, useRunStackedGitActionState } from "./git";
-import { useSourceControlActions as useSourceControlMutations } from "./sourceControl";
-import { useVcsActions, useVcsStatus } from "./vcs";
+import { gitEnvironment } from "./git";
+import { useEnvironmentQuery } from "./query";
+import { sourceControlEnvironment } from "./sourceControl";
+import { vcsEnvironment } from "./vcs";
 
 export type SourceControlActionKind =
   | "init"
@@ -149,34 +151,34 @@ export function useSourceControlActionRunning(
 }
 
 export function useVcsInitAction(scope: SourceControlActionScope) {
-  const vcsActions = useVcsActions();
+  const init = useAtomSet(vcsEnvironment.init, { mode: "promise" });
   const action = useCallback(async () => {
     const target = requireScope(scope, "Git init is unavailable.");
-    return vcsActions.init({
+    return init({
       environmentId: target.environmentId,
       input: { cwd: target.cwd },
     });
-  }, [scope, vcsActions]);
+  }, [init, scope]);
   return useAction({ kind: "init", scope, action });
 }
 
 export function useVcsPullAction(scope: SourceControlActionScope) {
-  const vcsActions = useVcsActions();
-  const status = useVcsStatus(
+  const pull = useAtomSet(vcsEnvironment.pull, { mode: "promise" });
+  const status = useEnvironmentQuery(
     scope.environmentId !== null && scope.cwd !== null
-      ? {
+      ? vcsEnvironment.status({
           environmentId: scope.environmentId,
           input: { cwd: scope.cwd },
-        }
+        })
       : null,
   );
   const action = useCallback(async (): Promise<VcsPullResult> => {
     const target = requireScope(scope, "Git pull is unavailable.");
-    return vcsActions.pull({
+    return pull({
       environmentId: target.environmentId,
       input: { cwd: target.cwd },
     });
-  }, [scope, vcsActions]);
+  }, [pull, scope]);
   return useAction({
     kind: "pull",
     scope,
@@ -186,14 +188,16 @@ export function useVcsPullAction(scope: SourceControlActionScope) {
 }
 
 export function useGitStackedAction(scope: SourceControlActionScope) {
-  const gitActions = useGitActions();
-  const progress = useRunStackedGitActionState();
-  const status = useVcsStatus(
+  const runStackedAction = useAtomSet(gitEnvironment.runStackedAction, {
+    mode: "promise",
+  });
+  const progress = useAtomValue(gitEnvironment.runStackedAction);
+  const status = useEnvironmentQuery(
     scope.environmentId !== null && scope.cwd !== null
-      ? {
+      ? vcsEnvironment.status({
           environmentId: scope.environmentId,
           input: { cwd: scope.cwd },
-        }
+        })
       : null,
   );
   const progressListenerRef = useRef<((event: GitActionProgressEvent) => void) | null>(null);
@@ -217,7 +221,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
       const target = requireScope(scope, "Git action is unavailable.");
       progressListenerRef.current = input.onProgress ?? null;
       try {
-        const event = await gitActions.runStackedAction({
+        const event = await runStackedAction({
           environmentId: target.environmentId,
           input: {
             actionId: input.actionId,
@@ -239,7 +243,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
         progressListenerRef.current = null;
       }
     },
-    [gitActions, progressListenerRef, scope],
+    [progressListenerRef, runStackedAction, scope],
   );
 
   return useAction({
@@ -251,13 +255,15 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
 }
 
 export function useSourceControlPublishRepositoryAction(scope: SourceControlActionScope) {
-  const sourceControlActions = useSourceControlMutations();
-  const status = useVcsStatus(
+  const publishRepository = useAtomSet(sourceControlEnvironment.publishRepository, {
+    mode: "promise",
+  });
+  const status = useEnvironmentQuery(
     scope.environmentId !== null && scope.cwd !== null
-      ? {
+      ? vcsEnvironment.status({
           environmentId: scope.environmentId,
           input: { cwd: scope.cwd },
-        }
+        })
       : null,
   );
   const action = useCallback(
@@ -269,7 +275,7 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
       protocol: SourceControlCloneProtocol;
     }): Promise<SourceControlPublishRepositoryResult> => {
       const target = requireScope(scope, "Repository publishing is unavailable.");
-      return sourceControlActions.publishRepository({
+      return publishRepository({
         environmentId: target.environmentId,
         input: {
           cwd: target.cwd,
@@ -277,7 +283,7 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
         },
       });
     },
-    [scope, sourceControlActions],
+    [publishRepository, scope],
   );
   return useAction({
     kind: "publishRepository",
@@ -288,11 +294,13 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
 }
 
 export function usePreparePullRequestThreadAction(scope: SourceControlActionScope) {
-  const gitActions = useGitActions();
+  const preparePullRequestThread = useAtomSet(gitEnvironment.preparePullRequestThread, {
+    mode: "promise",
+  });
   const action = useCallback(
     async (input: { reference: string; mode: "local" | "worktree"; threadId?: ThreadId }) => {
       const target = requireScope(scope, "Pull request thread preparation is unavailable.");
-      return gitActions.preparePullRequestThread({
+      return preparePullRequestThread({
         environmentId: target.environmentId,
         input: {
           cwd: target.cwd,
@@ -302,7 +310,7 @@ export function usePreparePullRequestThreadAction(scope: SourceControlActionScop
         },
       });
     },
-    [gitActions, scope],
+    [preparePullRequestThread, scope],
   );
   return useAction({ kind: "preparePullRequestThread", scope, action });
 }
@@ -328,15 +336,15 @@ export function readCachedPullRequestResolution(
 }
 
 export function usePullRequestResolutionState(target: PullRequestResolutionTarget) {
-  const query = usePullRequestResolution(
+  const query = useEnvironmentQuery(
     target.environmentId !== null && target.cwd !== null && target.reference !== null
-      ? {
+      ? gitEnvironment.pullRequestResolution({
           environmentId: target.environmentId,
           input: {
             cwd: target.cwd,
             reference: target.reference,
           },
-        }
+        })
       : null,
   );
   const key = pullRequestResolutionKey(target);

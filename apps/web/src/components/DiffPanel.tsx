@@ -21,7 +21,6 @@ import {
 } from "react";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
-import { useVcsStatus } from "~/lib/vcsStatusState";
 import { cn } from "~/lib/utils";
 import { resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -40,7 +39,9 @@ import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
-import { useServerConfig } from "../state/server";
+import { useEnvironmentQuery } from "../state/query";
+import { serverEnvironment } from "../state/server";
+import { vcsEnvironment } from "../state/vcs";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
@@ -148,15 +149,26 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       : null,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
-  const serverConfig = useServerConfig(activeThread?.environmentId ?? null);
+  const serverConfig = useEnvironmentQuery(
+    activeThread === null || activeThread === undefined
+      ? null
+      : serverEnvironment.config({
+          environmentId: activeThread.environmentId,
+          input: {},
+        }),
+  );
   const openInPreferredEditor = useOpenInPreferredEditor(
     activeThread?.environmentId ?? null,
     serverConfig.data?.availableEditors ?? [],
   );
-  const gitStatusQuery = useVcsStatus({
-    environmentId: activeThread?.environmentId ?? null,
-    cwd: activeCwd ?? null,
-  });
+  const gitStatusQuery = useEnvironmentQuery(
+    activeThread !== null && activeThread !== undefined && activeCwd != null
+      ? vcsEnvironment.status({
+          environmentId: activeThread.environmentId,
+          input: { cwd: activeCwd },
+        })
+      : null,
+  );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);

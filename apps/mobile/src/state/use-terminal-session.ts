@@ -8,21 +8,29 @@ import {
 import { ThreadId, type EnvironmentId, type TerminalAttachInput } from "@t3tools/contracts";
 import { useMemo } from "react";
 
-import { useTerminalAttach, useTerminalMetadata } from "./terminal";
+import { useEnvironmentQuery } from "./query";
+import { terminalEnvironment } from "./terminal";
 
 export function useAttachedTerminalSession(input: {
   readonly environmentId: EnvironmentId | null;
   readonly terminal: TerminalAttachInput | null;
 }): TerminalSessionState {
-  const attach = useTerminalAttach(
+  const attach = useEnvironmentQuery(
     input.environmentId !== null && input.terminal !== null
-      ? {
+      ? terminalEnvironment.attach({
           environmentId: input.environmentId,
           input: input.terminal,
-        }
+        })
       : null,
   );
-  const metadata = useTerminalMetadata(input.environmentId);
+  const metadata = useEnvironmentQuery(
+    input.environmentId === null
+      ? null
+      : terminalEnvironment.metadata({
+          environmentId: input.environmentId,
+          input: null,
+        }),
+  );
 
   return useMemo(() => {
     if (input.environmentId === null || input.terminal === null) {
@@ -43,7 +51,14 @@ export function useKnownTerminalSessions(input: {
   readonly environmentId: EnvironmentId | null;
   readonly threadId: ThreadId | null;
 }): ReadonlyArray<KnownTerminalSession> {
-  const metadata = useTerminalMetadata(input.environmentId);
+  const metadata = useEnvironmentQuery(
+    input.environmentId === null
+      ? null
+      : terminalEnvironment.metadata({
+          environmentId: input.environmentId,
+          input: null,
+        }),
+  );
   return useMemo(() => {
     if (input.environmentId === null) {
       return [];

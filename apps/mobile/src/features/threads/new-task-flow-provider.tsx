@@ -23,7 +23,7 @@ import {
   setComposerDraftText,
   useComposerDraft,
 } from "../../state/use-composer-drafts";
-import { useVcsRefs } from "../../state/use-vcs-refs";
+import { useBranches } from "../../state/queries";
 import {
   setPendingConnectionError,
   useSavedRemoteConnections,
@@ -335,7 +335,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     }),
     [selectedProject?.environmentId, selectedProject?.workspaceRoot],
   );
-  const branchState = useVcsRefs(branchTarget);
+  const branchState = useBranches(branchTarget);
   const branchesLoading = branchState.isPending;
   const availableBranches = useMemo(
     () =>

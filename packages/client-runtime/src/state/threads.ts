@@ -25,7 +25,7 @@ import {
   applyThreadDetailEvent,
   type ThreadDetailRetentionLimits,
 } from "./threadReducer.ts";
-import { runStreamInEnvironment } from "./runtime.ts";
+import { followStreamInEnvironment } from "./runtime.ts";
 
 export type EnvironmentThreadStatus = "empty" | "cached" | "synchronizing" | "live" | "deleted";
 
@@ -222,7 +222,7 @@ export function threadStateChanges(
     readonly limits?: ThreadDetailRetentionLimits;
   },
 ) {
-  return runStreamInEnvironment(
+  return followStreamInEnvironment(
     environmentId,
     Stream.unwrap(
       makeEnvironmentThreadState(threadId, options?.limits ?? DEFAULT_THREAD_DETAIL_LIMITS).pipe(

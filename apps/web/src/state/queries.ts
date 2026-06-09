@@ -3,10 +3,9 @@ import {
   type CheckpointDiffTarget,
   type ComposerPathSearchTarget,
 } from "@t3tools/client-runtime/state/threads";
-import { type VcsRefTarget, type VcsStatusTarget } from "@t3tools/client-runtime/state/vcs";
+import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
-  FilesystemBrowseInput,
   OrchestrationThread,
   ThreadId,
   VcsListRefsResult,
@@ -18,13 +17,10 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { useFilesystemBrowse } from "./filesystem";
-import { useFullThreadDiff, useTurnDiff } from "./orchestration";
-import { useProjectSearchEntries } from "./projects";
-import { useReviewDiffPreview } from "./review";
-import { useSourceControlDiscovery } from "./sourceControl";
+import { orchestrationEnvironment } from "./orchestration";
+import { projectEnvironment } from "./projects";
+import { useEnvironmentQuery } from "./query";
 import { useEnvironmentThread } from "./threads";
-import { useVcsListRefs, useVcsStatus } from "./vcs";
 import { vcsEnvironment } from "./vcs";
 
 const COMPOSER_PATH_SEARCH_DEBOUNCE_MS = 120;
@@ -68,31 +64,18 @@ export function useThreadDetail(
   };
 }
 
-export function useFilesystemDirectory(
-  environmentId: EnvironmentId | null,
-  input: FilesystemBrowseInput | null,
-) {
-  return useFilesystemBrowse(
-    environmentId !== null && input !== null ? { environmentId, input } : null,
-  );
-}
-
-export function useSourceControlCapabilities(environmentId: EnvironmentId | null) {
-  return useSourceControlDiscovery(environmentId);
-}
-
 export function useBranches(target: VcsRefTarget) {
   const query = target.query?.trim() ?? "";
-  return useVcsListRefs(
+  return useEnvironmentQuery(
     target.environmentId !== null && target.cwd !== null
-      ? {
+      ? vcsEnvironment.listRefs({
           environmentId: target.environmentId,
           input: {
             cwd: target.cwd,
             ...(query.length > 0 ? { query } : {}),
             limit: VCS_REF_LIST_LIMIT,
           },
-        }
+        })
       : null,
   );
 }
@@ -198,31 +181,6 @@ export function usePaginatedBranches(target: VcsRefTarget) {
   };
 }
 
-export function useRepositoryStatus(target: VcsStatusTarget) {
-  return useVcsStatus(
-    target.environmentId !== null && target.cwd !== null
-      ? {
-          environmentId: target.environmentId,
-          input: { cwd: target.cwd },
-        }
-      : null,
-  );
-}
-
-export function useReviewPreview(input: {
-  readonly environmentId: EnvironmentId | null;
-  readonly cwd: string | null;
-}) {
-  return useReviewDiffPreview(
-    input.environmentId !== null && input.cwd !== null
-      ? {
-          environmentId: input.environmentId,
-          input: { cwd: input.cwd },
-        }
-      : null,
-  );
-}
-
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
   const normalizedTarget = useMemo(
     () => ({
@@ -233,18 +191,18 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
     [target.cwd, target.environmentId, target.query],
   );
   const debouncedTarget = useDebouncedValue(normalizedTarget, COMPOSER_PATH_SEARCH_DEBOUNCE_MS);
-  const result = useProjectSearchEntries(
+  const result = useEnvironmentQuery(
     debouncedTarget.environmentId !== null &&
       debouncedTarget.cwd !== null &&
       debouncedTarget.query.length > 0
-      ? {
+      ? projectEnvironment.searchEntries({
           environmentId: debouncedTarget.environmentId,
           input: {
             cwd: debouncedTarget.cwd,
             query: debouncedTarget.query,
             limit: COMPOSER_PATH_SEARCH_LIMIT,
           },
-        }
+        })
       : null,
   );
 
@@ -289,7 +247,11 @@ export function useCheckpointDiff(
           },
         }
       : null;
-  const fullThread = useFullThreadDiff(fullThreadTarget);
-  const turn = useTurnDiff(turnTarget);
+  const fullThread = useEnvironmentQuery(
+    fullThreadTarget === null ? null : orchestrationEnvironment.fullThreadDiff(fullThreadTarget),
+  );
+  const turn = useEnvironmentQuery(
+    turnTarget === null ? null : orchestrationEnvironment.turnDiff(turnTarget),
+  );
   return fullThreadTarget === null ? turn : fullThread;
 }

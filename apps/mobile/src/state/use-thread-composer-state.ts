@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -6,7 +6,7 @@ import { CommandId, MessageId, type EnvironmentId, type ThreadId } from "@t3tool
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 import { Atom } from "effect/unstable/reactivity";
 
-import { useThreadActions } from "../state/threads";
+import { threadEnvironment } from "../state/threads";
 import { useThreadShells } from "../state/entities";
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import {
@@ -195,7 +195,7 @@ function useQueueDrain(input: {
 }
 
 export function useThreadComposerState() {
-  const threadActions = useThreadActions();
+  const startTurn = useAtomSet(threadEnvironment.startTurn, { mode: "promise" });
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const threads = useThreadShells();
   const { selectedThread: selectedThreadShell } = useThreadSelection();
@@ -282,7 +282,7 @@ export function useThreadComposerState() {
       }
 
       try {
-        await threadActions.startTurn({
+        await startTurn({
           environmentId: queuedMessage.environmentId,
           input: {
             commandId: queuedMessage.commandId,
@@ -311,7 +311,7 @@ export function useThreadComposerState() {
         return false;
       }
     },
-    [threadActions, threads],
+    [startTurn, threads],
   );
 
   useQueueDrain({

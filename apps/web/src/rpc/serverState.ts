@@ -14,7 +14,7 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useRef } from "react";
 
-import { appAtomRegistry, resetAppAtomRegistryForTests } from "./atomRegistry";
+import { appAtomRegistry } from "./atomRegistry";
 
 export type ServerConfigUpdateSource = ServerConfigStreamEvent["type"];
 
@@ -167,7 +167,10 @@ export function onProvidersUpdated(
 }
 
 export function resetServerStateForTests() {
-  resetAppAtomRegistryForTests();
+  appAtomRegistry.set(welcomeAtom, null);
+  appAtomRegistry.set(serverConfigAtom, null);
+  appAtomRegistry.set(serverConfigUpdatedAtom, null);
+  appAtomRegistry.set(providersUpdatedAtom, null);
   nextServerConfigUpdatedNotificationId = 1;
 }
 

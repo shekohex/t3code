@@ -50,7 +50,6 @@ import {
 } from "../lib/terminalContext";
 import { isMacPlatform } from "../lib/utils";
 import { __resetLocalApiForTests } from "../localApi";
-import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { getServerConfig } from "../rpc/serverState";
 import { getRouter } from "../router";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
@@ -60,39 +59,6 @@ import { createAuthenticatedSessionHandlers } from "../../test/authHttpHandlers"
 import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test/wsRpcHarness";
 
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-
-vi.mock("../lib/vcsStatusState", () => {
-  const status = {
-    data: {
-      isRepo: true,
-      sourceControlProvider: {
-        kind: "github",
-        name: "GitHub",
-        baseUrl: "https://github.com",
-      },
-      hasPrimaryRemote: true,
-      isDefaultRef: true,
-      refName: "main",
-      hasWorkingTreeChanges: false,
-      workingTree: { files: [], insertions: 0, deletions: 0 },
-      hasUpstream: true,
-      aheadCount: 0,
-      behindCount: 0,
-      pr: null,
-    },
-    error: null,
-    cause: null,
-    isPending: false,
-  };
-
-  return {
-    getVcsStatusSnapshot: () => status,
-    useVcsStatus: () => status,
-    useVcsStatuses: () => new Map(),
-    refreshVcsStatus: () => Promise.resolve(null),
-    resetVcsStatusStateForTests: () => undefined,
-  };
-});
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
 const THREAD_TITLE = "Browser test thread";
@@ -120,6 +86,28 @@ const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'></svg>";
 const ADD_PROJECT_SUBMENU_PLACEHOLDER = "Enter path (e.g. ~/projects/my-app)";
+const INITIAL_VCS_STATUS_EVENT = {
+  _tag: "snapshot" as const,
+  local: {
+    isRepo: true,
+    sourceControlProvider: {
+      kind: "github" as const,
+      name: "GitHub",
+      baseUrl: "https://github.com",
+    },
+    hasPrimaryRemote: true,
+    isDefaultRef: true,
+    refName: "main",
+    hasWorkingTreeChanges: false,
+    workingTree: { files: [], insertions: 0, deletions: 0 },
+  },
+  remote: {
+    hasUpstream: true,
+    aheadCount: 0,
+    behindCount: 0,
+    pr: null,
+  },
+};
 
 interface TestFixture {
   snapshot: OrchestrationReadModel;
@@ -523,11 +511,20 @@ function sendShellThreadUpsert(
   });
 }
 
-async function waitForWsClient(): Promise<void> {
+async function waitForWsClient(router?: ReturnType<typeof getRouter>): Promise<void> {
   await vi.waitFor(
     () => {
+      const receivedRequestTags = wsRequests.map((request) => request._tag).join(", ");
+      const diagnostics = [
+        `requests=${receivedRequestTags}`,
+        `pathname=${router?.state.location.pathname ?? "unknown"}`,
+        `routerStatus=${router?.state.status ?? "unknown"}`,
+        `matches=${router?.state.matches.map((match) => match.routeId).join(",") ?? "unknown"}`,
+        `body=${document.body.textContent?.trim().slice(0, 200) || "<empty>"}`,
+      ].join("; ");
       expect(
         wsRequests.some((request) => request._tag === ORCHESTRATION_WS_METHODS.subscribeShell),
+        `Expected shell subscription. ${diagnostics}`,
       ).toBe(true);
       expect(
         wsRequests.some((request) => request._tag === WS_METHODS.subscribeServerLifecycle),
@@ -1585,16 +1582,11 @@ async function mountChatView(options: {
     }),
   );
 
-  const screen = await render(
-    <AppAtomRegistryProvider>
-      <RouterProvider router={router} />
-    </AppAtomRegistryProvider>,
-    {
-      container: host,
-    },
-  );
+  const screen = await render(<RouterProvider router={router} />, {
+    container: host,
+  });
 
-  await waitForWsClient();
+  await waitForWsClient(router);
   await waitForAppBootstrap();
   await waitForLayout();
 
@@ -1690,6 +1682,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         }
         if (request._tag === WS_METHODS.subscribeTerminalMetadata) {
           return fixture.terminalMetadataEvents;
+        }
+        if (request._tag === WS_METHODS.subscribeVcsStatus) {
+          return [INITIAL_VCS_STATUS_EVENT];
         }
         return [];
       },

@@ -22,7 +22,8 @@ import { resolveThreadRouteRef, buildThreadRouteParams } from "../threadRoutes";
 import { RightPanelSheet } from "../components/RightPanelSheet";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
 import { useEnvironmentThreadRefs, useThreadDetail, useThreadShell } from "../state/entities";
-import { useEnvironmentShell } from "../state/shell";
+import { useEnvironmentQuery } from "../state/query";
+import { environmentShell } from "../state/shell";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
@@ -144,7 +145,9 @@ function ChatThreadRouteView() {
     select: (params) => resolveThreadRouteRef(params),
   });
   const search = Route.useSearch();
-  const shell = useEnvironmentShell(threadRef?.environmentId ?? null);
+  const shell = useEnvironmentQuery(
+    threadRef === null ? null : environmentShell.stateAtom(threadRef.environmentId),
+  );
   const serverThreadShell = useThreadShell(threadRef);
   const serverThreadDetail = useThreadDetail(threadRef);
   const environmentThreadRefs = useEnvironmentThreadRefs(threadRef?.environmentId ?? null);
