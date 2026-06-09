@@ -29,18 +29,6 @@ export function createKnownEnvironment(input: {
   };
 }
 
-export function getKnownEnvironmentWsBaseUrl(
-  environment: KnownEnvironment | null | undefined,
-): string | null {
-  return environment?.target.wsBaseUrl ?? null;
-}
-
-export function getKnownEnvironmentHttpBaseUrl(
-  environment: KnownEnvironment | null | undefined,
-): string | null {
-  return environment?.target.httpBaseUrl ?? null;
-}
-
 export function attachEnvironmentDescriptor(
   environment: KnownEnvironment,
   descriptor: ExecutionEnvironmentDescriptor,

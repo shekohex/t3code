@@ -3,8 +3,6 @@ export * from "./knownEnvironment.ts";
 export * from "./scoped.ts";
 export * from "./projectPaths.ts";
 export * from "./addProject.ts";
-export * from "./filesystemBrowseState.ts";
-export * from "./sourceControlDiscoveryState.ts";
 export * from "./errorTrace.ts";
 export * from "./shellTypes.ts";
 export * from "./shellSnapshotReducer.ts";
