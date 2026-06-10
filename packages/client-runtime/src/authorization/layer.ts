@@ -5,7 +5,7 @@ import {
   resolveRemoteWebSocketConnectionUrl,
 } from "./remote.ts";
 import { environmentMismatchError, mapRemoteEnvironmentError } from "../connection/errors.ts";
-import { ConnectionTransientError } from "../connection/model.ts";
+import { ConnectionBlockedError, type ConnectionAttemptError } from "../connection/model.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ClientPresentation } from "../platform/capabilities.ts";
@@ -16,21 +16,17 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import { HttpClient } from "effect/unstable/http";
 
 const TOKEN_EXPIRY_SAFETY_MARGIN_MS = 60_000;
+const CACHED_ENDPOINT_FAILURE_THRESHOLD = 2;
 
-function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionTransientError) {
-  return error._tag === "ConnectionTransientError" ? error : mapRemoteEnvironmentError(error);
-}
-
-function shouldRefreshDpopAccessToken(
-  error: RemoteEnvironmentAuthError | ConnectionTransientError,
-): boolean {
-  return (
-    error._tag === "EnvironmentAuthInvalidError" || error._tag === "EnvironmentScopeRequiredError"
-  );
+function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemptError) {
+  return error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"
+    ? error
+    : mapRemoteEnvironmentError(error);
 }
 
 const fetchDescriptor = Effect.fn("clientRuntime.connection.remote.fetchDescriptor")(function* (
@@ -48,6 +44,25 @@ export const remoteEnvironmentAuthorizationLayer = Layer.effect(
     const presentation = yield* ClientPresentation;
     const tokenStore = yield* RemoteDpopAccessTokenStore;
     const httpClient = yield* HttpClient.HttpClient;
+    const cachedEndpointFailures = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
+
+    const resetCachedEndpointFailures = (environmentId: string) =>
+      Ref.update(cachedEndpointFailures, (current) => {
+        if (!current.has(environmentId)) {
+          return current;
+        }
+        const next = new Map(current);
+        next.delete(environmentId);
+        return next;
+      });
+
+    const recordCachedEndpointFailure = (environmentId: string) =>
+      Ref.modify(cachedEndpointFailures, (current) => {
+        const failureCount = (current.get(environmentId) ?? 0) + 1;
+        const next = new Map(current);
+        next.set(environmentId, failureCount);
+        return [failureCount, next] as const;
+      });
 
     const authorizeBearer = Effect.fn("clientRuntime.connection.remote.authorizeBearer")(
       function* (input: {
@@ -80,6 +95,10 @@ export const remoteEnvironmentAuthorizationLayer = Layer.effect(
           label: descriptor.label,
           httpBaseUrl: input.httpBaseUrl,
           socketUrl,
+          httpAuthorization: {
+            _tag: "Bearer" as const,
+            token: input.bearerToken,
+          },
         };
       },
     );
@@ -95,8 +114,8 @@ export const remoteEnvironmentAuthorizationLayer = Layer.effect(
           .pipe(
             Effect.mapError(
               () =>
-                new ConnectionTransientError({
-                  reason: "remote-unavailable",
+                new ConnectionBlockedError({
+                  reason: "configuration",
                   message: "Could not create the websocket authorization proof.",
                 }),
             ),
@@ -122,8 +141,8 @@ export const remoteEnvironmentAuthorizationLayer = Layer.effect(
         const thumbprint = yield* signer.thumbprint.pipe(
           Effect.mapError(
             () =>
-              new ConnectionTransientError({
-                reason: "remote-unavailable",
+              new ConnectionBlockedError({
+                reason: "configuration",
                 message: "Could not load the environment authorization key.",
               }),
           ),
@@ -144,21 +163,35 @@ export const remoteEnvironmentAuthorizationLayer = Layer.effect(
           });
           const cachedSocket = yield* createDpopSocketUrl(cached.value).pipe(Effect.result);
           if (Result.isSuccess(cachedSocket)) {
+            yield* resetCachedEndpointFailures(input.expectedEnvironmentId);
             return {
               environmentId: cached.value.environmentId,
               label: cached.value.label,
               httpBaseUrl: cached.value.endpoint.httpBaseUrl,
               socketUrl: cachedSocket.success,
+              httpAuthorization: {
+                _tag: "Dpop" as const,
+                accessToken: cached.value.accessToken,
+              },
             };
           }
-          if (!shouldRefreshDpopAccessToken(cachedSocket.failure)) {
+          if (cachedSocket.failure._tag === "ConnectionBlockedError") {
             return yield* mapDpopSocketError(cachedSocket.failure);
+          }
+          const mappedFailure = mapDpopSocketError(cachedSocket.failure);
+          if (mappedFailure._tag === "ConnectionTransientError") {
+            const failureCount = yield* recordCachedEndpointFailure(input.expectedEnvironmentId);
+            if (failureCount < CACHED_ENDPOINT_FAILURE_THRESHOLD) {
+              return yield* mappedFailure;
+            }
           }
           yield* tokenStore
             .remove(input.expectedEnvironmentId)
             .pipe(Effect.withSpan("environment.authorization.accessToken.remove"));
+          yield* resetCachedEndpointFailures(input.expectedEnvironmentId);
         }
 
+        yield* resetCachedEndpointFailures(input.expectedEnvironmentId);
         yield* Effect.annotateCurrentSpan({
           "connection.remote_token_cache": "miss",
         });
@@ -181,8 +214,8 @@ export const remoteEnvironmentAuthorizationLayer = Layer.effect(
           .pipe(
             Effect.mapError(
               () =>
-                new ConnectionTransientError({
-                  reason: "remote-unavailable",
+                new ConnectionBlockedError({
+                  reason: "configuration",
                   message: "Could not create the environment authorization proof.",
                 }),
             ),
@@ -218,6 +251,10 @@ export const remoteEnvironmentAuthorizationLayer = Layer.effect(
           label: descriptor.label,
           httpBaseUrl: bootstrap.endpoint.httpBaseUrl,
           socketUrl,
+          httpAuthorization: {
+            _tag: "Dpop" as const,
+            accessToken: token.accessToken,
+          },
         };
       },
     );

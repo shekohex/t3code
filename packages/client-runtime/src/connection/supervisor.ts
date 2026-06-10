@@ -4,6 +4,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -33,6 +34,8 @@ import { type ConnectionWakeup, ConnectionWakeups } from "./wakeups.ts";
 
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
+const CONNECTION_PROBE_TIMEOUT = "15 seconds";
+const BACKOFF_RESET_AFTER_MS = 30_000;
 
 interface SupervisorIntent {
   readonly desired: boolean;
@@ -62,10 +65,12 @@ type AttemptOutcome =
   | {
       readonly _tag: "Interrupted";
       readonly established: boolean;
+      readonly stable: boolean;
     }
   | {
       readonly _tag: "Failure";
       readonly established: boolean;
+      readonly stable: boolean;
       readonly failure: TracedAttemptFailure;
     };
 
@@ -173,21 +178,24 @@ function failureFromExit<A>(
   target: ConnectionTarget,
   exit: Exit.Exit<A, TracedAttemptFailure>,
   established: boolean,
+  stable: boolean,
 ): AttemptOutcome {
   if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) {
-    return { _tag: "Interrupted", established };
+    return { _tag: "Interrupted", established, stable };
   }
   const typedFailure = exit.cause.reasons.find(Cause.isFailReason);
   if (typedFailure) {
     return {
       _tag: "Failure",
       established,
+      stable,
       failure: typedFailure.error,
     };
   }
   return {
     _tag: "Failure",
     established,
+    stable,
     failure: {
       error: new ConnectionTransientError({
         reason: "transport",
@@ -384,7 +392,48 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
           break;
         case "Wakeup":
           if (next.reason === "application-active") {
-            yield* lease.session.probe;
+            const probe = yield* lease.session.probe.pipe(
+              Effect.timeoutOrElse({
+                duration: CONNECTION_PROBE_TIMEOUT,
+                orElse: () =>
+                  Effect.fail(
+                    new ConnectionTransientError({
+                      reason: "timeout",
+                      message: `${target.label} did not respond to a connection health check.`,
+                    }),
+                  ),
+              }),
+              Effect.forkChild,
+            );
+            for (;;) {
+              const probeEvent = yield* Effect.raceFirst(
+                Fiber.await(probe).pipe(
+                  Effect.map((exit) => ({ _tag: "ProbeCompleted" as const, exit })),
+                ),
+                Queue.take(signals).pipe(
+                  Effect.map((signal) => ({ _tag: "Signal" as const, signal })),
+                ),
+              );
+              if (probeEvent._tag === "ProbeCompleted") {
+                yield* probeEvent.exit;
+                break;
+              }
+              switch (probeEvent.signal._tag) {
+                case "DisconnectRequested":
+                case "RetryRequested":
+                  yield* Fiber.interrupt(probe);
+                  return;
+                case "NetworkChanged":
+                  if (probeEvent.signal.network === "offline") {
+                    yield* Fiber.interrupt(probe);
+                    return;
+                  }
+                  break;
+                case "ConnectRequested":
+                case "Wakeup":
+                  break;
+              }
+            }
           }
           break;
         case "ConnectRequested":
@@ -418,12 +467,17 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
     ]);
 
     if (establishment._tag === "Interrupted") {
-      return { _tag: "Interrupted", established: false } satisfies AttemptOutcome;
+      return {
+        _tag: "Interrupted",
+        established: false,
+        stable: false,
+      } satisfies AttemptOutcome;
     }
     if (establishment._tag === "TimedOut") {
       return {
         _tag: "Failure",
         established: false,
+        stable: false,
         failure: {
           error: new ConnectionTransientError({
             reason: "timeout",
@@ -437,7 +491,7 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
       const isUnexpectedDefect =
         !Cause.hasInterruptsOnly(establishment.exit.cause) &&
         !establishment.exit.cause.reasons.some(Cause.isFailReason);
-      const outcome = failureFromExit(target, establishment.exit, false);
+      const outcome = failureFromExit(target, establishment.exit, false, false);
       if (isUnexpectedDefect) {
         yield* Effect.logError("Connection attempt failed with an unexpected defect.").pipe(
           Effect.annotateLogs({
@@ -453,9 +507,14 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
     const active = establishment.exit.value;
     const currentIntent = yield* Ref.get(intent);
     if (!currentIntent.desired || currentIntent.network === "offline") {
-      return { _tag: "Interrupted", established: false } satisfies AttemptOutcome;
+      return {
+        _tag: "Interrupted",
+        established: false,
+        stable: false,
+      } satisfies AttemptOutcome;
     }
 
+    const connectedAt = yield* Clock.currentTimeMillis;
     yield* SubscriptionRef.set(prepared, Option.some(active.lease.prepared));
     yield* SubscriptionRef.set(session, Option.some(active.lease.session));
     yield* setState({
@@ -487,7 +546,8 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
         ),
       ),
     ).pipe(exitUnlessInterrupted);
-    return failureFromExit(target, connectedExit, true);
+    const connectedForMs = (yield* Clock.currentTimeMillis) - connectedAt;
+    return failureFromExit(target, connectedExit, true, connectedForMs >= BACKOFF_RESET_AFTER_MS);
   }, Effect.ensuring(clearLease));
 
   const waitForRetrySignal = Effect.fnUntraced(function* (delayMs: number) {
@@ -542,9 +602,11 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
       );
       if (outcome.established) {
         generation = nextGeneration;
-        failureCount = 0;
-        latestFailure = null;
-        pendingRetry = Option.none();
+        if (outcome.stable) {
+          failureCount = 0;
+          latestFailure = null;
+          pendingRetry = Option.none();
+        }
       }
       if (outcome._tag === "Interrupted") {
         continue;

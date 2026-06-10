@@ -128,6 +128,10 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
           label: "Authorized bearer environment",
           httpBaseUrl: input.httpBaseUrl,
           socketUrl: "wss://authorized.example.test/ws?wsTicket=bearer",
+          httpAuthorization: {
+            _tag: "Bearer" as const,
+            token: input.bearerToken,
+          },
         })),
     authorizeDpop:
       options?.authorizeDpop ??
@@ -138,6 +142,10 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
             label: "Authorized relay environment",
             httpBaseUrl: ENDPOINT.httpBaseUrl,
             socketUrl: "wss://authorized.example.test/ws?wsTicket=dpop",
+            httpAuthorization: {
+              _tag: "Dpop" as const,
+              accessToken: "dpop-access-token",
+            },
           }),
         )),
   });
@@ -203,6 +211,7 @@ describe("ConnectionResolver", () => {
         label: "Primary",
         httpBaseUrl: "http://127.0.0.1:3777",
         socketUrl: "ws://127.0.0.1:3777/ws",
+        httpAuthorization: null,
         target,
       });
     }),
@@ -232,6 +241,10 @@ describe("ConnectionResolver", () => {
               label: "Saved",
               httpBaseUrl: input.httpBaseUrl,
               socketUrl: "wss://environment.example.test/ws?wsTicket=ticket",
+              httpAuthorization: {
+                _tag: "Bearer" as const,
+                token: input.bearerToken,
+              },
             }),
           ),
       });
@@ -285,6 +298,10 @@ describe("ConnectionResolver", () => {
               label: "Cloud",
               httpBaseUrl: ENDPOINT.httpBaseUrl,
               socketUrl: "wss://environment.example.test/ws?wsTicket=dpop",
+              httpAuthorization: {
+                _tag: "Dpop" as const,
+                accessToken: "dpop-access-token",
+              },
             }),
           ),
       });
@@ -318,6 +335,10 @@ describe("ConnectionResolver", () => {
               label: "Cloud",
               httpBaseUrl: ENDPOINT.httpBaseUrl,
               socketUrl: "wss://environment.example.test/ws?wsTicket=dpop",
+              httpAuthorization: {
+                _tag: "Dpop" as const,
+                accessToken: "dpop-access-token",
+              },
             }),
             Effect.withSpan("test.remote.authorizeDpop"),
           ),

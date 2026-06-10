@@ -19,6 +19,17 @@ describe("isTransportConnectionErrorMessage", () => {
     ).toBe(true);
   });
 
+  it("recognizes connection errors emitted by the Effect RPC session", () => {
+    expect(isTransportConnectionErrorMessage("Test environment disconnected.")).toBe(true);
+    expect(
+      isTransportConnectionErrorMessage(
+        "Test environment could not establish a WebSocket connection.",
+      ),
+    ).toBe(true);
+    expect(isTransportConnectionErrorMessage("Test environment is not connected.")).toBe(true);
+    expect(isTransportConnectionErrorMessage("ClientProtocolError: socket closed")).toBe(true);
+  });
+
   it("returns true for the T3 server WebSocket message", () => {
     expect(isTransportConnectionErrorMessage("Unable to connect to the T3 server WebSocket.")).toBe(
       true,

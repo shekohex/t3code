@@ -177,7 +177,7 @@ describe("ManagedRelayClient", () => {
     return Effect.gen(function* () {
       const relayClient = yield* ManagedRelayClient;
       const statusInput = {
-        clerkToken: "clerk-token",
+        clerkToken: clerkToken("user-1", "session-1"),
         scopes: [RelayEnvironmentStatusScope],
         environmentId: EnvironmentId.make("env-1"),
       } as const;
@@ -266,6 +266,62 @@ describe("ManagedRelayClient", () => {
 
       expect(tokenExchangeCount).toBe(1);
     });
+  });
+
+  it.effect("does not persist tokens when the Clerk subject cannot be decoded", () => {
+    let persistedTokens: ReadonlyArray<ManagedRelayAccessTokenCacheEntry> = [];
+    const accessTokenStore: ManagedRelayAccessTokenStore = {
+      load: Effect.succeed([]),
+      save: (entries) =>
+        Effect.sync(() => {
+          persistedTokens = entries;
+        }),
+      clear: Effect.void,
+    };
+    const fetchFn = ((input) => {
+      const url = String(input);
+      if (url.endsWith("/v1/client/dpop-token")) {
+        return Promise.resolve(
+          Response.json({
+            access_token: "relay-token",
+            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+            token_type: "DPoP",
+            expires_in: 1_800,
+            scope: RelayEnvironmentStatusScope,
+          }),
+        );
+      }
+      return Promise.resolve(
+        Response.json({
+          environmentId: "env-1",
+          endpoint: {
+            httpBaseUrl: "https://desktop.example.test/",
+            wsBaseUrl: "wss://desktop.example.test/ws",
+            providerKind: "cloudflare_tunnel",
+          },
+          status: "online",
+          checkedAt: "2026-06-05T20:00:00.000Z",
+          descriptor: {
+            environmentId: "env-1",
+            label: "Desktop",
+            platform: { os: "darwin", arch: "arm64" },
+            serverVersion: "0.0.0-test",
+            capabilities: { repositoryIdentity: true },
+          },
+        }),
+      );
+    }) satisfies typeof globalThis.fetch;
+
+    return Effect.gen(function* () {
+      const relayClient = yield* ManagedRelayClient;
+      yield* relayClient.getEnvironmentStatus({
+        clerkToken: "not-a-jwt",
+        scopes: [RelayEnvironmentStatusScope],
+        environmentId: EnvironmentId.make("env-1"),
+      });
+
+      expect(persistedTokens).toEqual([]);
+    }).pipe(Effect.provide(managedRelayTestLayer(fetchFn, undefined, accessTokenStore)));
   });
 
   it.effect("times out stalled relay environment listing requests", () => {

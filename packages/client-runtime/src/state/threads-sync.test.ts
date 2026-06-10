@@ -181,11 +181,11 @@ const snapshot = (thread: OrchestrationThread): OrchestrationThreadStreamItem =>
   },
 });
 
-const titleUpdated = (title: string): OrchestrationThreadStreamItem => ({
+const titleUpdated = (title: string, sequence = 2): OrchestrationThreadStreamItem => ({
   kind: "event",
   event: {
     eventId: EventId.make("event-title"),
-    sequence: 2,
+    sequence,
     occurredAt: "2026-04-01T01:00:00.000Z",
     commandId: null,
     causationEventId: null,
@@ -254,6 +254,25 @@ describe("EnvironmentThreads", () => {
 
       expect(Option.getOrThrow(state.data).title).toBe("Live title");
       expect((yield* Ref.get(harness.savedThreads)).at(-1)?.title).toBe("Live title");
+    }),
+  );
+
+  it.effect("ignores replayed thread events at or below the snapshot sequence", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+      yield* Queue.offer(harness.inputs, snapshot(BASE_THREAD));
+      yield* Queue.offer(harness.inputs, titleUpdated("Replayed title", 1));
+      yield* Queue.offer(harness.inputs, titleUpdated("Live title", 2));
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.title === "Live title",
+      );
+
+      expect(Option.getOrThrow(state.data).title).toBe("Live title");
     }),
   );
 

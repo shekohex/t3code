@@ -11,6 +11,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import { RpcClientError } from "effect/unstable/rpc";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -24,7 +25,7 @@ import {
 } from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { runStream, subscribe } from "./client.ts";
+import { EnvironmentRpcRequestObserver, request, runStream, subscribe } from "./client.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -74,6 +75,40 @@ const makeHarness = Effect.fn("TestEnvironmentRpc.makeHarness")(function* () {
 });
 
 describe("environment RPC", () => {
+  it.effect("observes unary requests until they complete", () =>
+    Effect.gen(function* () {
+      const observations: string[] = [];
+      const client = {
+        [WS_METHODS.cloudGetRelayClientStatus]: () =>
+          Effect.succeed({ status: "available", version: "2026.6.0" }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+
+      const result = yield* request(WS_METHODS.cloudGetRelayClientStatus, {}).pipe(
+        Effect.provideService(EnvironmentSupervisor, supervisor),
+        Effect.provideService(
+          EnvironmentRpcRequestObserver,
+          EnvironmentRpcRequestObserver.of({
+            observe: ({ environmentId, method }) =>
+              Effect.sync(() => {
+                observations.push(`start:${environmentId}:${method}`);
+                return Effect.sync(() => {
+                  observations.push(`finish:${environmentId}:${method}`);
+                });
+              }),
+          }),
+        ),
+      );
+
+      expect(result).toEqual({ status: "available", version: "2026.6.0" });
+      expect(observations).toEqual([
+        `start:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}`,
+        `finish:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}`,
+      ]);
+    }),
+  );
+
   it.effect("binds finite streaming commands to one active session", () =>
     Effect.gen(function* () {
       const firstEvents = yield* Queue.unbounded<RelayClientInstallProgressEvent>();
@@ -141,6 +176,52 @@ describe("environment RPC", () => {
       yield* awaitSubscriptions(1);
       yield* SubscriptionRef.set(activeSession, Option.some(session(secondClient)));
       yield* awaitSubscriptions(2);
+      yield* Fiber.interrupt(subscriptionFiber);
+
+      expect(subscriptions).toEqual(["first", "second"]);
+      expect(yield* Ref.get(retryCount)).toBe(0);
+    }),
+  );
+
+  it.effect("keeps durable subscriptions alive across a transport failure and new session", () =>
+    Effect.gen(function* () {
+      const subscriptions: string[] = [];
+      const firstClient = {
+        [WS_METHODS.subscribeTerminalEvents]: () => {
+          subscriptions.push("first");
+          return Stream.fail(
+            new RpcClientError.RpcClientError({
+              reason: new RpcClientError.RpcClientDefect({
+                message: "socket closed",
+                cause: new Error("socket closed"),
+              }),
+            }),
+          );
+        },
+      } as unknown as WsRpcProtocolClient;
+      const secondClient = {
+        [WS_METHODS.subscribeTerminalEvents]: () => {
+          subscriptions.push("second");
+          return Stream.never;
+        },
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, retryCount, supervisor } = yield* makeHarness();
+
+      const subscriptionFiber = yield* subscribe(WS_METHODS.subscribeTerminalEvents, {}).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      yield* SubscriptionRef.set(activeSession, Option.some(session(firstClient)));
+      for (let attempt = 0; attempt < 100 && subscriptions.length < 1; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      yield* SubscriptionRef.set(activeSession, Option.none());
+      yield* SubscriptionRef.set(activeSession, Option.some(session(secondClient)));
+
+      for (let attempt = 0; attempt < 100 && subscriptions.length < 2; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
       yield* Fiber.interrupt(subscriptionFiber);
 
       expect(subscriptions).toEqual(["first", "second"]);

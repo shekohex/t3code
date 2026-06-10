@@ -1,9 +1,12 @@
 import { ORCHESTRATION_WS_METHODS, type ServerConfig, WS_METHODS } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import { RpcClientError } from "effect/unstable/rpc";
 
 import type { ConnectionAttemptError } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
@@ -16,6 +19,21 @@ export class EnvironmentRpcUnavailableError extends Schema.TaggedErrorClass<Envi
     message: Schema.String,
   },
 ) {}
+
+export interface EnvironmentRpcRequestObservation {
+  readonly environmentId: string;
+  readonly method: string;
+}
+
+export class EnvironmentRpcRequestObserver extends Context.Reference<{
+  readonly observe: (
+    request: EnvironmentRpcRequestObservation,
+  ) => Effect.Effect<Effect.Effect<void>>;
+}>("@t3tools/client-runtime/rpc/EnvironmentRpcRequestObserver", {
+  defaultValue: () => ({
+    observe: () => Effect.succeed(Effect.void),
+  }),
+}) {}
 
 export type EnvironmentRpcTag = keyof WsRpcProtocolClient & string;
 type RpcMethod<TTag extends EnvironmentRpcTag> = WsRpcProtocolClient[TTag];
@@ -40,6 +58,7 @@ export type EnvironmentStreamRpcTag =
   | EnvironmentStreamCommandRpcTag;
 
 export type EnvironmentUnaryRpcTag = Exclude<EnvironmentRpcTag, EnvironmentStreamRpcTag>;
+const isRpcClientError = Schema.is(RpcClientError.RpcClientError);
 
 export type EnvironmentRpcInput<TTag extends EnvironmentRpcTag> = Parameters<RpcMethod<TTag>>[0];
 
@@ -84,12 +103,21 @@ const currentSession = Effect.fn("EnvironmentRpc.currentSession")(function* () {
 export const request = Effect.fn("EnvironmentRpc.request")(function* <
   TTag extends EnvironmentUnaryRpcTag,
 >(tag: TTag, input: EnvironmentRpcInput<TTag>) {
-  yield* Effect.annotateCurrentSpan({ "rpc.method": tag });
+  const supervisor = yield* EnvironmentSupervisor;
+  yield* Effect.annotateCurrentSpan({
+    "environment.id": supervisor.target.environmentId,
+    "rpc.method": tag,
+  });
   const session = yield* currentSession();
+  const observer = yield* EnvironmentRpcRequestObserver;
   const method = session.client[tag] as (
     input: EnvironmentRpcInput<TTag>,
   ) => Effect.Effect<EnvironmentRpcSuccess<TTag>, EnvironmentRpcFailure<TTag>>;
-  return yield* method(input);
+  const completeObservation = yield* observer.observe({
+    environmentId: supervisor.target.environmentId,
+    method: tag,
+  });
+  return yield* method(input).pipe(Effect.ensuring(completeObservation));
 });
 
 export function runStream<TTag extends EnvironmentStreamCommandRpcTag>(
@@ -138,7 +166,28 @@ export function subscribe<TTag extends EnvironmentSubscriptionRpcTag>(
                   EnvironmentRpcStreamValue<TTag>,
                   EnvironmentRpcStreamFailure<TTag>
                 >;
-                return method(input);
+                return method(input).pipe(
+                  Stream.catchCause((cause) => {
+                    const isTransportFailure =
+                      cause.reasons.length > 0 &&
+                      cause.reasons.every(
+                        (reason) => reason._tag === "Fail" && isRpcClientError(reason.error),
+                      );
+                    if (!isTransportFailure) {
+                      return Stream.failCause(cause);
+                    }
+                    return Stream.fromEffect(
+                      Effect.logWarning(
+                        "Durable RPC subscription lost its transport; waiting for the next session.",
+                        {
+                          cause: Cause.pretty(cause),
+                          method: tag,
+                          environmentId: supervisor.target.environmentId,
+                        },
+                      ),
+                    ).pipe(Stream.drain);
+                  }),
+                );
               },
             }),
           ),

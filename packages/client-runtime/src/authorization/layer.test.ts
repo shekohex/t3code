@@ -267,7 +267,7 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
-  it.effect("preserves a valid cached token when its endpoint is temporarily unavailable", () =>
+  it.effect("refreshes a cached endpoint after consecutive transient failures", () =>
     Effect.gen(function* () {
       const cached = new RemoteDpopAccessToken({
         environmentId: ENVIRONMENT_ID,
@@ -279,28 +279,42 @@ describe("RemoteEnvironmentAuthorization", () => {
       });
       const harness = yield* makeHarness({
         initialToken: cached,
-        responses: [new Response("endpoint unavailable", { status: 503 })],
+        responses: [
+          new Response("endpoint unavailable", { status: 503 }),
+          new Response("endpoint still unavailable", { status: 503 }),
+          Response.json(DESCRIPTOR),
+          accessToken("replacement-access-token"),
+          websocketTicket("replacement-ticket"),
+        ],
       });
 
-      const error = yield* Effect.gen(function* () {
+      const authorized = yield* Effect.gen(function* () {
         const remote = yield* RemoteEnvironmentAuthorization;
+        const firstFailure = yield* remote
+          .authorizeDpop({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            obtainBootstrap: harness.obtainBootstrap,
+          })
+          .pipe(Effect.flip);
+
+        expect(firstFailure._tag).toBe("ConnectionTransientError");
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+        expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)).toBe(cached);
+
         return yield* remote.authorizeDpop({
           expectedEnvironmentId: ENVIRONMENT_ID,
           obtainBootstrap: harness.obtainBootstrap,
         });
-      }).pipe(Effect.provide(harness.layer), Effect.flip);
+      }).pipe(Effect.provide(harness.layer));
 
-      expect(error).toMatchObject({
-        _tag: "ConnectionTransientError",
-        reason: "remote-unavailable",
-      });
-      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+      expect(authorized.socketUrl).toContain("wsTicket=replacement-ticket");
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
       expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)).toEqual(
         expect.objectContaining({
-          accessToken: "cached-access-token",
+          accessToken: "replacement-access-token",
         }),
       );
-      expect(harness.fetch.calls).toHaveLength(1);
+      expect(harness.fetch.calls).toHaveLength(5);
     }),
   );
 

@@ -76,6 +76,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     status: statusWithoutLiveData(cached),
     error: Option.none(),
   });
+  const lastSequence = yield* SubscriptionRef.make(0);
   const persistence = yield* Queue.sliding<OrchestrationThread>(1);
 
   const persist = Effect.fn("EnvironmentThreadState.persist")(function* (
@@ -159,9 +160,16 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     item: OrchestrationThreadStreamItem,
   ) {
     if (item.kind === "snapshot") {
+      yield* SubscriptionRef.set(lastSequence, item.snapshot.snapshotSequence);
       yield* setThread(item.snapshot.thread);
       return;
     }
+
+    const sequence = yield* SubscriptionRef.get(lastSequence);
+    if (item.event.sequence <= sequence) {
+      return;
+    }
+    yield* SubscriptionRef.set(lastSequence, item.event.sequence);
 
     const current = yield* SubscriptionRef.get(state);
     if (Option.isNone(current.data)) {

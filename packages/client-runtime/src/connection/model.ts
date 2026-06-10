@@ -98,11 +98,22 @@ export class ConnectionBlockedError extends Schema.TaggedErrorClass<ConnectionBl
 
 export type ConnectionAttemptError = ConnectionTransientError | ConnectionBlockedError;
 
+export type PreparedHttpAuthorization =
+  | {
+      readonly _tag: "Bearer";
+      readonly token: string;
+    }
+  | {
+      readonly _tag: "Dpop";
+      readonly accessToken: string;
+    };
+
 export interface PreparedConnection {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly httpBaseUrl: string;
   readonly socketUrl: string;
+  readonly httpAuthorization: PreparedHttpAuthorization | null;
   readonly target: ConnectionTarget;
 }
 

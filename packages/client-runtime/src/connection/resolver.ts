@@ -65,6 +65,7 @@ const primaryBroker = Effect.fn("clientRuntime.connection.broker.primary")(
       label: target.label,
       httpBaseUrl: target.httpBaseUrl,
       socketUrl: primarySocketUrl(target),
+      httpAuthorization: null,
       target,
     } satisfies PreparedConnection),
 );
@@ -115,6 +116,7 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
       label: authorized.label,
       httpBaseUrl: authorized.httpBaseUrl,
       socketUrl: authorized.socketUrl,
+      httpAuthorization: authorized.httpAuthorization,
       target,
     } satisfies PreparedConnection;
   });
@@ -159,6 +161,7 @@ const makeRelayBroker = Effect.fn("clientRuntime.connection.broker.makeRelay")(f
         label: authorized.label,
         httpBaseUrl: authorized.httpBaseUrl,
         socketUrl: authorized.socketUrl,
+        httpAuthorization: authorized.httpAuthorization,
         target,
       } satisfies PreparedConnection;
     },
@@ -216,6 +219,7 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
       label: authorized.label,
       httpBaseUrl: authorized.httpBaseUrl,
       socketUrl: authorized.socketUrl,
+      httpAuthorization: authorized.httpAuthorization,
       target,
     } satisfies PreparedConnection;
   });

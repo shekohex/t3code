@@ -230,11 +230,13 @@ function tokenMatches(
   );
 }
 
-function relayAccountId(clerkToken: string): string {
+function relayAccountId(clerkToken: string): Option.Option<string> {
   try {
-    return decodeRelayJwt(clerkToken).sub ?? clerkToken;
+    return Option.fromNullishOr(decodeRelayJwt(clerkToken).sub).pipe(
+      Option.filter((subject) => subject.length > 0),
+    );
   } catch {
-    return clerkToken;
+    return Option.none();
   }
 }
 
@@ -374,19 +376,30 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
           });
           const nowMillis = yield* Clock.currentTimeMillis;
           const accountId = relayAccountId(input.clerkToken);
-          type TokenCacheResult = {
-            readonly token: ManagedRelayAccessTokenCacheEntry;
-            readonly tokens: ReadonlyArray<ManagedRelayAccessTokenCacheEntry>;
-            readonly changed: boolean;
-          };
-          const result = yield* SynchronizedRef.modifyEffect(cachedTokens, (tokens) =>
+          if (Option.isNone(accountId)) {
+            yield* Effect.annotateCurrentSpan({
+              "relay.token_cache.result": "bypass",
+              "relay.token_cache.bypass_reason": "invalid_subject_token",
+            });
+            const response = yield* exchangeAccessToken(input);
+            return {
+              accountId: "",
+              clientId: options.clientId,
+              relayUrl,
+              thumbprint: input.thumbprint,
+              scopes: input.scopes,
+              accessToken: response.access_token,
+              expiresAtMillis: nowMillis + response.expires_in * 1_000,
+            } satisfies ManagedRelayAccessTokenCacheEntry;
+          }
+          return yield* SynchronizedRef.modifyEffect(cachedTokens, (tokens) =>
             Effect.gen(function* () {
               const activeTokens = tokens.filter(
                 (token) => token.expiresAtMillis > nowMillis + 5_000,
               );
               const cached = activeTokens.find((token) =>
                 tokenMatches(token, {
-                  accountId,
+                  accountId: accountId.value,
                   clientId: options.clientId,
                   relayUrl,
                   thumbprint: input.thumbprint,
@@ -398,19 +411,14 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 yield* Effect.annotateCurrentSpan({
                   "relay.token_cache.result": "hit",
                 });
-                const result: TokenCacheResult = {
-                  token: cached,
-                  tokens: activeTokens,
-                  changed: false,
-                };
-                return [result, activeTokens] as const;
+                return [cached, activeTokens] as const;
               }
               yield* Effect.annotateCurrentSpan({
                 "relay.token_cache.result": "miss",
               });
               const response = yield* exchangeAccessToken(input);
               const next: ManagedRelayAccessTokenCacheEntry = {
-                accountId,
+                accountId: accountId.value,
                 clientId: options.clientId,
                 relayUrl,
                 thumbprint: input.thumbprint,
@@ -419,18 +427,12 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
                 expiresAtMillis: nowMillis + response.expires_in * 1_000,
               };
               const nextTokens = [...activeTokens, next];
-              const result: TokenCacheResult = {
-                token: next,
-                tokens: nextTokens,
-                changed: true,
-              };
-              return [result, nextTokens] as const;
+              if (options.accessTokenStore) {
+                yield* options.accessTokenStore.save(nextTokens);
+              }
+              return [next, nextTokens] as const;
             }),
           ).pipe(Effect.withSpan("clientRuntime.managedRelay.tokenCacheCriticalSection"));
-          if (result.changed && options.accessTokenStore) {
-            yield* options.accessTokenStore.save(result.tokens);
-          }
-          return result.token;
         },
       );
 

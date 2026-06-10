@@ -69,6 +69,7 @@ const PREPARED: PreparedConnection = {
   label: TARGET.label,
   httpBaseUrl: TARGET.httpBaseUrl,
   socketUrl: "wss://environment.example.test/ws",
+  httpAuthorization: null,
   target: TARGET,
 };
 
@@ -580,6 +581,62 @@ describe("EnvironmentRegistry", () => {
         );
         expect(yield* Ref.get(harness.sessions)).toHaveLength(1);
       }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("moves durable streams to a replacement supervisor", () =>
+    Effect.gen(function* () {
+      const replacement = new RelayConnectionTarget({
+        environmentId: RELAY_TARGET.environmentId,
+        label: "Replacement relay environment",
+      });
+      const harness = yield* makeHarness([RELAY_TARGET]);
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry;
+        const firstObserved = yield* Deferred.make<void>();
+        const secondObserved = yield* Deferred.make<void>();
+        const labels = yield* Ref.make<ReadonlyArray<string>>([]);
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          RELAY_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        const subscription = yield* Effect.forkChild(
+          registry
+            .followStream(
+              RELAY_TARGET.environmentId,
+              Stream.unwrap(
+                EnvironmentSupervisor.pipe(
+                  Effect.map((supervisor) =>
+                    Stream.concat(Stream.succeed(supervisor.target.label), Stream.never),
+                  ),
+                ),
+              ),
+            )
+            .pipe(
+              Stream.tap((label) =>
+                Ref.updateAndGet(labels, (current) => [...current, label]).pipe(
+                  Effect.flatMap((current) =>
+                    current.length === 1
+                      ? Deferred.succeed(firstObserved, undefined)
+                      : Deferred.succeed(secondObserved, undefined),
+                  ),
+                ),
+              ),
+              Stream.runDrain,
+            ),
+        );
+
+        yield* Deferred.await(firstObserved).pipe(Effect.timeout("1 second"));
+        yield* registry.register(new RelayConnectionRegistration({ target: replacement }));
+        yield* Deferred.await(secondObserved).pipe(Effect.timeout("1 second"));
+        yield* Fiber.interrupt(subscription);
+
+        expect(yield* Ref.get(labels)).toEqual([RELAY_TARGET.label, replacement.label]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
 

@@ -2,10 +2,17 @@ import { AuthStandardClientScopes, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import { ClientPresentation, SshEnvironmentGateway } from "../platform/capabilities.ts";
-import { preparePairingRegistration, prepareSshRegistration } from "./onboarding.ts";
+import { BearerConnectionCredential, BearerConnectionProfile } from "./catalog.ts";
+import { BearerConnectionTarget } from "./model.ts";
+import {
+  prepareBearerConnectionUpdate,
+  preparePairingRegistration,
+  prepareSshRegistration,
+} from "./onboarding.ts";
 
 const CLIENT_PRESENTATION_LAYER = Layer.succeed(
   ClientPresentation,
@@ -120,6 +127,51 @@ describe("connection onboarding", () => {
         message: "Enter a backend URL.",
       });
       expect(calls).toEqual([]);
+    }),
+  );
+
+  it.effect("updates bearer metadata while preserving the credential and identity", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("environment-paired");
+      const registration = yield* prepareBearerConnectionUpdate({
+        input: {
+          environmentId,
+          label: "  Renamed environment  ",
+          httpBaseUrl: "http://100.65.180.100:3773/path",
+        },
+        entry: Option.some({
+          target: new BearerConnectionTarget({
+            environmentId,
+            label: "Old label",
+            connectionId: "bearer:environment-paired",
+          }),
+          profile: Option.some(
+            new BearerConnectionProfile({
+              connectionId: "bearer:environment-paired",
+              environmentId,
+              label: "Old label",
+              httpBaseUrl: "http://old.example.test/",
+              wsBaseUrl: "ws://old.example.test/",
+            }),
+          ),
+        }),
+        credential: Option.some(new BearerConnectionCredential({ token: "bearer-token" })),
+      });
+
+      expect(registration).toMatchObject({
+        target: {
+          environmentId,
+          label: "Renamed environment",
+          connectionId: "bearer:environment-paired",
+        },
+        profile: {
+          environmentId,
+          label: "Renamed environment",
+          httpBaseUrl: "http://100.65.180.100:3773/",
+          wsBaseUrl: "ws://100.65.180.100:3773/",
+        },
+        credential: { token: "bearer-token" },
+      });
     }),
   );
 

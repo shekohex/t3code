@@ -10,6 +10,19 @@ import type { PreparedConnection } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
+export function initialConfigOption<E>(
+  initialConfig: Effect.Effect<ServerConfig, E>,
+): Effect.Effect<Option.Option<ServerConfig>> {
+  return initialConfig.pipe(
+    Effect.map(Option.some),
+    Effect.catch((error) =>
+      Effect.logWarning("Could not load the initial environment configuration.", {
+        error,
+      }).pipe(Effect.as(Option.none<ServerConfig>())),
+    ),
+  );
+}
+
 export function createEnvironmentSessionAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
@@ -24,7 +37,7 @@ export function createEnvironmentSessionAtoms<R, E>(
                 Stream.mapEffect(
                   Option.match({
                     onNone: () => Effect.succeed(Option.none<ServerConfig>()),
-                    onSome: (session) => session.initialConfig.pipe(Effect.map(Option.some)),
+                    onSome: (session) => initialConfigOption(session.initialConfig),
                   }),
                 ),
               ),

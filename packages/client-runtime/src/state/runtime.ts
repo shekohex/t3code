@@ -9,6 +9,8 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { EnvironmentNotRegisteredError, EnvironmentRegistry } from "../connection/registry.ts";
 import {
   type EnvironmentRpcInput,
+  type EnvironmentRpcStreamFailure,
+  type EnvironmentRpcStreamValue,
   type EnvironmentStreamCommandRpcTag,
   type EnvironmentSubscriptionRpcTag,
   type EnvironmentUnaryRpcTag,
@@ -89,23 +91,7 @@ export function followStreamInEnvironment<A, E, R>(
 ): Stream.Stream<A, E, EnvironmentRegistry | Exclude<R, EnvironmentSupervisor>> {
   return Stream.unwrap(
     EnvironmentRegistry.pipe(
-      Effect.map((registry) =>
-        SubscriptionRef.changes(registry.entries).pipe(
-          Stream.map((entries) => Option.fromUndefinedOr(entries.get(environmentId))),
-          Stream.changes,
-          Stream.switchMap(
-            Option.match({
-              onNone: () => Stream.empty,
-              onSome: () =>
-                Stream.catchTag(
-                  registry.runStream(environmentId, stream),
-                  "EnvironmentNotRegisteredError",
-                  () => Stream.empty,
-                ),
-            }),
-          ),
-        ),
-      ),
+      Effect.map((registry) => registry.followStream(environmentId, stream)),
     ),
   );
 }
@@ -230,18 +216,31 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
   R,
   ER,
   TTag extends EnvironmentSubscriptionRpcTag,
+  B = EnvironmentRpcStreamValue<TTag>,
 >(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
   options: {
     readonly label: string;
     readonly tag: TTag;
     readonly idleTtlMs?: number;
+    readonly transform?: (
+      stream: Stream.Stream<
+        EnvironmentRpcStreamValue<TTag>,
+        EnvironmentRpcStreamFailure<TTag>,
+        EnvironmentSupervisor | R
+      >,
+    ) => Stream.Stream<B, EnvironmentRpcStreamFailure<TTag>, EnvironmentSupervisor | R>;
   },
 ) {
   return createEnvironmentSubscriptionAtomFamily(runtime, {
     label: options.label,
     ...(options.idleTtlMs === undefined ? {} : { idleTtlMs: options.idleTtlMs }),
-    subscribe: (input: EnvironmentRpcInput<TTag>) => subscribe(options.tag, input),
+    subscribe: (input: EnvironmentRpcInput<TTag>) => {
+      const stream = subscribe(options.tag, input);
+      return options.transform === undefined
+        ? (stream as Stream.Stream<B, EnvironmentRpcStreamFailure<TTag>, EnvironmentSupervisor | R>)
+        : options.transform(stream);
+    },
   });
 }
 
