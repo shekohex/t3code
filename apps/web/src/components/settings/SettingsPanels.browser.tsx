@@ -33,8 +33,11 @@ import {
 } from "@tanstack/react-router";
 
 import { __resetLocalApiForTests } from "../../localApi";
-import { AppAtomRegistryProvider, resetAppAtomRegistryForTests } from "../../rpc/atomRegistry";
-import { resetServerStateForTests, setServerConfigSnapshot } from "../../rpc/serverState";
+import {
+  appAtomRegistry,
+  AppAtomRegistryProvider,
+  resetAppAtomRegistryForTests,
+} from "../../rpc/atomRegistry";
 import { useUiStateStore } from "../../uiStateStore";
 import { ConnectionsSettings } from "./ConnectionsSettings";
 import { DiagnosticsSettingsPanel } from "./DiagnosticsSettings";
@@ -189,6 +192,17 @@ const directAtomMocks = vi.hoisted(() => ({
   signalProcessAction: Symbol("signal-process-action"),
   updateProviderAction: Symbol("update-provider-action"),
 }));
+const serverConfigHarness = vi.hoisted(() => ({
+  configAtom: null as unknown,
+}));
+
+function setServerConfigSnapshot(config: ServerConfig): void {
+  appAtomRegistry.set(serverConfigHarness.configAtom as never, config as never);
+}
+
+function resetServerConfigSnapshot(): void {
+  appAtomRegistry.set(serverConfigHarness.configAtom as never, null as never);
+}
 
 vi.mock("@effect/atom-react", async () => {
   const actual = await vi.importActual<typeof import("@effect/atom-react")>("@effect/atom-react");
@@ -500,8 +514,27 @@ vi.mock("../../state/query", async () => {
 
 vi.mock("../../state/server", async () => {
   const actual = await vi.importActual<typeof import("../../state/server")>("../../state/server");
+  const { Atom } = await import("effect/unstable/reactivity");
+  const { DEFAULT_RESOLVED_KEYBINDINGS } = await import("@t3tools/shared/keybindings");
+  const { DEFAULT_SERVER_SETTINGS: defaultServerSettings } = await import("@t3tools/contracts");
+  const configAtom = Atom.make<ServerConfig | null>(null);
+  serverConfigHarness.configAtom = configAtom;
+
   return {
     ...actual,
+    primaryServerConfigAtom: configAtom,
+    primaryServerSettingsAtom: Atom.make(
+      (get) => get(configAtom)?.settings ?? defaultServerSettings,
+    ),
+    primaryServerProvidersAtom: Atom.make((get) => get(configAtom)?.providers ?? []),
+    primaryServerKeybindingsAtom: Atom.make(
+      (get) => get(configAtom)?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
+    ),
+    primaryServerAvailableEditorsAtom: Atom.make((get) => get(configAtom)?.availableEditors ?? []),
+    primaryServerKeybindingsConfigPathAtom: Atom.make(
+      (get) => get(configAtom)?.keybindingsConfigPath ?? null,
+    ),
+    primaryServerObservabilityAtom: Atom.make((get) => get(configAtom)?.observability ?? null),
     serverEnvironment: {
       ...actual.serverEnvironment,
       processDiagnostics: () => ({ kind: serverQueryKinds.processDiagnostics }),
@@ -547,13 +580,14 @@ vi.mock("../../state/shell", async () => {
 
 vi.mock("../../state/environments", async () => {
   const React = await import("react");
+  const { useAtomValue } = await import("@effect/atom-react");
   const EffectOption = await import("effect/Option");
   const { EnvironmentId: EnvironmentIdSchema } = await import("@t3tools/contracts");
-  const { useServerConfig } = await import("../../rpc/serverState");
+  const { primaryServerConfigAtom: serverConfigAtom } = await import("../../state/server");
   const environmentId = EnvironmentIdSchema.make("environment-local");
 
   const usePrimaryEnvironment = () => {
-    const serverConfig = useServerConfig();
+    const serverConfig = useAtomValue(serverConfigAtom);
     return React.useMemo(
       () => ({
         environmentId,
@@ -895,7 +929,7 @@ describe("GeneralSettingsPanel observability", () => {
     | null = null;
 
   beforeEach(async () => {
-    resetServerStateForTests();
+    resetServerConfigSnapshot();
     await __resetLocalApiForTests();
     localStorage.clear();
     useUiStateStore.setState({ defaultAdvertisedEndpointKey: null });
@@ -913,7 +947,7 @@ describe("GeneralSettingsPanel observability", () => {
     Reflect.deleteProperty(window, "desktopBridge");
     Reflect.deleteProperty(window, "nativeApi");
     document.body.innerHTML = "";
-    resetServerStateForTests();
+    resetServerConfigSnapshot();
     await __resetLocalApiForTests();
     authAccessHarness.reset();
   });

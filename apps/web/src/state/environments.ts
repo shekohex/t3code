@@ -30,7 +30,7 @@ export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly relayManaged: boolean;
 }
 
-const primaryEnvironmentIdAtom = Atom.make((get) => {
+export const primaryEnvironmentIdAtom = Atom.make((get) => {
   for (const [environmentId, entry] of get(environmentCatalog.catalogValueAtom).entries) {
     if (entry.target._tag === "PrimaryConnectionTarget") {
       return environmentId;
