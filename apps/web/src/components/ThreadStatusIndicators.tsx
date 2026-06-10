@@ -6,7 +6,7 @@ import {
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { CloudIcon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
-import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { useProject } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
@@ -216,13 +216,11 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
     environmentId: thread.environmentId,
     threadId: thread.id,
   });
-  const { environments } = useEnvironments();
-  const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const environment = useEnvironment(thread.environmentId);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const isRemoteThread =
     primaryEnvironmentId !== null && thread.environmentId !== primaryEnvironmentId;
-  const remoteEnvLabel =
-    environments.find((environment) => environment.environmentId === thread.environmentId)?.label ??
-    null;
+  const remoteEnvLabel = environment?.label ?? null;
   const threadEnvironmentLabel = isRemoteThread ? (remoteEnvLabel ?? "Remote") : null;
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
 

@@ -17,6 +17,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
 import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
+import { EnvironmentRpcRequestObserver } from "@t3tools/client-runtime/rpc";
 import { AuthStandardClientScopes } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -30,8 +31,12 @@ import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { primaryEnvironmentRequestInit } from "../environments/primary/requestInit";
 import { readPrimaryEnvironmentTarget } from "../environments/primary/target";
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
+import { isHostedStaticApp } from "../hostedPairing";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { acknowledgeRpcRequest, trackRpcRequestSent } from "../rpc/requestLatencyState";
 import { connectionStorageLayer } from "./storage";
+
+let nextObservedRpcRequestId = 0;
 
 function currentNetworkStatus(): "unknown" | "offline" | "online" {
   if (typeof navigator === "undefined") {
@@ -289,6 +294,11 @@ const primaryRegistrationRetrySchedule = Schedule.exponential("1 second").pipe(
 const platformConnectionSourceLayer = Layer.effect(
   PlatformConnectionSource,
   Effect.gen(function* () {
+    if (isHostedStaticApp()) {
+      return PlatformConnectionSource.of({
+        registrations: Stream.empty,
+      });
+    }
     const httpClient = yield* HttpClient.HttpClient;
     return PlatformConnectionSource.of({
       registrations: Stream.fromEffect(
@@ -318,6 +328,21 @@ const environmentOwnedDataCleanupLayer = Layer.succeed(
   }),
 );
 
+const rpcRequestObserverLayer = Layer.succeed(
+  EnvironmentRpcRequestObserver,
+  EnvironmentRpcRequestObserver.of({
+    observe: ({ environmentId, method }) =>
+      Effect.sync(() => {
+        nextObservedRpcRequestId += 1;
+        const requestId = `${environmentId}:${nextObservedRpcRequestId}`;
+        trackRpcRequestSent(requestId, `${method} · ${environmentId}`);
+        return Effect.sync(() => {
+          acknowledgeRpcRequest(requestId);
+        });
+      }),
+  }),
+);
+
 export const connectionPlatformLayer = Layer.mergeAll(
   connectionStorageLayer,
   connectivityLayer,
@@ -325,4 +350,5 @@ export const connectionPlatformLayer = Layer.mergeAll(
   capabilitiesLayer,
   platformConnectionSourceLayer,
   environmentOwnedDataCleanupLayer,
+  rpcRequestObserverLayer,
 );

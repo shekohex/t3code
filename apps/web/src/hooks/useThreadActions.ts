@@ -6,7 +6,7 @@ import {
 import { type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useAtomSet } from "@effect/atom-react";
 import { useRouter } from "@tanstack/react-router";
-import { useCallback, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -289,10 +289,13 @@ export function useThreadActions() {
     [confirmThreadDelete, deleteThread, resolveThreadTarget],
   );
 
-  return {
-    archiveThread,
-    unarchiveThread,
-    deleteThread,
-    confirmAndDeleteThread,
-  };
+  return useMemo(
+    () => ({
+      archiveThread,
+      unarchiveThread,
+      deleteThread,
+      confirmAndDeleteThread,
+    }),
+    [archiveThread, confirmAndDeleteThread, deleteThread, unarchiveThread],
+  );
 }

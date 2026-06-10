@@ -1,25 +1,9 @@
-import type { ServerConfigStreamEvent, ServerLifecycleStreamEvent } from "@t3tools/contracts";
 import { useEffect, useRef } from "react";
 
-import { applyServerConfigEvent, emitWelcome, setServerConfigSnapshot } from "../rpc/serverState";
+import { emitWelcome, setServerConfigSnapshot } from "../rpc/serverState";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
 import { usePrimaryEnvironment } from "../state/environments";
-
-function serverConfigEventKey(event: ServerConfigStreamEvent): string {
-  switch (event.type) {
-    case "snapshot":
-      return `snapshot:${JSON.stringify(event.config)}`;
-    case "keybindingsUpdated":
-    case "providerStatuses":
-    case "settingsUpdated":
-      return `${event.type}:${JSON.stringify(event.payload)}`;
-  }
-}
-
-function serverLifecycleEventKey(event: ServerLifecycleStreamEvent): string {
-  return `${event.type}:${event.sequence}`;
-}
 
 export function ServerStateProjection() {
   const primaryEnvironment = usePrimaryEnvironment();
@@ -27,51 +11,33 @@ export function ServerStateProjection() {
   const config = useEnvironmentQuery(
     environmentId === null ? null : serverEnvironment.config({ environmentId, input: {} }),
   );
-  const configChanges = useEnvironmentQuery(
-    environmentId === null ? null : serverEnvironment.configChanges({ environmentId, input: {} }),
-  );
-  const lifecycleChanges = useEnvironmentQuery(
+  const configProjection = useEnvironmentQuery(
     environmentId === null
       ? null
-      : serverEnvironment.lifecycleChanges({ environmentId, input: {} }),
+      : serverEnvironment.configProjection({ environmentId, input: {} }),
+  );
+  const welcome = useEnvironmentQuery(
+    environmentId === null ? null : serverEnvironment.welcome({ environmentId, input: {} }),
   );
   const projectedConfigRef = useRef<unknown>(null);
-  const projectedConfigEventRef = useRef<string | null>(null);
-  const projectedLifecycleEventRef = useRef<string | null>(null);
+  const projectedWelcomeRef = useRef<unknown>(null);
 
   useEffect(() => {
-    if (config.data === null || projectedConfigRef.current === config.data) {
+    const projected = configProjection.data ?? config.data;
+    if (projected === null || projectedConfigRef.current === projected) {
       return;
     }
-    projectedConfigRef.current = config.data;
-    setServerConfigSnapshot(config.data);
-  }, [config.data]);
+    projectedConfigRef.current = projected;
+    setServerConfigSnapshot(projected);
+  }, [config.data, configProjection.data]);
 
   useEffect(() => {
-    if (configChanges.data === null) {
+    if (welcome.data === null || projectedWelcomeRef.current === welcome.data) {
       return;
     }
-    const key = serverConfigEventKey(configChanges.data);
-    if (projectedConfigEventRef.current === key) {
-      return;
-    }
-    projectedConfigEventRef.current = key;
-    applyServerConfigEvent(configChanges.data);
-  }, [configChanges.data]);
-
-  useEffect(() => {
-    if (lifecycleChanges.data === null) {
-      return;
-    }
-    const key = serverLifecycleEventKey(lifecycleChanges.data);
-    if (projectedLifecycleEventRef.current === key) {
-      return;
-    }
-    projectedLifecycleEventRef.current = key;
-    if (lifecycleChanges.data.type === "welcome") {
-      emitWelcome(lifecycleChanges.data.payload);
-    }
-  }, [lifecycleChanges.data]);
+    projectedWelcomeRef.current = welcome.data;
+    emitWelcome(welcome.data);
+  }, [welcome.data]);
 
   return null;
 }

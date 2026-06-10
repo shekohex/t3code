@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { FolderIcon } from "lucide-react";
 import { useState } from "react";
-import { useEnvironments } from "../state/environments";
+import { useEnvironment } from "../state/environments";
 
 const loadedProjectFaviconSrcs = new Set<string>();
 
@@ -10,12 +10,12 @@ export function ProjectFavicon(input: {
   cwd: string;
   className?: string;
 }) {
-  const { presentationById } = useEnvironments();
+  const environment = useEnvironment(input.environmentId);
   const src = (() => {
     try {
-      const baseUrl = presentationById.get(input.environmentId)
+      const baseUrl = environment
         ? (() => {
-            const entry = presentationById.get(input.environmentId)!.entry;
+            const entry = environment.entry;
             switch (entry.target._tag) {
               case "PrimaryConnectionTarget":
                 return entry.target.httpBaseUrl;

@@ -70,3 +70,5 @@ export const runtimeLayer = Layer.mergeAll(
 );
 
 export const runtime = ManagedRuntime.make(runtimeLayer);
+
+export const runtimeContextLayer = Layer.effectContext(runtime.contextEffect);
