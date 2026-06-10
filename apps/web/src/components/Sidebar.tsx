@@ -18,7 +18,7 @@ import {
   ThreadStatusLabel,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
-import { useAtomSet } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -42,6 +42,7 @@ import {
   type DesktopUpdateState,
   ProjectId,
   type ScopedThreadRef,
+  type ResolvedKeybindingsConfig,
   type SidebarProjectGroupingMode,
   type ThreadEnvMode,
   ThreadId,
@@ -180,7 +181,7 @@ import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { CommandDialogTrigger } from "./ui/command";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
-import { useServerKeybindings } from "../rpc/serverState";
+import { primaryServerKeybindingsAtom } from "../state/server";
 import {
   derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKey,
@@ -254,7 +255,7 @@ function projectGroupingModeDescription(mode: SidebarProjectGroupingMode): strin
 }
 
 function buildThreadJumpLabelMap(input: {
-  keybindings: ReturnType<typeof useServerKeybindings>;
+  keybindings: ResolvedKeybindingsConfig;
   platform: string;
   terminalOpen: boolean;
   threadJumpCommandByKey: ReadonlyMap<
@@ -2815,7 +2816,7 @@ export default function Sidebar() {
     select: (params) => resolveThreadRouteRef(params),
   });
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
-  const keybindings = useServerKeybindings();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const openAddProjectCommandPalette = useCommandPaletteStore((store) => store.openAddProject);
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<string>

@@ -50,8 +50,9 @@ import {
 } from "../lib/terminalContext";
 import { isMacPlatform } from "../lib/utils";
 import { __resetLocalApiForTests } from "../localApi";
-import { getServerConfig } from "../rpc/serverState";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { getRouter } from "../router";
+import { primaryServerConfigAtom } from "../state/server";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useUiStateStore } from "../uiStateStore";
@@ -574,7 +575,7 @@ function serverThreadPath(threadId: ThreadId): string {
 async function waitForAppBootstrap(): Promise<void> {
   await vi.waitFor(
     () => {
-      expect(getServerConfig()).not.toBeNull();
+      expect(appAtomRegistry.get(primaryServerConfigAtom)).not.toBeNull();
     },
     { timeout: 8_000, interval: 16 },
   );

@@ -7,7 +7,7 @@ import {
   InfoIcon,
   RefreshCwIcon,
 } from "lucide-react";
-import { useAtomSet } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type {
   ServerProcessDiagnosticsEntry,
@@ -20,9 +20,12 @@ import * as Option from "effect/Option";
 import { cn } from "../../lib/utils";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { formatRelativeTime } from "../../timestampFormat";
-import { useServerAvailableEditors, useServerObservability } from "../../rpc/serverState";
 import { useEnvironmentQuery } from "../../state/query";
-import { serverEnvironment } from "../../state/server";
+import {
+  primaryServerAvailableEditorsAtom,
+  primaryServerObservabilityAtom,
+  serverEnvironment,
+} from "../../state/server";
 import { shellEnvironment } from "../../state/shell";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { Button } from "../ui/button";
@@ -802,8 +805,8 @@ function DiagnosticsRefreshButton({
 }
 
 export function DiagnosticsSettingsPanel() {
-  const observability = useServerObservability();
-  const availableEditors = useServerAvailableEditors();
+  const observability = useAtomValue(primaryServerObservabilityAtom);
+  const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   const primaryEnvironment = usePrimaryEnvironment();
   const environmentId = primaryEnvironment?.environmentId ?? null;
   const signalServerProcess = useAtomSet(serverEnvironment.signalProcess, { mode: "promise" });

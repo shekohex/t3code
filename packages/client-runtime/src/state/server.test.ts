@@ -28,7 +28,9 @@ describe("server state projection", () => {
       payload: { settings },
     });
 
-    expect(Option.getOrThrow(projected).settings).toBe(settings);
+    const result = Option.getOrThrow(projected);
+    expect(result.config.settings).toBe(settings);
+    expect(result.latestEvent.type).toBe("settingsUpdated");
   });
 
   it("retains welcome when a ready event follows in the same stream chunk", () => {

@@ -1,65 +1,49 @@
-import { DEFAULT_SERVER_SETTINGS, type ServerConfigUpdatedPayload } from "@t3tools/contracts";
+import type { ServerConfigStreamEvent } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { ServerConfigUpdatedNotification } from "../rpc/serverState";
 import {
   createKeybindingsUpdateToastController,
   KEYBINDINGS_SUCCESS_TOAST_COOLDOWN_MS,
 } from "./KeybindingsUpdateToast.logic";
 
-const payload = {
-  issues: [],
-  providers: [],
-  settings: DEFAULT_SERVER_SETTINGS,
-} satisfies ServerConfigUpdatedPayload;
-
-function notification(
-  id: number,
-  overrides: Partial<ServerConfigUpdatedNotification> = {},
-): ServerConfigUpdatedNotification {
+function keybindingsEvent(
+  overrides: Partial<Extract<ServerConfigStreamEvent, { type: "keybindingsUpdated" }>> = {},
+): Extract<ServerConfigStreamEvent, { type: "keybindingsUpdated" }> {
   return {
-    id,
-    payload,
-    source: "keybindingsUpdated",
+    version: 1,
+    type: "keybindingsUpdated",
+    payload: {
+      keybindings: [],
+      issues: [],
+    },
     ...overrides,
   };
 }
 
 describe("keybindings update toast policy", () => {
-  it("ignores the notification that was already cached when the consumer mounted", () => {
-    const controller = createKeybindingsUpdateToastController({
-      initialNotificationId: 4,
-    });
-
-    expect(controller.handle(notification(4))).toBeNull();
-  });
-
   it("coalesces repeated successful reload notifications during the cooldown", () => {
     let now = 1_000;
     const controller = createKeybindingsUpdateToastController({
-      initialNotificationId: 0,
       now: () => now,
     });
 
-    expect(controller.handle(notification(1))).toEqual({ _tag: "Success" });
+    expect(controller.handle(keybindingsEvent())).toEqual({ _tag: "Success" });
 
     now += KEYBINDINGS_SUCCESS_TOAST_COOLDOWN_MS - 1;
-    expect(controller.handle(notification(2))).toBeNull();
+    expect(controller.handle(keybindingsEvent())).toBeNull();
 
     now += 1;
-    expect(controller.handle(notification(3))).toEqual({ _tag: "Success" });
+    expect(controller.handle(keybindingsEvent())).toEqual({ _tag: "Success" });
   });
 
   it("surfaces keybinding configuration issues", () => {
-    const controller = createKeybindingsUpdateToastController({
-      initialNotificationId: 0,
-    });
+    const controller = createKeybindingsUpdateToastController({});
 
     expect(
       controller.handle(
-        notification(1, {
+        keybindingsEvent({
           payload: {
-            ...payload,
+            keybindings: [],
             issues: [
               {
                 kind: "keybindings.malformed-config",
@@ -76,16 +60,14 @@ describe("keybindings update toast policy", () => {
   });
 
   it("ignores unrelated server config notifications", () => {
-    const controller = createKeybindingsUpdateToastController({
-      initialNotificationId: 0,
-    });
+    const controller = createKeybindingsUpdateToastController({});
 
     expect(
-      controller.handle(
-        notification(1, {
-          source: "settingsUpdated",
-        }),
-      ),
+      controller.handle({
+        version: 1,
+        type: "settingsUpdated",
+        payload: { settings: {} as never },
+      }),
     ).toBeNull();
   });
 });

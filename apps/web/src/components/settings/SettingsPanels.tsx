@@ -2,7 +2,7 @@ import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "luci
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef, useState } from "react";
-import { useAtomSet } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import {
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
@@ -47,7 +47,11 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
-import { serverEnvironment } from "../../state/server";
+import {
+  primaryServerObservabilityAtom,
+  primaryServerProvidersAtom,
+  serverEnvironment,
+} from "../../state/server";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
@@ -80,7 +84,6 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { useServerObservability, useServerProviders } from "../../rpc/serverState";
 
 const THEME_OPTIONS = [
   {
@@ -485,8 +488,8 @@ export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
-  const observability = useServerObservability();
-  const serverProviders = useServerProviders();
+  const observability = useAtomValue(primaryServerObservabilityAtom);
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const diagnosticsDescription = formatDiagnosticsDescription({
     localTracingEnabled: observability?.localTracingEnabled ?? false,
     otlpTracesEnabled: observability?.otlpTracesEnabled ?? false,
@@ -921,7 +924,7 @@ export function GeneralSettingsPanel() {
 export function ProviderSettingsPanel() {
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
-  const serverProviders = useServerProviders();
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const primaryEnvironment = usePrimaryEnvironment();
   const refreshServerProviders = useAtomSet(serverEnvironment.refreshProviders, {
     mode: "promise",

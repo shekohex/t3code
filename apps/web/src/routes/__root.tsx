@@ -7,7 +7,7 @@ import {
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
-import { useEffect, useEffectEvent, useRef } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { QueryClient } from "@tanstack/react-query";
 
 import { APP_DISPLAY_NAME } from "../branding";
@@ -31,22 +31,19 @@ import {
   derivePhysicalProjectKeyFromPath,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import {
-  getServerConfigUpdatedNotification,
-  ServerConfigUpdatedNotification,
-  useServerConfig,
-  useServerConfigUpdatedSubscription,
-  useServerWelcomeSubscription,
-} from "../rpc/serverState";
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
-import { ServerStateProjection } from "../rpc/ServerStateProjection";
 import { shellEnvironment } from "../state/shell";
-import { useAtomSet } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import {
+  primaryServerConfigAtom,
+  primaryServerConfigEventAtom,
+  primaryServerWelcomeAtom,
+} from "../state/server";
 import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
 import {
   createKeybindingsUpdateToastController,
@@ -119,7 +116,6 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
-        <ServerStateProjection />
         <RelayClientInstallDialog />
         <SshPasswordPromptDialog />
         <SlowRpcRequestToastCoordinator />
@@ -245,13 +241,15 @@ function EventRouter() {
   const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
   const primaryEnvironment = usePrimaryEnvironment();
   const openInEditor = useAtomSet(shellEnvironment.openInEditor, { mode: "promise" });
+  const serverConfig = useAtomValue(primaryServerConfigAtom);
+  const serverConfigEvent = useAtomValue(primaryServerConfigEventAtom);
+  const serverWelcome = useAtomValue(primaryServerWelcomeAtom);
   const readPathname = useEffectEvent(() => pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
-  const keybindingsToastControllerRef = useRef<KeybindingsUpdateToastController | null>(null);
-  keybindingsToastControllerRef.current ??= createKeybindingsUpdateToastController({
-    initialNotificationId: getServerConfigUpdatedNotification()?.id ?? 0,
-  });
-  const serverConfig = useServerConfig();
+  const handledConfigEventRef = useRef(serverConfigEvent);
+  const [keybindingsToastController] = useState<KeybindingsUpdateToastController>(() =>
+    createKeybindingsUpdateToastController({}),
+  );
 
   const handleWelcome = useEffectEvent((payload: ServerLifecycleWelcomePayload | null) => {
     if (!payload) return;
@@ -294,61 +292,59 @@ function EventRouter() {
     })().catch(() => undefined);
   });
 
-  const handleServerConfigUpdated = useEffectEvent(
-    (notification: ServerConfigUpdatedNotification | null) => {
-      const decision = keybindingsToastControllerRef.current?.handle(notification);
-      if (!decision) {
-        return;
-      }
+  const handleServerConfigUpdated = useEffectEvent(() => {
+    const decision = keybindingsToastController.handle(serverConfigEvent);
+    if (!decision) {
+      return;
+    }
 
-      if (decision._tag === "Success") {
-        toastManager.add({
-          type: "success",
-          title: "Keybindings updated",
-          description: "Keybindings configuration reloaded successfully.",
-        });
-        return;
-      }
+    if (decision._tag === "Success") {
+      toastManager.add({
+        type: "success",
+        title: "Keybindings updated",
+        description: "Keybindings configuration reloaded successfully.",
+      });
+      return;
+    }
 
-      toastManager.add(
-        stackedThreadToast({
-          type: "warning",
-          title: "Invalid keybindings configuration",
-          description: decision.message,
-          actionVariant: "outline",
-          actionProps: {
-            children: "Open keybindings.json",
-            onClick: () => {
-              if (!serverConfig || !primaryEnvironment) {
-                return;
-              }
+    toastManager.add(
+      stackedThreadToast({
+        type: "warning",
+        title: "Invalid keybindings configuration",
+        description: decision.message,
+        actionVariant: "outline",
+        actionProps: {
+          children: "Open keybindings.json",
+          onClick: () => {
+            if (!serverConfig || !primaryEnvironment) {
+              return;
+            }
 
-              const editor = resolveAndPersistPreferredEditor(serverConfig.availableEditors);
-              if (!editor) {
-                return;
-              }
-              void openInEditor({
-                environmentId: primaryEnvironment.environmentId,
-                input: {
-                  cwd: serverConfig.keybindingsConfigPath,
-                  editor,
-                },
-              }).catch((error) => {
-                toastManager.add(
-                  stackedThreadToast({
-                    type: "error",
-                    title: "Unable to open keybindings file",
-                    description:
-                      error instanceof Error ? error.message : "Unknown error opening file.",
-                  }),
-                );
-              });
-            },
+            const editor = resolveAndPersistPreferredEditor(serverConfig.availableEditors);
+            if (!editor) {
+              return;
+            }
+            void openInEditor({
+              environmentId: primaryEnvironment.environmentId,
+              input: {
+                cwd: serverConfig.keybindingsConfigPath,
+                editor,
+              },
+            }).catch((error) => {
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Unable to open keybindings file",
+                  description:
+                    error instanceof Error ? error.message : "Unknown error opening file.",
+                }),
+              );
+            });
           },
-        }),
-      );
-    },
-  );
+        },
+      }),
+    );
+  });
 
   useEffect(() => {
     if (!serverConfig) {
@@ -358,8 +354,17 @@ function EventRouter() {
     setActiveEnvironmentId(serverConfig.environment.environmentId);
   }, [serverConfig]);
 
-  useServerWelcomeSubscription(handleWelcome);
-  useServerConfigUpdatedSubscription(handleServerConfigUpdated);
+  useEffect(() => {
+    handleWelcome(serverWelcome);
+  }, [serverWelcome]);
+
+  useEffect(() => {
+    if (serverConfigEvent === null || handledConfigEventRef.current === serverConfigEvent) {
+      return;
+    }
+    handledConfigEventRef.current = serverConfigEvent;
+    handleServerConfigUpdated();
+  }, [serverConfigEvent]);
 
   return null;
 }
