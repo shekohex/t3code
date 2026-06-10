@@ -10,6 +10,7 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import * as Option from "effect/Option";
+import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
@@ -17,7 +18,7 @@ import {
   connectPairing as connectPairingAtom,
   connectSshEnvironment as connectSshEnvironmentAtom,
 } from "../connection/onboarding";
-import { environmentPresentations } from "./presentation";
+import { environmentPresentations, useEnvironmentPresentation } from "./presentation";
 import { useEnvironmentQuery } from "./query";
 import { relayEnvironmentDiscovery } from "./relay";
 import { usePreparedConnection } from "./session";
@@ -29,6 +30,28 @@ export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly relayManaged: boolean;
 }
 
+const primaryEnvironmentIdAtom = Atom.make((get) => {
+  for (const [environmentId, entry] of get(environmentCatalog.catalogValueAtom).entries) {
+    if (entry.target._tag === "PrimaryConnectionTarget") {
+      return environmentId;
+    }
+  }
+  return null;
+}).pipe(Atom.withLabel("web-primary-environment-id"));
+
+function projectEnvironmentPresentation(
+  environmentId: EnvironmentId,
+  presentation: BaseEnvironmentPresentation,
+): EnvironmentPresentation {
+  return {
+    ...presentation,
+    environmentId,
+    label: presentation.entry.target.label,
+    displayUrl: connectionCatalogDisplayUrl(presentation.entry),
+    relayManaged: presentation.entry.target._tag === "RelayConnectionTarget",
+  };
+}
+
 export function useEnvironments() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const networkStatus = useAtomValue(environmentCatalog.networkStatusValueAtom);
@@ -36,15 +59,8 @@ export function useEnvironments() {
 
   const environments = useMemo(
     () =>
-      [...presentationById.entries()].map(
-        ([environmentId, presentation]) =>
-          ({
-            ...presentation,
-            environmentId,
-            label: presentation.entry.target.label,
-            displayUrl: connectionCatalogDisplayUrl(presentation.entry),
-            relayManaged: presentation.entry.target._tag === "RelayConnectionTarget",
-          }) satisfies EnvironmentPresentation,
+      [...presentationById.entries()].map(([environmentId, presentation]) =>
+        projectEnvironmentPresentation(environmentId, presentation),
       ),
     [presentationById],
   );
@@ -57,15 +73,25 @@ export function useEnvironments() {
   };
 }
 
-export function usePrimaryEnvironment(): EnvironmentPresentation | null {
-  const { environments } = useEnvironments();
+export function usePrimaryEnvironmentId(): EnvironmentId | null {
+  return useAtomValue(primaryEnvironmentIdAtom);
+}
+
+export function useEnvironment(
+  environmentId: EnvironmentId | null,
+): EnvironmentPresentation | null {
+  const { presentation } = useEnvironmentPresentation(environmentId);
   return useMemo(
     () =>
-      environments.find(
-        (environment) => environment.entry.target._tag === "PrimaryConnectionTarget",
-      ) ?? null,
-    [environments],
+      environmentId === null || presentation === null
+        ? null
+        : projectEnvironmentPresentation(environmentId, presentation),
+    [environmentId, presentation],
   );
+}
+
+export function usePrimaryEnvironment(): EnvironmentPresentation | null {
+  return useEnvironment(usePrimaryEnvironmentId());
 }
 
 export function useEnvironmentHttpBaseUrl(environmentId: EnvironmentId | null): string | null {
@@ -82,14 +108,22 @@ export function useEnvironmentConnectionState(environmentId: EnvironmentId) {
 }
 
 export function useEnvironmentConnectionActions() {
-  return {
-    register: useAtomSet(environmentCatalog.register, { mode: "promise" }),
-    remove: useAtomSet(environmentCatalog.remove, { mode: "promise" }),
-    removeRelayEnvironments: useAtomSet(environmentCatalog.removeRelayEnvironments, {
-      mode: "promise",
+  const register = useAtomSet(environmentCatalog.register, { mode: "promise" });
+  const remove = useAtomSet(environmentCatalog.remove, { mode: "promise" });
+  const removeRelayEnvironments = useAtomSet(environmentCatalog.removeRelayEnvironments, {
+    mode: "promise",
+  });
+  const retryNow = useAtomSet(environmentCatalog.retryNow, { mode: "promise" });
+
+  return useMemo(
+    () => ({
+      register,
+      remove,
+      removeRelayEnvironments,
+      retryNow,
     }),
-    retryNow: useAtomSet(environmentCatalog.retryNow, { mode: "promise" }),
-  };
+    [register, remove, removeRelayEnvironments, retryNow],
+  );
 }
 
 export function useEnvironmentActions() {
@@ -117,12 +151,22 @@ export function useEnvironmentActions() {
     [register],
   );
 
-  return {
-    connectPairing,
-    connectSshEnvironment,
-    connectRelayEnvironment,
-    removeEnvironment: remove,
-    retryEnvironment: retryNow,
-    refreshRelayEnvironments,
-  };
+  return useMemo(
+    () => ({
+      connectPairing,
+      connectSshEnvironment,
+      connectRelayEnvironment,
+      removeEnvironment: remove,
+      retryEnvironment: retryNow,
+      refreshRelayEnvironments,
+    }),
+    [
+      connectPairing,
+      connectRelayEnvironment,
+      connectSshEnvironment,
+      refreshRelayEnvironments,
+      remove,
+      retryNow,
+    ],
+  );
 }

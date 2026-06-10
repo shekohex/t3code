@@ -229,7 +229,9 @@ function makeCatalogBackend(database: IDBDatabase): CatalogBackend {
           Effect.flatMap((stored) =>
             stored
               ? Effect.void
-              : Effect.fail(catalogError("save", "Desktop secure storage is unavailable.")),
+              : Effect.logWarning(
+                  "Desktop secure storage is unavailable; connection changes will be kept only for this session.",
+                ),
           ),
         ),
     };

@@ -60,7 +60,7 @@ describe("buildTurnDiffTree", () => {
     ]);
   });
 
-  it("keeps files without stat values and excludes them from directory totals", () => {
+  it("keeps zero-valued file stats and includes only their numeric contribution", () => {
     const tree = buildTurnDiffTree([
       { path: "docs/notes.md", kind: "modified", additions: 0, deletions: 0 },
       { path: "docs/todo.md", kind: "modified", additions: 1, deletions: 1 },
@@ -77,7 +77,7 @@ describe("buildTurnDiffTree", () => {
             kind: "file",
             name: "notes.md",
             path: "docs/notes.md",
-            stat: null,
+            stat: { additions: 0, deletions: 0 },
           },
           {
             kind: "file",

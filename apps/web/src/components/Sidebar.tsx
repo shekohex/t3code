@@ -94,7 +94,7 @@ import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
-import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import {
   buildThreadRouteParams,
   resolveThreadRouteRef,
@@ -351,13 +351,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     environmentId: thread.environmentId,
     threadId: thread.id,
   });
-  const { environments } = useEnvironments();
-  const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const environment = useEnvironment(thread.environmentId);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const isRemoteThread =
     primaryEnvironmentId !== null && thread.environmentId !== primaryEnvironmentId;
-  const remoteEnvLabel =
-    environments.find((environment) => environment.environmentId === thread.environmentId)?.label ??
-    null;
+  const remoteEnvLabel = environment?.label ?? null;
   const threadEnvironmentLabel = isRemoteThread ? (remoteEnvLabel ?? "Remote") : null;
   // For grouped projects, the thread may belong to a different environment
   // than the representative project.  Look up the thread's own project cwd
@@ -2810,7 +2808,7 @@ export default function Sidebar() {
   const shortcutModifiers = useShortcutModifierState();
   const modelPickerOpen = useModelPickerOpen();
   const { environments } = useEnvironments();
-  const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environmentLabelById = useMemo(
     () =>
       new Map(
