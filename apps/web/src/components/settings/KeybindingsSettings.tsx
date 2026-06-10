@@ -27,18 +27,18 @@ import {
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
-import { useAtomSet } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 
 import { isElectron } from "../../env";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
 import { formatShortcutLabel } from "../../keybindings";
 import { cn } from "../../lib/utils";
 import {
-  useServerAvailableEditors,
-  useServerKeybindings,
-  useServerKeybindingsConfigPath,
-} from "../../rpc/serverState";
-import { serverEnvironment } from "../../state/server";
+  primaryServerAvailableEditorsAtom,
+  primaryServerKeybindingsAtom,
+  primaryServerKeybindingsConfigPathAtom,
+  serverEnvironment,
+} from "../../state/server";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -1065,9 +1065,9 @@ function NewKeybindingTableRow({
 }
 
 export function KeybindingsSettingsPanel() {
-  const keybindings = useServerKeybindings();
-  const keybindingsConfigPath = useServerKeybindingsConfigPath();
-  const availableEditors = useServerAvailableEditors();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const keybindingsConfigPath = useAtomValue(primaryServerKeybindingsConfigPathAtom);
+  const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   const primaryEnvironment = usePrimaryEnvironment();
   const upsertKeybinding = useAtomSet(serverEnvironment.upsertKeybinding, {
     mode: "promise",

@@ -137,13 +137,12 @@ vi.mock("../state/terminalSessions", () => ({
   },
 }));
 
-vi.mock("../state/server", () => ({
-  useServerConfig: () => ({
-    data: { availableEditors: [] },
-    error: null,
-    isLoading: false,
-  }),
-}));
+vi.mock("../state/server", async () => {
+  const { Atom } = await import("effect/unstable/reactivity");
+  return {
+    primaryServerAvailableEditorsAtom: Atom.make([]),
+  };
+});
 
 vi.mock("~/localApi", () => ({
   ensureLocalApi: vi.fn(() => {

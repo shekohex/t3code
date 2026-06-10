@@ -1,7 +1,6 @@
 import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
 
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
-import { resetServerStateForTests } from "./rpc/serverState";
 import { showContextMenuFallback } from "./contextMenuFallback";
 import {
   readBrowserClientSettings,
@@ -149,5 +148,4 @@ export async function __resetLocalApiForTests() {
   const { __resetClientSettingsPersistenceForTests } = await import("./hooks/useSettings");
   __resetClientSettingsPersistenceForTests();
   resetRequestLatencyStateForTests();
-  resetServerStateForTests();
 }

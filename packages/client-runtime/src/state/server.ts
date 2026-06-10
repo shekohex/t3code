@@ -15,36 +15,53 @@ import {
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
+export interface ServerConfigProjection {
+  readonly config: ServerConfig;
+  readonly latestEvent: ServerConfigStreamEvent;
+}
+
 export function applyServerConfigProjection(
-  current: Option.Option<ServerConfig>,
+  current: Option.Option<ServerConfigProjection>,
   event: ServerConfigStreamEvent,
-): Option.Option<ServerConfig> {
+): Option.Option<ServerConfigProjection> {
   switch (event.type) {
     case "snapshot":
-      return Option.some(event.config);
+      return Option.some({
+        config: event.config,
+        latestEvent: event,
+      });
     case "keybindingsUpdated":
-      return Option.map(current, (config) => ({
-        ...config,
-        keybindings: event.payload.keybindings,
-        issues: event.payload.issues,
+      return Option.map(current, (projection) => ({
+        config: {
+          ...projection.config,
+          keybindings: event.payload.keybindings,
+          issues: event.payload.issues,
+        },
+        latestEvent: event,
       }));
     case "providerStatuses":
-      return Option.map(current, (config) => ({
-        ...config,
-        providers: event.payload.providers,
+      return Option.map(current, (projection) => ({
+        config: {
+          ...projection.config,
+          providers: event.payload.providers,
+        },
+        latestEvent: event,
       }));
     case "settingsUpdated":
-      return Option.map(current, (config) => ({
-        ...config,
-        settings: event.payload.settings,
+      return Option.map(current, (projection) => ({
+        config: {
+          ...projection.config,
+          settings: event.payload.settings,
+        },
+        latestEvent: event,
       }));
   }
 }
 
 export function projectServerConfig(
-  current: Option.Option<ServerConfig>,
+  current: Option.Option<ServerConfigProjection>,
   event: ServerConfigStreamEvent,
-): readonly [Option.Option<ServerConfig>, ReadonlyArray<ServerConfig>] {
+): readonly [Option.Option<ServerConfigProjection>, ReadonlyArray<ServerConfigProjection>] {
   const next = applyServerConfigProjection(current, event);
   return [next, Option.toArray(next)];
 }
@@ -94,7 +111,7 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:config-projection",
       tag: WS_METHODS.subscribeServerConfig,
       transform: (stream) =>
-        stream.pipe(Stream.mapAccum(Option.none<ServerConfig>, projectServerConfig)),
+        stream.pipe(Stream.mapAccum(Option.none<ServerConfigProjection>, projectServerConfig)),
     }),
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:welcome",
