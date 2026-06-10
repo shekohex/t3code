@@ -62,6 +62,14 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
     };
   }
 
+  if (catalogState.hasPendingShellSnapshot && !catalogState.hasLoadedShellSnapshot) {
+    return {
+      title: "Loading projects",
+      detail: "Synchronizing shell data from the connected environment.",
+      loading: true,
+    };
+  }
+
   return {
     title: "No projects found",
     detail: "The connected environment did not report any projects.",

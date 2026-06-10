@@ -48,8 +48,8 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
         readonly userId: string;
         readonly provider: () => Promise<string | null>;
       } | null,
-    ) => {
-      accountTransitionRef.current = accountTransitionRef.current.then(async () => {
+    ): Promise<boolean> => {
+      const transition = accountTransitionRef.current.then(async () => {
         const cleanup = [
           resetManagedRelayTokenCache(),
           removeRelayEnvironments(),
@@ -58,13 +58,17 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
             : []),
         ];
         const results = await Promise.allSettled(cleanup);
+        let succeeded = true;
         for (const result of results) {
           if (result.status === "rejected") {
             console.warn("[t3-cloud] cloud account cleanup failed", result.reason);
+            succeeded = false;
           }
         }
+        return succeeded;
       });
-      return accountTransitionRef.current;
+      accountTransitionRef.current = transition.then(() => {});
+      return transition;
     };
 
     if (!isSignedIn || !userId) {
@@ -102,7 +106,9 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
       previousTokenProviderRef.current = null;
       setAgentAwarenessRelayTokenProvider(null);
       setManagedRelaySession(appAtomRegistry, null);
-      void queueAccountCleanup(previous).then(activateSession);
+      void queueAccountCleanup(previous).then((succeeded) => {
+        if (succeeded) activateSession();
+      });
     } else {
       void accountTransitionRef.current.then(activateSession);
     }
