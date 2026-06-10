@@ -1,10 +1,7 @@
 import {
-  ConnectionCatalogDocument,
-  type ConnectionCatalogDocument as ConnectionCatalogDocumentType,
   ConnectionPersistenceError,
   ConnectionRegistrationStore,
   ConnectionTargetStore,
-  EMPTY_CONNECTION_CATALOG_DOCUMENT,
   EnvironmentCacheStore,
   registerConnectionInCatalog,
   removeConnectionFromCatalog,
@@ -27,15 +24,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 import * as SecureStore from "expo-secure-store";
 
-import { migrateLegacyConnectionCatalog } from "./migration";
+import { makeCatalogStore, type SecureCatalogStorage } from "./catalog-store";
 
-const CONNECTION_CATALOG_KEY = "t3code.connection-catalog.v1";
-const LEGACY_CONNECTIONS_KEY = "t3code.connections";
 const SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION = 1;
 const SHELL_SNAPSHOT_CACHE_DIRECTORY = "connection-shell-snapshots";
 const LEGACY_SHELL_SNAPSHOT_CACHE_DIRECTORY = "shell-snapshots";
@@ -134,90 +127,23 @@ function targetPersistenceError(
   });
 }
 
-const decodeCatalog = Effect.fn("mobile.connectionStorage.decodeCatalog")(function* (raw: string) {
-  const parsed = yield* Effect.try({
-    try: () => JSON.parse(raw) as unknown,
-    catch: (cause) => catalogError("decode", cause),
-  });
-  return yield* Effect.fromResult(
-    Schema.decodeUnknownResult(ConnectionCatalogDocument)(parsed),
-  ).pipe(Effect.mapError((cause) => catalogError("decode", cause)));
-});
-
-const encodeCatalog = Effect.fn("mobile.connectionStorage.encodeCatalog")(function* (
-  catalog: ConnectionCatalogDocumentType,
-) {
-  const encoded = yield* Effect.fromResult(
-    Schema.encodeUnknownResult(ConnectionCatalogDocument)(catalog),
-  ).pipe(Effect.mapError((cause) => catalogError("encode", cause)));
-  return JSON.stringify(encoded);
-});
-
-interface CatalogStore {
-  readonly read: Effect.Effect<ConnectionCatalogDocumentType, ConnectionTransientError>;
-  readonly update: (
-    transform: (catalog: ConnectionCatalogDocumentType) => ConnectionCatalogDocumentType,
-  ) => Effect.Effect<void, ConnectionTransientError>;
-}
-
-const makeCatalogStore = Effect.fn("mobile.connectionStorage.makeCatalogStore")(function* () {
-  const state = yield* Ref.make<Option.Option<ConnectionCatalogDocumentType>>(Option.none());
-  const lock = yield* Semaphore.make(1);
-
-  const loadUnlocked = Effect.fn("mobile.connectionStorage.loadCatalog")(function* () {
-    const cached = yield* Ref.get(state);
-    if (Option.isSome(cached)) {
-      return cached.value;
-    }
-    const raw = yield* Effect.tryPromise({
-      try: () => SecureStore.getItemAsync(CONNECTION_CATALOG_KEY),
+const secureCatalogStorage: SecureCatalogStorage = {
+  getItem: (key) =>
+    Effect.tryPromise({
+      try: () => SecureStore.getItemAsync(key),
       catch: (cause) => catalogError("load", cause),
-    });
-    let catalog: ConnectionCatalogDocumentType;
-    if (raw !== null && raw.trim() !== "") {
-      catalog = yield* decodeCatalog(raw);
-    } else {
-      const legacyRaw = yield* Effect.tryPromise({
-        try: () => SecureStore.getItemAsync(LEGACY_CONNECTIONS_KEY),
-        catch: (cause) => catalogError("load legacy", cause),
-      });
-      catalog =
-        legacyRaw === null || legacyRaw.trim() === ""
-          ? EMPTY_CONNECTION_CATALOG_DOCUMENT
-          : yield* migrateLegacyConnectionCatalog(legacyRaw).pipe(
-              Effect.mapError((cause) => catalogError("migrate", cause)),
-            );
-      if (catalog.targets.length > 0) {
-        const encoded = yield* encodeCatalog(catalog);
-        yield* Effect.tryPromise({
-          try: () => SecureStore.setItemAsync(CONNECTION_CATALOG_KEY, encoded),
-          catch: (cause) => catalogError("save migrated", cause),
-        });
-      }
-    }
-    yield* Ref.set(state, Option.some(catalog));
-    return catalog;
-  });
-
-  const read = lock.withPermits(1)(loadUnlocked());
-  const update: CatalogStore["update"] = Effect.fn("mobile.connectionStorage.updateCatalog")(
-    function* (transform) {
-      yield* lock.withPermits(1)(
-        Effect.gen(function* () {
-          const next = transform(yield* loadUnlocked());
-          const encoded = yield* encodeCatalog(next);
-          yield* Effect.tryPromise({
-            try: () => SecureStore.setItemAsync(CONNECTION_CATALOG_KEY, encoded),
-            catch: (cause) => catalogError("save", cause),
-          });
-          yield* Ref.set(state, Option.some(next));
-        }),
-      );
-    },
-  );
-
-  return { read, update } satisfies CatalogStore;
-});
+    }),
+  setItem: (key, value) =>
+    Effect.tryPromise({
+      try: () => SecureStore.setItemAsync(key, value),
+      catch: (cause) => catalogError("save", cause),
+    }),
+  deleteItem: (key) =>
+    Effect.tryPromise({
+      try: () => SecureStore.deleteItemAsync(key),
+      catch: (cause) => catalogError("delete", cause),
+    }),
+};
 
 function shellSnapshotFileName(environmentId: EnvironmentId): string {
   return `${encodeURIComponent(environmentId)}.json`;
@@ -253,7 +179,7 @@ const legacyShellSnapshotFile = (
 
 export const connectionStorageLayer = Layer.effectContext(
   Effect.gen(function* () {
-    const catalog = yield* makeCatalogStore();
+    const catalog = yield* makeCatalogStore(secureCatalogStorage);
 
     const targetStore = ConnectionTargetStore.of({
       list: catalog.read.pipe(

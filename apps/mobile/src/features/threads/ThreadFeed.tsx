@@ -48,6 +48,7 @@ import type { ThreadFeedEntry } from "../../lib/threadActivity";
 import { relativeTime } from "../../lib/time";
 import { messageImageUrl } from "./threadPresentation";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
+import { useRemoteHttpHeaders } from "../../state/remote-http";
 
 export interface ThreadFeedProps {
   readonly threadId: ThreadId;
@@ -55,10 +56,44 @@ export interface ThreadFeedProps {
   readonly contentPresentation: ThreadContentPresentation;
   readonly httpBaseUrl: string | null;
   readonly bearerToken: string | null;
+  readonly dpopAccessToken?: string;
   readonly agentLabel: string;
   readonly contentBottomInset?: number;
   readonly layoutVariant?: LayoutVariant;
   readonly composerExpanded?: boolean;
+}
+
+function MessageAttachmentImage(props: {
+  readonly uri: string;
+  readonly bearerToken: string | null;
+  readonly dpopAccessToken?: string;
+  readonly className: string;
+  readonly onPressImage: (uri: string, headers?: Record<string, string>) => void;
+}) {
+  const request = useRemoteHttpHeaders({
+    url: props.uri,
+    bearerToken: props.bearerToken,
+    ...(props.dpopAccessToken ? { dpopAccessToken: props.dpopAccessToken } : {}),
+  });
+
+  if (!request.isReady) {
+    return (
+      <View className={`${props.className} items-center justify-center`}>
+        <ActivityIndicator />
+      </View>
+    );
+  }
+
+  const headers = request.headers ?? undefined;
+  return (
+    <TouchableOpacity activeOpacity={0.7} onPress={() => props.onPressImage(props.uri, headers)}>
+      <Image
+        source={{ uri: props.uri, ...(headers ? { headers } : {}) }}
+        className={props.className}
+        resizeMode="cover"
+      />
+    </TouchableOpacity>
+  );
 }
 
 function stripShellWrapper(value: string): string {
@@ -396,7 +431,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
 
 function renderFeedEntry(
   info: { item: ThreadFeedEntry; index: number },
-  props: Pick<ThreadFeedProps, "bearerToken" | "httpBaseUrl"> & {
+  props: Pick<ThreadFeedProps, "bearerToken" | "dpopAccessToken" | "httpBaseUrl"> & {
     readonly copiedRowId: string | null;
     readonly expandedWorkGroups: Record<string, boolean>;
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
@@ -442,22 +477,15 @@ function renderFeedEntry(
               if (!uri) {
                 return null;
               }
-              const headers = props.bearerToken
-                ? { Authorization: `Bearer ${props.bearerToken}` }
-                : undefined;
-
               return (
-                <TouchableOpacity
+                <MessageAttachmentImage
                   key={attachment.id}
-                  activeOpacity={0.7}
-                  onPress={() => props.onPressImage(uri, headers)}
-                >
-                  <Image
-                    source={{ uri, ...(headers ? { headers } : {}) }}
-                    className="aspect-[1.3] w-full rounded-[14px] bg-white/15"
-                    resizeMode="cover"
-                  />
-                </TouchableOpacity>
+                  uri={uri}
+                  bearerToken={props.bearerToken}
+                  dpopAccessToken={props.dpopAccessToken}
+                  className="aspect-[1.3] w-full rounded-[14px] bg-white/15"
+                  onPressImage={props.onPressImage}
+                />
               );
             })}
           </View>
@@ -491,23 +519,15 @@ function renderFeedEntry(
           if (!uri) {
             return null;
           }
-          const headers = props.bearerToken
-            ? { Authorization: `Bearer ${props.bearerToken}` }
-            : undefined;
-
           return (
-            <TouchableOpacity
+            <MessageAttachmentImage
               key={attachment.id}
-              activeOpacity={0.7}
-              className="mt-1.5"
-              onPress={() => props.onPressImage(uri, headers)}
-            >
-              <Image
-                source={{ uri, ...(headers ? { headers } : {}) }}
-                className="aspect-[1.3] w-full rounded-[18px] bg-neutral-200 dark:bg-neutral-800"
-                resizeMode="cover"
-              />
-            </TouchableOpacity>
+              uri={uri}
+              bearerToken={props.bearerToken}
+              dpopAccessToken={props.dpopAccessToken}
+              className="mt-1.5 aspect-[1.3] w-full rounded-[18px] bg-neutral-200 dark:bg-neutral-800"
+              onPressImage={props.onPressImage}
+            />
           );
         })}
         <Text className="mt-1.5 font-t3-medium text-xs text-neutral-600 dark:text-neutral-400">
@@ -917,6 +937,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (info: { item: ThreadFeedEntry; index: number }) =>
       renderFeedEntry(info, {
         bearerToken: props.bearerToken,
+        dpopAccessToken: props.dpopAccessToken,
         copiedRowId,
         httpBaseUrl: props.httpBaseUrl,
         expandedWorkGroups,
@@ -941,6 +962,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onPressImage,
       onToggleWorkGroup,
       props.bearerToken,
+      props.dpopAccessToken,
       props.httpBaseUrl,
     ],
   );

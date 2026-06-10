@@ -361,6 +361,7 @@ export function ThreadRouteScreen() {
           environmentLabel={selectedEnvironmentConnection?.environmentLabel ?? null}
           httpBaseUrl={selectedEnvironmentConnection?.httpBaseUrl ?? null}
           bearerToken={selectedEnvironmentConnection?.bearerToken ?? null}
+          dpopAccessToken={selectedEnvironmentConnection?.dpopAccessToken}
           selectedThreadFeed={composer.selectedThreadFeed}
           activeWorkStartedAt={composer.activeWorkStartedAt}
           activePendingApproval={requests.activePendingApproval}

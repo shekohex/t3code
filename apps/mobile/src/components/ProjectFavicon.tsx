@@ -2,6 +2,7 @@ import { SymbolView } from "expo-symbols";
 import { useState } from "react";
 import { Image, View } from "react-native";
 import { useThemeColor } from "../lib/useThemeColor";
+import { useRemoteHttpHeaders } from "../state/remote-http";
 
 /* ─── Favicon cache (matches web pattern) ────────────────────────────── */
 const loadedFaviconUrls = new Set<string>();
@@ -13,6 +14,7 @@ export function ProjectFavicon(props: {
   readonly httpBaseUrl?: string | null;
   readonly workspaceRoot?: string | null;
   readonly bearerToken?: string | null;
+  readonly dpopAccessToken?: string;
 }) {
   const size = props.size ?? 42;
   const iconMuted = useThemeColor("--color-icon-subtle");
@@ -21,6 +23,11 @@ export function ProjectFavicon(props: {
     props.httpBaseUrl && props.workspaceRoot
       ? `${props.httpBaseUrl}/api/project-favicon?cwd=${encodeURIComponent(props.workspaceRoot)}`
       : null;
+  const request = useRemoteHttpHeaders({
+    url: faviconUrl,
+    bearerToken: props.bearerToken ?? null,
+    ...(props.dpopAccessToken ? { dpopAccessToken: props.dpopAccessToken } : {}),
+  });
 
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(() =>
     faviconUrl && loadedFaviconUrls.has(faviconUrl) ? "loaded" : "loading",
@@ -43,13 +50,11 @@ export function ProjectFavicon(props: {
       ) : null}
 
       {/* Favicon image (hidden until loaded) */}
-      {faviconUrl ? (
+      {faviconUrl && request.isReady ? (
         <Image
           source={{
             uri: faviconUrl,
-            ...(props.bearerToken
-              ? { headers: { Authorization: `Bearer ${props.bearerToken}` } }
-              : {}),
+            ...(request.headers ? { headers: request.headers } : {}),
           }}
           style={{
             width: size,

@@ -29,7 +29,7 @@ export function ConnectionEnvironmentRow(props: {
   readonly onUpdate: (
     environmentId: EnvironmentId,
     updates: { readonly label: string; readonly displayUrl: string },
-  ) => void;
+  ) => Promise<void>;
 }) {
   const [label, setLabel] = useState(props.environment.environmentLabel);
   const [url, setUrl] = useState(props.environment.displayUrl);
@@ -44,8 +44,8 @@ export function ConnectionEnvironmentRow(props: {
   const isRetrying =
     props.environment.connectionState === "connecting" ||
     props.environment.connectionState === "reconnecting";
-  const handleSave = useCallback(() => {
-    props.onUpdate(props.environment.environmentId, {
+  const handleSave = useCallback(async () => {
+    await props.onUpdate(props.environment.environmentId, {
       label: label.trim(),
       displayUrl: url.trim(),
     });

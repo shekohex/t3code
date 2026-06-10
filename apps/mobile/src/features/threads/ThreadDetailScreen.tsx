@@ -48,6 +48,7 @@ export interface ThreadDetailScreenProps {
   readonly environmentLabel: string | null;
   readonly httpBaseUrl: string | null;
   readonly bearerToken: string | null;
+  readonly dpopAccessToken?: string;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
   readonly activeWorkStartedAt: string | null;
   readonly activePendingApproval: PendingApproval | null;
@@ -260,6 +261,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             contentPresentation={props.contentPresentation}
             httpBaseUrl={props.httpBaseUrl}
             bearerToken={props.bearerToken}
+            dpopAccessToken={props.dpopAccessToken}
             agentLabel={agentLabel}
             contentBottomInset={feedBottomInset}
             layoutVariant={layoutVariant}

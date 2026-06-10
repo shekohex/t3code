@@ -2,13 +2,15 @@ import { connectionLayer as clientConnectionLayer } from "@t3tools/client-runtim
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/unstable/reactivity";
 
-import { runtimeLayer } from "../lib/runtime";
+import { runtimeContextLayer } from "../lib/runtime";
 import { connectionPlatformLayer } from "./platform";
 
-const connectionDependencies = Layer.mergeAll(runtimeLayer, connectionPlatformLayer);
+const providedConnectionPlatformLayer = connectionPlatformLayer.pipe(
+  Layer.provide(runtimeContextLayer),
+);
 
 export const connectionLayer = clientConnectionLayer.pipe(
-  Layer.provideMerge(connectionDependencies),
+  Layer.provideMerge(Layer.mergeAll(runtimeContextLayer, providedConnectionPlatformLayer)),
 );
 
 export const connectionAtomRuntime = Atom.runtime(connectionLayer);

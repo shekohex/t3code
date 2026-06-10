@@ -201,6 +201,9 @@ export default function NewTaskRoute() {
                           bearerToken={
                             savedConnectionsById[item.environmentId]?.bearerToken ?? null
                           }
+                          dpopAccessToken={
+                            savedConnectionsById[item.environmentId]?.dpopAccessToken
+                          }
                         />
                       </View>
                       <View className="flex-1">

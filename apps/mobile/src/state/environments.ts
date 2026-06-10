@@ -12,7 +12,10 @@ import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import { useCallback, useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
-import { connectPairingUrl as connectPairingUrlAtom } from "../connection/onboarding";
+import {
+  connectPairingUrl as connectPairingUrlAtom,
+  updateBearerConnection,
+} from "../connection/onboarding";
 import { environmentPresentations } from "./presentation";
 import { useEnvironmentQuery } from "./query";
 import { relayEnvironmentDiscovery } from "./relay";
@@ -63,18 +66,29 @@ export function useEnvironmentConnectionState(environmentId: EnvironmentId) {
 }
 
 export function useEnvironmentConnectionActions() {
-  return {
-    register: useAtomSet(environmentCatalog.register, { mode: "promise" }),
-    remove: useAtomSet(environmentCatalog.remove, { mode: "promise" }),
-    removeRelayEnvironments: useAtomSet(environmentCatalog.removeRelayEnvironments, {
-      mode: "promise",
+  const register = useAtomSet(environmentCatalog.register, { mode: "promise" });
+  const remove = useAtomSet(environmentCatalog.remove, { mode: "promise" });
+  const removeRelayEnvironments = useAtomSet(environmentCatalog.removeRelayEnvironments, {
+    mode: "promise",
+  });
+  const retryNow = useAtomSet(environmentCatalog.retryNow, { mode: "promise" });
+
+  return useMemo(
+    () => ({
+      register,
+      remove,
+      removeRelayEnvironments,
+      retryNow,
     }),
-    retryNow: useAtomSet(environmentCatalog.retryNow, { mode: "promise" }),
-  };
+    [register, remove, removeRelayEnvironments, retryNow],
+  );
 }
 
 export function useEnvironmentActions() {
   const connectPairingUrl = useAtomSet(connectPairingUrlAtom, {
+    mode: "promise",
+  });
+  const updateBearer = useAtomSet(updateBearerConnection, {
     mode: "promise",
   });
   const { register, remove, retryNow } = useEnvironmentConnectionActions();
@@ -95,11 +109,22 @@ export function useEnvironmentActions() {
     [register],
   );
 
-  return {
-    connectPairingUrl,
-    connectRelayEnvironment,
-    removeEnvironment: remove,
-    retryEnvironment: retryNow,
-    refreshRelayEnvironments,
-  };
+  return useMemo(
+    () => ({
+      connectPairingUrl,
+      updateBearer,
+      connectRelayEnvironment,
+      removeEnvironment: remove,
+      retryEnvironment: retryNow,
+      refreshRelayEnvironments,
+    }),
+    [
+      connectPairingUrl,
+      connectRelayEnvironment,
+      refreshRelayEnvironments,
+      remove,
+      retryNow,
+      updateBearer,
+    ],
+  );
 }

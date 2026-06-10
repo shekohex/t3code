@@ -1,22 +1,25 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { ServerConfig } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 import { Alert } from "react-native";
 
 import { useEnvironmentServerConfig } from "../state/entities";
 import { useConnectionController } from "../features/connection/useConnectionController";
-import { useEnvironmentPresentation } from "./presentation";
+import { environmentPresentations, useEnvironmentPresentation } from "./presentation";
 import {
   projectEnvironmentPresentation,
   type EnvironmentPresentation,
 } from "../state/environments";
 import { useWorkspaceState } from "../state/workspace";
-import { projectWorkspaceEnvironment, type WorkspaceEnvironment } from "../state/workspaceModel";
 import type { SavedRemoteConnection } from "../lib/connection";
 import { appAtomRegistry } from "./atom-registry";
 import type { ConnectedEnvironmentSummary, EnvironmentRuntimeState } from "./remote-runtime-types";
+import { environmentSession, usePreparedConnection } from "./session";
+import { environmentCatalog } from "../connection/catalog";
 
 const connectionPairingUrlAtom = Atom.make("").pipe(
   Atom.keepAlive,
@@ -32,28 +35,52 @@ export function setPendingConnectionError(message: string | null): void {
   appAtomRegistry.set(pendingConnectionErrorAtom, message);
 }
 
-function toSavedConnection(environment: WorkspaceEnvironment): SavedRemoteConnection {
-  const displayUrl = environment.displayUrl;
-  const wsBaseUrl = displayUrl.startsWith("https://")
-    ? displayUrl.replace(/^https:/, "wss:")
-    : displayUrl.replace(/^http:/, "ws:");
+function toSavedConnection(
+  environment: EnvironmentPresentation,
+  prepared: Option.Option<PreparedConnection>,
+): SavedRemoteConnection {
+  const displayUrl = environment.displayUrl ?? "";
+  const active = Option.getOrNull(prepared);
+  const httpBaseUrl = active?.httpBaseUrl ?? displayUrl;
+  const socketUrl = active?.socketUrl ?? "";
+  const wsBaseUrl =
+    socketUrl === ""
+      ? displayUrl.startsWith("https://")
+        ? displayUrl.replace(/^https:/, "wss:")
+        : displayUrl.replace(/^http:/, "ws:")
+      : new URL(socketUrl).origin;
+  const authorization = active?.httpAuthorization ?? null;
 
   return {
     environmentId: environment.environmentId,
-    environmentLabel: environment.environmentLabel,
+    environmentLabel: environment.label,
     pairingUrl: displayUrl,
     displayUrl,
-    httpBaseUrl: displayUrl,
+    httpBaseUrl,
     wsBaseUrl,
-    bearerToken: null,
-    ...(environment.isRelayManaged
+    bearerToken: authorization?._tag === "Bearer" ? authorization.token : null,
+    ...(environment.relayManaged
       ? {
           authenticationMethod: "dpop" as const,
           relayManaged: true as const,
+          ...(authorization?._tag === "Dpop" ? { dpopAccessToken: authorization.accessToken } : {}),
         }
       : { authenticationMethod: "bearer" as const }),
   };
 }
+
+const savedConnectionsByIdAtom = Atom.make((get) => {
+  const presentationById = get(environmentPresentations.presentationsAtom);
+  return Object.fromEntries(
+    [...presentationById.entries()].map(([environmentId, presentation]) => [
+      environmentId,
+      toSavedConnection(
+        projectEnvironmentPresentation(environmentId, presentation),
+        get(environmentSession.preparedConnectionValueAtom(environmentId)),
+      ),
+    ]),
+  ) as Record<EnvironmentId, SavedRemoteConnection>;
+}).pipe(Atom.withLabel("mobile:saved-connections-by-id"));
 
 function toRuntimeState(
   environment: EnvironmentPresentation,
@@ -68,20 +95,11 @@ function toRuntimeState(
 }
 
 export function useSavedRemoteConnections() {
-  const workspace = useWorkspaceState();
-  const savedConnectionsById = useMemo(
-    () =>
-      Object.fromEntries(
-        workspace.environments.map((environment) => [
-          environment.environmentId,
-          toSavedConnection(environment),
-        ]),
-      ) as Record<EnvironmentId, SavedRemoteConnection>,
-    [workspace.environments],
-  );
+  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const savedConnectionsById = useAtomValue(savedConnectionsByIdAtom);
 
   return {
-    isLoadingSavedConnection: workspace.state.isLoadingConnections,
+    isLoadingSavedConnection: !catalog.isReady,
     savedConnectionsById,
   };
 }
@@ -90,12 +108,11 @@ export function useSavedRemoteConnection(
   environmentId: EnvironmentId | null,
 ): SavedRemoteConnection | null {
   const { presentation } = useEnvironmentPresentation(environmentId);
+  const prepared = usePreparedConnection(environmentId);
   if (environmentId === null || presentation === null) {
     return null;
   }
-  return toSavedConnection(
-    projectWorkspaceEnvironment(projectEnvironmentPresentation(environmentId, presentation)),
-  );
+  return toSavedConnection(projectEnvironmentPresentation(environmentId, presentation), prepared);
 }
 
 export function useRemoteEnvironmentRuntime(
@@ -166,6 +183,13 @@ export function useRemoteConnections() {
     },
     [controller],
   );
+  const onUpdateEnvironment = useCallback(
+    (
+      environmentId: EnvironmentId,
+      updates: { readonly label: string; readonly displayUrl: string },
+    ) => controller.updateEnvironment(environmentId, updates),
+    [controller],
+  );
 
   const onRemoveEnvironmentPress = useCallback(
     (environmentId: EnvironmentId) => {
@@ -203,7 +227,7 @@ export function useRemoteConnections() {
     onChangeConnectionPairingUrl,
     onConnectPress,
     onReconnectEnvironment,
-    onUpdateEnvironment: () => undefined,
+    onUpdateEnvironment,
     onRemoveEnvironmentPress,
   };
 }

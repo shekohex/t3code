@@ -55,6 +55,8 @@ const savedConnection = {
   bearerToken: "local-bearer",
 };
 
+const stableClerkToken = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ1c2VyXzEyMyJ9.test";
+
 const createProofMock = vi.fn(
   (input: { readonly method: string; readonly url: string; readonly accessToken?: string }) =>
     Effect.succeed(`dpop:${input.method}:${input.url}`),
@@ -352,7 +354,7 @@ describe("mobile cloud link environment client", () => {
       });
       vi.stubGlobal("fetch", fetchMock);
 
-      yield* withCloudServices(listCloudEnvironmentsWithStatus({ clerkToken: "clerk-token" }));
+      yield* withCloudServices(listCloudEnvironmentsWithStatus({ clerkToken: stableClerkToken }));
 
       expect(
         fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/client/dpop-token")),
@@ -425,9 +427,11 @@ describe("mobile cloud link environment client", () => {
 
       yield* withCloudServices(
         Effect.gen(function* () {
-          const records = yield* listCloudEnvironmentsWithStatus({ clerkToken: "clerk-token" });
+          const records = yield* listCloudEnvironmentsWithStatus({
+            clerkToken: stableClerkToken,
+          });
           yield* connectCloudEnvironment({
-            clerkToken: "clerk-token",
+            clerkToken: stableClerkToken,
             environment: records[0]!.environment,
           });
         }),

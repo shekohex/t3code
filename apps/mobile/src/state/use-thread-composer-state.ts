@@ -1,13 +1,9 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { useCallback, useEffect, useMemo } from "react";
 
-import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { CommandId, MessageId, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
-import { Atom } from "effect/unstable/reactivity";
 
-import { threadEnvironment } from "../state/threads";
-import { useThreadShells } from "../state/entities";
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import {
   convertPastedImagesToAttachments,
@@ -28,26 +24,11 @@ import {
   setComposerDraftText,
   useComposerDraft,
 } from "./use-composer-drafts";
-import type { ConnectedEnvironmentSummary } from "../state/remote-runtime-types";
-import {
-  setPendingConnectionError,
-  useRemoteConnectionStatus,
-} from "../state/use-remote-environment-registry";
+import { setPendingConnectionError } from "../state/use-remote-environment-registry";
 import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
-import {
-  enqueueThreadOutboxMessage,
-  ensureThreadOutboxLoaded,
-  removeThreadOutboxMessage,
-  threadOutboxRetryDelayMs,
-  type QueuedThreadMessage,
-  useThreadOutboxMessages,
-} from "./thread-outbox";
-
-const dispatchingQueuedMessageIdAtom = Atom.make<MessageId | null>(null).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("mobile:thread-composer:dispatching-message-id"),
-);
+import { enqueueThreadOutboxMessage, useThreadOutboxMessages } from "./thread-outbox";
+import { dispatchingQueuedMessageIdAtom } from "./use-thread-outbox-drain";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -80,124 +61,7 @@ export function useThreadDraftForThread(input: {
   };
 }
 
-function beginDispatchingQueuedMessage(queuedMessageId: MessageId): void {
-  appAtomRegistry.set(dispatchingQueuedMessageIdAtom, queuedMessageId);
-}
-
-function finishDispatchingQueuedMessage(queuedMessageId: MessageId): void {
-  const current = appAtomRegistry.get(dispatchingQueuedMessageIdAtom);
-  appAtomRegistry.set(dispatchingQueuedMessageIdAtom, current === queuedMessageId ? null : current);
-}
-
-function useQueueDrain(input: {
-  readonly dispatchingQueuedMessageId: MessageId | null;
-  readonly queuedMessagesByThreadKey: Record<string, ReadonlyArray<QueuedThreadMessage>>;
-  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
-  readonly environments: ReadonlyArray<ConnectedEnvironmentSummary>;
-  readonly sendQueuedMessage: (message: QueuedThreadMessage) => Promise<boolean>;
-}) {
-  const {
-    dispatchingQueuedMessageId,
-    environments,
-    queuedMessagesByThreadKey,
-    sendQueuedMessage,
-    threads,
-  } = input;
-  const [retryTick, setRetryTick] = useState(0);
-  const retryAttemptRef = useRef(new Map<MessageId, number>());
-  const retryNotBeforeRef = useRef(new Map<MessageId, number>());
-  const retryTimersRef = useRef(new Map<MessageId, ReturnType<typeof setTimeout>>());
-
-  useEffect(
-    () => () => {
-      for (const timer of retryTimersRef.current.values()) {
-        clearTimeout(timer);
-      }
-      retryTimersRef.current.clear();
-    },
-    [],
-  );
-
-  useEffect(() => {
-    if (dispatchingQueuedMessageId !== null) {
-      return;
-    }
-
-    for (const [threadKey, queuedMessages] of Object.entries(queuedMessagesByThreadKey)) {
-      const nextQueuedMessage = queuedMessages[0];
-      if (!nextQueuedMessage) {
-        continue;
-      }
-      if ((retryNotBeforeRef.current.get(nextQueuedMessage.messageId) ?? 0) > Date.now()) {
-        continue;
-      }
-
-      const thread = threads.find(
-        (candidate) => scopedThreadKey(candidate.environmentId, candidate.id) === threadKey,
-      );
-      if (!thread) {
-        continue;
-      }
-
-      const environment = environments.find(
-        (candidate) => candidate.environmentId === nextQueuedMessage.environmentId,
-      );
-      if (!environment || environment.connectionState !== "connected") {
-        continue;
-      }
-
-      const threadStatus = thread.session?.status;
-      if (threadStatus === "running" || threadStatus === "starting") {
-        continue;
-      }
-
-      beginDispatchingQueuedMessage(nextQueuedMessage.messageId);
-      void sendQueuedMessage(nextQueuedMessage)
-        .then((sent) => {
-          if (sent) {
-            retryAttemptRef.current.delete(nextQueuedMessage.messageId);
-            retryNotBeforeRef.current.delete(nextQueuedMessage.messageId);
-            const pendingTimer = retryTimersRef.current.get(nextQueuedMessage.messageId);
-            if (pendingTimer !== undefined) {
-              clearTimeout(pendingTimer);
-              retryTimersRef.current.delete(nextQueuedMessage.messageId);
-            }
-            return;
-          }
-
-          const retryAttempt = (retryAttemptRef.current.get(nextQueuedMessage.messageId) ?? 0) + 1;
-          retryAttemptRef.current.set(nextQueuedMessage.messageId, retryAttempt);
-          const retryDelayMs = threadOutboxRetryDelayMs(retryAttempt);
-          retryNotBeforeRef.current.set(nextQueuedMessage.messageId, Date.now() + retryDelayMs);
-          const pendingTimer = retryTimersRef.current.get(nextQueuedMessage.messageId);
-          if (pendingTimer !== undefined) {
-            clearTimeout(pendingTimer);
-          }
-          const retryTimer = setTimeout(() => {
-            retryTimersRef.current.delete(nextQueuedMessage.messageId);
-            setRetryTick((current) => current + 1);
-          }, retryDelayMs);
-          retryTimersRef.current.set(nextQueuedMessage.messageId, retryTimer);
-        })
-        .finally(() => {
-          finishDispatchingQueuedMessage(nextQueuedMessage.messageId);
-        });
-      return;
-    }
-  }, [
-    dispatchingQueuedMessageId,
-    environments,
-    queuedMessagesByThreadKey,
-    retryTick,
-    sendQueuedMessage,
-    threads,
-  ]);
-}
-
 export function useThreadComposerState() {
-  const startTurn = useAtomSet(threadEnvironment.startTurn, { mode: "promise" });
-  const { connectedEnvironments } = useRemoteConnectionStatus();
-  const threads = useThreadShells();
   const { selectedThread: selectedThreadShell } = useThreadSelection();
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
@@ -206,7 +70,6 @@ export function useThreadComposerState() {
 
   useEffect(() => {
     ensureComposerDraftsLoaded();
-    ensureThreadOutboxLoaded();
   }, []);
 
   const selectedThreadKey = selectedThreadShell
@@ -269,58 +132,6 @@ export function useThreadComposerState() {
   const activeThreadBusy =
     !!selectedThread &&
     (selectedThread.session?.status === "running" || selectedThread.session?.status === "starting");
-
-  const sendQueuedMessage = useCallback(
-    async (queuedMessage: QueuedThreadMessage) => {
-      const thread = threads.find(
-        (candidate) =>
-          candidate.environmentId === queuedMessage.environmentId &&
-          candidate.id === queuedMessage.threadId,
-      );
-      if (!thread) {
-        return false;
-      }
-
-      try {
-        await startTurn({
-          environmentId: queuedMessage.environmentId,
-          input: {
-            commandId: queuedMessage.commandId,
-            threadId: queuedMessage.threadId,
-            message: {
-              messageId: queuedMessage.messageId,
-              role: "user",
-              text: queuedMessage.text,
-              attachments: queuedMessage.attachments,
-            },
-            runtimeMode: thread.runtimeMode,
-            interactionMode: thread.interactionMode,
-            createdAt: queuedMessage.createdAt,
-          },
-        });
-
-        await removeThreadOutboxMessage(queuedMessage);
-        return true;
-      } catch (error) {
-        console.warn("[thread-outbox] queued message delivery failed", {
-          environmentId: queuedMessage.environmentId,
-          threadId: queuedMessage.threadId,
-          messageId: queuedMessage.messageId,
-          error,
-        });
-        return false;
-      }
-    },
-    [startTurn, threads],
-  );
-
-  useQueueDrain({
-    dispatchingQueuedMessageId,
-    queuedMessagesByThreadKey,
-    threads,
-    environments: connectedEnvironments,
-    sendQueuedMessage,
-  });
 
   const onSendMessage = useCallback(async () => {
     if (!selectedThreadShell) {

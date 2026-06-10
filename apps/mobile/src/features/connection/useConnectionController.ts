@@ -64,6 +64,18 @@ export function useConnectionController() {
     (environmentId: EnvironmentId) => actions.retryEnvironment(environmentId),
     [actions],
   );
+  const updateEnvironment = useCallback(
+    (
+      environmentId: EnvironmentId,
+      updates: { readonly label: string; readonly displayUrl: string },
+    ) =>
+      actions.updateBearer({
+        environmentId,
+        label: updates.label,
+        httpBaseUrl: updates.displayUrl,
+      }),
+    [actions],
+  );
 
   return {
     connectedEnvironments,
@@ -79,6 +91,7 @@ export function useConnectionController() {
     connectRelayEnvironment,
     removeEnvironment,
     retryEnvironment,
+    updateEnvironment,
     refreshRelayEnvironments: actions.refreshRelayEnvironments,
   };
 }

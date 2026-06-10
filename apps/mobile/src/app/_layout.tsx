@@ -15,6 +15,7 @@ import { useResolveClassNames } from "uniwind";
 import { LoadingScreen } from "../components/LoadingScreen";
 
 import { useWorkspaceState } from "../state/workspace";
+import { useThreadOutboxDrain } from "../state/use-thread-outbox-drain";
 import { RegistryContext } from "@effect/atom-react";
 import { appAtomRegistry } from "../state/atom-registry";
 import { CloudAuthProvider } from "../features/cloud/CloudAuthProvider";
@@ -26,6 +27,7 @@ function AppNavigator() {
   const statusBarBg = colorScheme === "dark" ? "#0a0a0a" : "#f2f2f7";
   const sheetStyle = useResolveClassNames("bg-sheet");
   useAgentNotificationNavigation();
+  useThreadOutboxDrain();
 
   const newTaskScreenOptions = {
     contentStyle: sheetStyle,

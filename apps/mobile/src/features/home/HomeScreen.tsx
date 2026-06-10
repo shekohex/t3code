@@ -136,6 +136,7 @@ function ProjectGroupLabel(props: {
   readonly totalThreadCount: number;
   readonly httpBaseUrl: string | null;
   readonly bearerToken: string | null;
+  readonly dpopAccessToken?: string;
   readonly isExpanded: boolean;
   readonly onToggleExpand: () => void;
 }) {
@@ -149,6 +150,7 @@ function ProjectGroupLabel(props: {
         httpBaseUrl={props.httpBaseUrl}
         workspaceRoot={props.project.workspaceRoot}
         bearerToken={props.bearerToken}
+        dpopAccessToken={props.dpopAccessToken}
       />
       <Text
         className="flex-1 text-[13px] font-t3-bold uppercase text-foreground-muted"
@@ -437,6 +439,7 @@ export function HomeScreen(props: HomeScreenProps) {
                   totalThreadCount={group.threads.length}
                   httpBaseUrl={connection?.httpBaseUrl ?? null}
                   bearerToken={connection?.bearerToken ?? null}
+                  dpopAccessToken={connection?.dpopAccessToken}
                   isExpanded={isExpanded}
                   onToggleExpand={() => toggleExpanded(group.key)}
                 />
