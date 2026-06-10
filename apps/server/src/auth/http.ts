@@ -34,7 +34,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
-import { traceRelayRequest } from "../cloud/traceRelayRequest.ts";
+import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 
@@ -179,7 +179,7 @@ export const environmentAuthenticatedAuthLayer = Layer.effect(
             ...session,
             scopes: new Set(session.scopes),
           }),
-          session.subject === "cloud-connect" ? traceRelayRequest : identity,
+          session.subject === "cloud-connect" ? traceAuthenticatedRelayRequest : identity,
         );
       }).pipe(Effect.catchTag("EnvironmentAuthInvalidError", appendDpopChallengeOnUnauthorized));
   }),
