@@ -5,6 +5,10 @@ import { HttpServerRequest, HttpTraceContext } from "effect/unstable/http";
 
 export const traceRelayRequest = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> => effect.pipe(withRelayClientTracing);
+
+export const traceAuthenticatedRelayRequest = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R | HttpServerRequest.HttpServerRequest> =>
   HttpServerRequest.HttpServerRequest.pipe(
     Effect.flatMap((request) =>

@@ -100,8 +100,21 @@ const writeDocument = Effect.fn("desktop.connectionCatalogStore.writeDocument")(
   const tempPath = `${input.catalogPath}.${process.pid}.${input.suffix}.tmp`;
   const encoded = yield* encodeConnectionCatalogDocumentJson(input.document);
   yield* input.fileSystem.makeDirectory(directory, { recursive: true });
-  yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`);
-  yield* input.fileSystem.rename(tempPath, input.catalogPath);
+  yield* Effect.gen(function* () {
+    yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`);
+    yield* input.fileSystem.rename(tempPath, input.catalogPath);
+  }).pipe(
+    Effect.ensuring(
+      input.fileSystem.remove(tempPath, { force: true }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not remove a temporary connection catalog file.", {
+            tempPath,
+            error,
+          }),
+        ),
+      ),
+    ),
+  );
 });
 
 export const layer = Layer.effect(
@@ -120,8 +133,28 @@ export const layer = Layer.effect(
         if (Option.isNone(document) || !(yield* safeStorage.isEncryptionAvailable)) {
           return Option.none<string>();
         }
-        const bytes = yield* decodeSecretBytes(document.value.encryptedCatalog);
-        return Option.some(yield* safeStorage.decryptString(bytes));
+        return yield* decodeSecretBytes(document.value.encryptedCatalog).pipe(
+          Effect.flatMap(safeStorage.decryptString),
+          Effect.map(Option.some),
+          Effect.catchTags({
+            DesktopConnectionCatalogStoreDecodeError: (error) =>
+              Effect.logWarning("Discarding an unreadable desktop connection catalog.", {
+                error,
+              }).pipe(
+                Effect.andThen(fileSystem.remove(catalogPath, { force: true })),
+                Effect.catch(() => Effect.void),
+                Effect.as(Option.none<string>()),
+              ),
+            ElectronSafeStorageDecryptError: (error) =>
+              Effect.logWarning("Discarding an undecryptable desktop connection catalog.", {
+                error,
+              }).pipe(
+                Effect.andThen(fileSystem.remove(catalogPath, { force: true })),
+                Effect.catch(() => Effect.void),
+                Effect.as(Option.none<string>()),
+              ),
+          }),
+        );
       }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
       set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
         if (!(yield* safeStorage.isEncryptionAvailable)) {
@@ -141,7 +174,12 @@ export const layer = Layer.effect(
         return true;
       }),
       clear: fileSystem.remove(catalogPath, { force: true }).pipe(
-        Effect.catch(() => Effect.void),
+        Effect.catch((error) =>
+          Effect.logWarning("Could not clear the desktop connection catalog.", {
+            catalogPath,
+            error,
+          }),
+        ),
         Effect.withSpan("desktop.connectionCatalogStore.clear"),
       ),
     });
