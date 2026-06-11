@@ -50,11 +50,12 @@ import {
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 import {
-  getModelSelectionBooleanOptionValue,
-  getModelSelectionStringOptionValue,
-} from "@t3tools/shared/model";
+  applyProviderOptionMenuEvent,
+  buildProviderOptionMenuActions,
+  providerOptionsConfigurationLabel,
+  resolveProviderOptionDescriptors,
+} from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
-import { CLAUDE_AGENT_EFFORT_OPTIONS } from "./claudeEffortOptions";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 
 /**
@@ -71,8 +72,8 @@ export const COMPOSER_EXPANDED_CHROME = 174;
 
 /**
  * Height of the expanded-only toolbar below the text surface.
- * Used by the feed inset because KeyboardAvoidingLegendList only accounts for
- * keyboard height; the floating toolbar remains an additional overlay.
+ * Used by the feed inset because the floating toolbar remains an additional
+ * overlay above the keyboard.
  */
 export const COMPOSER_EXPANDED_TOOLBAR_CHROME = 60;
 
@@ -140,22 +141,6 @@ function ComposerSurface(props: {
       {props.children}
     </View>
   );
-}
-
-function withModelSelectionOption(
-  selection: ModelSelection,
-  id: string,
-  value: string | boolean | undefined,
-): ModelSelection {
-  const options = (selection.options ?? []).filter((option) => option.id !== id);
-  return {
-    ...selection,
-    options: value === undefined ? options : [...options, { id, value }],
-  };
-}
-
-function formatTitleCase(value: string): string {
-  return value.length === 0 ? value : `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 }
 
 function composerConnectionStatus(input: {
@@ -279,19 +264,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       ) ?? null
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
-
-  // Extract current model options (effort, fastMode, contextWindow)
-  const selectedProviderDriver = selectedProviderStatus?.driver ?? null;
-  const currentEffort =
-    selectedProviderDriver === "claudeAgent"
-      ? (getModelSelectionStringOptionValue(currentModelSelection, "effort") ?? "high")
-      : "high";
-  const currentFastMode =
-    getModelSelectionBooleanOptionValue(currentModelSelection, "fastMode") ?? false;
-  const currentContextWindow =
-    selectedProviderDriver === "claudeAgent"
-      ? (getModelSelectionStringOptionValue(currentModelSelection, "contextWindow") ?? "1M")
-      : "1M";
 
   const handleNativePaste = useNativePaste((uris) => {
     void props.onNativePasteImages(uris);
@@ -526,14 +498,18 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         option.selection.instanceId === currentModelSelection.instanceId &&
         option.selection.model === currentModelSelection.model,
     ) ?? null;
-  const configurationLabel = useMemo(() => {
-    const parts = [
-      formatTitleCase(currentEffort),
-      currentFastMode ? "Fast" : null,
-      currentContextWindow !== "1M" ? currentContextWindow : null,
-    ].filter((part): part is string => Boolean(part));
-    return parts.length > 0 ? parts.join(" · ") : "Configuration";
-  }, [currentContextWindow, currentEffort, currentFastMode]);
+  const providerOptionDescriptors = useMemo(
+    () =>
+      resolveProviderOptionDescriptors({
+        capabilities: currentModelOption?.capabilities,
+        selections: currentModelSelection.options,
+      }),
+    [currentModelOption?.capabilities, currentModelSelection.options],
+  );
+  const configurationLabel = useMemo(
+    () => providerOptionsConfigurationLabel(providerOptionDescriptors),
+    [providerOptionDescriptors],
+  );
   const modelMenuActions = useMemo(
     () =>
       providerGroups.map((group) => ({
@@ -560,36 +536,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   // ── Options menu ─────────────────────────────────────────
   const optionsMenuActions = useMemo(
     () => [
-      {
-        id: "options-effort",
-        title: "Effort",
-        subtitle: `${currentEffort.charAt(0).toUpperCase()}${currentEffort.slice(1)}`,
-        subactions: CLAUDE_AGENT_EFFORT_OPTIONS.map((level) => ({
-          id: `options:effort:${level}`,
-          title: `${level}${level === "high" ? " (default)" : ""}`,
-          state: currentEffort === level ? ("on" as const) : undefined,
-        })),
-      },
-      {
-        id: "options-fast-mode",
-        title: "Fast Mode",
-        subtitle: currentFastMode ? "On" : "Off",
-        subactions: ([false, true] as const).map((value) => ({
-          id: `options:fast-mode:${value ? "on" : "off"}`,
-          title: value ? "On" : "Off",
-          state: currentFastMode === value ? ("on" as const) : undefined,
-        })),
-      },
-      {
-        id: "options-context-window",
-        title: "Context Window",
-        subtitle: currentContextWindow,
-        subactions: (["200k", "1M"] as const).map((value) => ({
-          id: `options:context-window:${value}`,
-          title: `${value}${value === "1M" ? " (default)" : ""}`,
-          state: currentContextWindow === value ? ("on" as const) : undefined,
-        })),
-      },
+      ...buildProviderOptionMenuActions(providerOptionDescriptors),
       {
         id: "options-runtime",
         title: "Runtime",
@@ -629,13 +576,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         }),
       },
     ],
-    [
-      currentEffort,
-      currentFastMode,
-      currentContextWindow,
-      currentRuntimeMode,
-      currentInteractionMode,
-    ],
+    [currentInteractionMode, currentRuntimeMode, providerOptionDescriptors],
   );
 
   // ── Menu handlers ────────────────────────────────────────
@@ -651,36 +592,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   }
 
   function handleOptionsMenuAction(event: string) {
-    if (event.startsWith("options:effort:")) {
-      const effort = event.slice("options:effort:".length);
-      const updated: ModelSelection =
-        selectedProviderDriver === "claudeAgent"
-          ? withModelSelectionOption(
-              currentModelSelection,
-              "effort",
-              effort as typeof currentEffort,
-            )
-          : currentModelSelection;
-      void props.onUpdateModelSelection(updated);
-      return;
-    }
-    if (event.startsWith("options:fast-mode:")) {
-      const fastMode = event.endsWith(":on");
-      const nextFast = fastMode || undefined;
-      if (selectedProviderDriver === "opencode") {
-        return;
-      }
-      const updated = withModelSelectionOption(currentModelSelection, "fastMode", nextFast);
-      void props.onUpdateModelSelection(updated);
-      return;
-    }
-    if (event.startsWith("options:context-window:")) {
-      const contextWindow = event.slice("options:context-window:".length);
-      const updated: ModelSelection =
-        selectedProviderDriver === "claudeAgent"
-          ? withModelSelectionOption(currentModelSelection, "contextWindow", contextWindow)
-          : currentModelSelection;
-      void props.onUpdateModelSelection(updated);
+    const providerOptions = applyProviderOptionMenuEvent(providerOptionDescriptors, event);
+    if (providerOptions) {
+      void props.onUpdateModelSelection({
+        ...currentModelSelection,
+        options: providerOptions,
+      });
       return;
     }
     if (event.startsWith("options:runtime:")) {

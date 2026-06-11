@@ -1,10 +1,10 @@
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
-import { KeyboardAvoidingLegendList } from "@legendapp/list/keyboard";
+import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { type LegendListRef } from "@legendapp/list/react-native";
-import type { ThreadId } from "@t3tools/contracts";
+import type { ThreadId, TurnId } from "@t3tools/contracts";
 import { SymbolView } from "expo-symbols";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Markdown,
   type CustomRenderers,
@@ -14,6 +14,10 @@ import {
 import {
   ActivityIndicator,
   Image,
+  Linking,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -25,10 +29,23 @@ import {
 } from "react-native";
 import { TouchableOpacity } from "react-native-gesture-handler";
 import ImageViewing from "react-native-image-viewing";
+import { useKeyboardHandler } from "react-native-keyboard-controller";
+import Animated, {
+  runOnJS,
+  useAnimatedProps,
+  useAnimatedStyle,
+  useSharedValue,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
+import {
+  hasNativeSelectableMarkdownText,
+  SelectableMarkdownText,
+  type NativeMarkdownTextStyle,
+} from "../../native/SelectableMarkdownText";
 
 import { AppText as Text } from "../../components/AppText";
+import { CopyTextButton } from "../../components/CopyTextButton";
 import {
   parseReviewCommentMessageSegments,
   type ReviewInlineComment,
@@ -44,11 +61,36 @@ import {
 import { buildReviewParsedDiff } from "../review/reviewModel";
 import { cn } from "../../lib/cn";
 import type { LayoutVariant } from "../../lib/layout";
-import type { ThreadFeedEntry } from "../../lib/threadActivity";
+import { markdownFileIconSource } from "../../lib/markdownFileIcons";
+import { resolveMarkdownLinkPresentation } from "../../lib/markdownLinks";
+import {
+  deriveThreadFeedPresentation,
+  type ThreadFeedEntry,
+  type ThreadFeedLatestTurn,
+} from "../../lib/threadActivity";
+import {
+  isThreadFeedNearEnd,
+  threadFeedFooterHeight,
+  threadFeedMessageContentHeight,
+} from "../../lib/threadFeedLayout";
 import { relativeTime } from "../../lib/time";
 import { messageImageUrl } from "./threadPresentation";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { useRemoteHttpHeaders } from "../../state/remote-http";
+
+const THREAD_FEED_END_THRESHOLD = 80;
+const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+function formatMessageTime(input: string): string {
+  const timestamp = Date.parse(input);
+  if (Number.isNaN(timestamp)) {
+    return "";
+  }
+  return MESSAGE_TIME_FORMATTER.format(timestamp);
+}
 
 export interface ThreadFeedProps {
   readonly threadId: ThreadId;
@@ -58,6 +100,8 @@ export interface ThreadFeedProps {
   readonly bearerToken: string | null;
   readonly dpopAccessToken?: string;
   readonly agentLabel: string;
+  readonly latestTurn: ThreadFeedLatestTurn | null;
+  readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
   readonly layoutVariant?: LayoutVariant;
   readonly composerExpanded?: boolean;
@@ -112,30 +156,15 @@ function compactActivityDetail(detail: string | null): string | null {
 }
 
 function buildActivityRows(
-  activities: ReadonlyArray<{
-    readonly id: string;
-    readonly createdAt: string;
-    readonly summary: string;
-    readonly detail: string | null;
-    readonly status: string | null;
-  }>,
+  activities: Extract<ThreadFeedEntry, { type: "activity-group" }>["activities"],
 ) {
-  return activities.map<{
-    id: string;
-    createdAt: string;
-    summary: string;
-    detail: string | null;
-    status: string | null;
-  }>((activity) => ({
-    id: activity.id,
-    createdAt: activity.createdAt,
-    summary: activity.summary,
+  return activities.map((activity) => ({
+    ...activity,
     detail: compactActivityDetail(activity.detail),
-    status: activity.status,
   }));
 }
 
-const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
+const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 
 function toMarkdownThemeColor(value: ColorValue): string {
   return value as string;
@@ -150,6 +179,7 @@ interface MarkdownStyleSet {
   readonly theme: PartialMarkdownTheme;
   readonly styles: NodeStyleOverrides;
   readonly renderers: CustomRenderers;
+  readonly nativeTextStyle: NativeMarkdownTextStyle;
 }
 
 interface ReviewCommentColors {
@@ -160,6 +190,70 @@ interface ReviewCommentColors {
   readonly mutedText: ColorValue;
   readonly codeBackground: ColorValue;
 }
+
+const failedMarkdownFaviconHosts = new Set<string>();
+const markdownLinkStyles = StyleSheet.create({
+  favicon: {
+    width: 14,
+    height: 14,
+    borderRadius: 3,
+    marginHorizontal: 3,
+    transform: [{ translateY: 2 }],
+  },
+  file: {
+    borderRadius: 5,
+    borderWidth: StyleSheet.hairlineWidth,
+    fontFamily: "DMSans_500Medium",
+    fontSize: 13,
+    lineHeight: 20,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  fileIcon: {
+    width: 15,
+    height: 15,
+    marginRight: 4,
+    transform: [{ translateY: 2 }],
+  },
+});
+
+const MarkdownExternalLink = memo(function MarkdownExternalLink(props: {
+  readonly children: ReactNode;
+  readonly color: string;
+  readonly host: string;
+  readonly href: string;
+}) {
+  const [failed, setFailed] = useState(() => failedMarkdownFaviconHosts.has(props.host));
+
+  return (
+    <NativeText
+      onPress={() => {
+        void Linking.openURL(props.href);
+      }}
+      style={{
+        color: props.color,
+        fontFamily: "DMSans_400Regular",
+        textDecorationLine: "none",
+      }}
+    >
+      {!failed ? (
+        <Image
+          source={{
+            uri: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(props.host)}&sz=32`,
+          }}
+          style={markdownLinkStyles.favicon}
+          onError={() => {
+            failedMarkdownFaviconHosts.add(props.host);
+            setFailed(true);
+          }}
+        />
+      ) : (
+        <NativeText style={{ color: props.color }}>{" ◉ "}</NativeText>
+      )}
+      {props.children}
+    </NativeText>
+  );
+});
 
 function useReviewCommentColors(): ReviewCommentColors {
   const colorScheme = useColorScheme();
@@ -239,12 +333,12 @@ function useMarkdownStyles(): MarkdownStyleSets {
       fontSizes: {
         s: 13,
         m: 15,
-        h1: 22,
-        h2: 19,
-        h3: 17,
-        h4: 15,
-        h5: 15,
-        h6: 15,
+        h1: 20,
+        h2: 18,
+        h3: 16,
+        h4: 14,
+        h5: 14,
+        h6: 14,
       },
       fontFamilies: {
         regular: "DMSans_400Regular",
@@ -262,8 +356,8 @@ function useMarkdownStyles(): MarkdownStyleSets {
 
     const baseStyles: NodeStyleOverrides = {
       document: { flexShrink: 1 },
-      paragraph: { marginTop: 0, marginBottom: 8 },
-      list: { marginTop: 4, marginBottom: 4 },
+      paragraph: { marginTop: 0, marginBottom: 10 },
+      list: { marginTop: 4, marginBottom: 8 },
       list_item: { marginTop: 0, marginBottom: 4 },
       task_list_item: { marginTop: 0, marginBottom: 4 },
       text: { lineHeight: 22 },
@@ -278,20 +372,18 @@ function useMarkdownStyles(): MarkdownStyleSets {
         textDecorationLine: "underline" as const,
       },
       blockquote: {
-        borderLeftWidth: 3,
+        borderLeftWidth: 2,
         borderLeftColor: markdownBlockquoteBorder,
-        backgroundColor: markdownBlockquoteBg,
-        paddingLeft: 12,
-        paddingVertical: 6,
+        paddingLeft: 11,
+        paddingVertical: 2,
         marginLeft: 0,
-        marginVertical: 4,
-        borderRadius: 4,
+        marginVertical: 10,
       },
       heading: {
         fontFamily: "DMSans_700Bold",
         color: markdownStrongColor,
-        marginTop: 12,
-        marginBottom: 6,
+        marginTop: 18,
+        marginBottom: 8,
       },
       horizontal_rule: {
         backgroundColor: markdownHrColor,
@@ -300,44 +392,173 @@ function useMarkdownStyles(): MarkdownStyleSets {
       },
     };
 
-    const createCodeRenderers = (
+    const createMarkdownRenderers = (
       inlineBackgroundColor: string,
       inlineTextColor: string,
       blockBackgroundColor: string,
       blockTextColor: string,
     ): CustomRenderers => ({
-      code_inline: ({ content }) => (
-        <NativeText
-          style={{
-            backgroundColor: inlineBackgroundColor,
-            color: inlineTextColor,
-            borderRadius: 5,
-            paddingHorizontal: 5,
-            paddingVertical: 1,
-            fontFamily: "ui-monospace",
-            fontSize: 13,
-          }}
-        >
-          {content}
-        </NativeText>
+      link: ({ children, href = "" }) => {
+        const presentation = resolveMarkdownLinkPresentation(href);
+        if (presentation.kind === "file") {
+          return (
+            <NativeText
+              style={[
+                markdownLinkStyles.file,
+                {
+                  backgroundColor: inlineBackgroundColor,
+                  borderColor: markdownHrColor,
+                  color: inlineTextColor,
+                },
+              ]}
+            >
+              <Image
+                source={markdownFileIconSource(presentation.icon)}
+                style={markdownLinkStyles.fileIcon}
+              />
+              {presentation.label}
+            </NativeText>
+          );
+        }
+        if (presentation.kind === "external") {
+          return (
+            <MarkdownExternalLink
+              href={presentation.href}
+              host={presentation.host}
+              color={markdownLinkColor}
+            >
+              {children}
+            </MarkdownExternalLink>
+          );
+        }
+        const linkHref = presentation.href;
+        return (
+          <NativeText
+            onPress={
+              linkHref
+                ? () => {
+                    void Linking.openURL(linkHref);
+                  }
+                : undefined
+            }
+            style={{
+              color: markdownLinkColor,
+              textDecorationLine: "underline",
+            }}
+          >
+            {children}
+          </NativeText>
+        );
+      },
+      list: ({ node, Renderer, ordered = false, start = 1 }) => (
+        <View style={{ marginTop: 2, marginBottom: 8 }}>
+          {node.children?.map((child, index) => {
+            const childKey = `${child.type}:${child.beg ?? "unknown"}:${child.end ?? "unknown"}`;
+            if (child.type === "task_list_item") {
+              return (
+                <Renderer key={childKey} node={child} depth={1} inListItem parentIsText={false} />
+              );
+            }
+            return (
+              <View
+                key={childKey}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "flex-start",
+                  marginBottom: 3,
+                }}
+              >
+                <NativeText
+                  style={{
+                    width: ordered ? 22 : 12,
+                    marginRight: 5,
+                    color: inlineTextColor,
+                    fontFamily: "DMSans_400Regular",
+                    fontSize: 15,
+                    lineHeight: 22,
+                    textAlign: ordered ? "right" : "center",
+                  }}
+                >
+                  {ordered ? `${start + index}.` : "•"}
+                </NativeText>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Renderer node={child} depth={1} inListItem parentIsText={false} />
+                </View>
+              </View>
+            );
+          })}
+        </View>
       ),
-      code_block: ({ content }) => (
+      code_inline: ({ content }) => {
+        const value = content ?? "";
+        const wrapsPoorly =
+          value.length > 24 || value.includes("/") || value.includes("\\") || value.includes(":");
+        return (
+          <NativeText
+            style={{
+              color: inlineTextColor,
+              fontFamily: "ui-monospace",
+              fontSize: 12,
+              lineHeight: 18,
+              ...(wrapsPoorly
+                ? { opacity: 0.82 }
+                : {
+                    backgroundColor: inlineBackgroundColor,
+                    borderRadius: 4,
+                    paddingHorizontal: 3,
+                  }),
+            }}
+          >
+            {value}
+          </NativeText>
+        );
+      },
+      code_block: ({ content, language }) => (
         <View
           style={{
             backgroundColor: blockBackgroundColor,
-            borderRadius: 12,
-            padding: 12,
-            marginVertical: 8,
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: markdownHrColor,
+            marginVertical: 12,
+            overflow: "hidden",
           }}
         >
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
+          {language ? (
+            <View
+              style={{
+                borderBottomWidth: 1,
+                borderBottomColor: markdownHrColor,
+                paddingHorizontal: 14,
+                paddingVertical: 8,
+              }}
+            >
+              <NativeText
+                style={{
+                  color: markdownBodyColor,
+                  fontFamily: "ui-monospace",
+                  fontSize: 12,
+                  opacity: 0.7,
+                  textTransform: "uppercase",
+                }}
+              >
+                {language}
+              </NativeText>
+            </View>
+          ) : null}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            bounces={false}
+            contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 12 }}
+          >
             <NativeText
               selectable
               style={{
                 color: blockTextColor,
                 fontFamily: "ui-monospace",
-                fontSize: 13,
-                lineHeight: 19,
+                fontSize: 12,
+                lineHeight: 18,
               }}
             >
               {content}
@@ -370,6 +591,8 @@ function useMarkdownStyles(): MarkdownStyleSets {
       heading: {
         ...baseStyles.heading,
         color: markdownUserBodyColor,
+        marginTop: 8,
+        marginBottom: 4,
       },
       link: {
         color: markdownUserBodyColor,
@@ -394,22 +617,56 @@ function useMarkdownStyles(): MarkdownStyleSets {
       user: {
         theme: userTheme,
         styles: userStyles,
-        renderers: createCodeRenderers(
+        renderers: createMarkdownRenderers(
           markdownUserCodeBg,
           markdownUserCodeText,
           markdownUserFenceBg,
           markdownUserFenceText,
         ),
+        nativeTextStyle: {
+          color: markdownUserBodyColor,
+          strongColor: markdownUserBodyColor,
+          mutedColor: markdownUserBodyColor,
+          linkColor: markdownUserBodyColor,
+          codeColor: markdownUserCodeText,
+          codeBackgroundColor: markdownUserCodeBg,
+          codeBlockBackgroundColor: markdownUserFenceBg,
+          fileBackgroundColor: markdownUserCodeBg,
+          quoteMarkerColor: markdownUserBodyColor,
+          dividerColor: markdownUserBodyColor,
+          fontSize: 15,
+          lineHeight: 22,
+          fontFamily: "DMSans_400Regular",
+          headingFontFamily: "DMSans_700Bold",
+          boldFontFamily: "DMSans_700Bold",
+        },
       },
       assistant: {
         theme: assistantTheme,
         styles: assistantStyles,
-        renderers: createCodeRenderers(
+        renderers: createMarkdownRenderers(
           markdownCodeBg,
           markdownCodeText,
           markdownCodeBg,
           markdownCodeText,
         ),
+        nativeTextStyle: {
+          color: markdownBodyColor,
+          strongColor: markdownStrongColor,
+          mutedColor: markdownBodyColor,
+          linkColor: markdownLinkColor,
+          codeColor: markdownCodeText,
+          codeBackgroundColor: markdownCodeBg,
+          codeBlockBackgroundColor: markdownCodeBg,
+          fileBackgroundColor: markdownCodeBg,
+          quoteMarkerColor: markdownBlockquoteBorder,
+          dividerColor: markdownHrColor,
+          fontSize: 15,
+          lineHeight: 22,
+          fontFamily: "DMSans_400Regular",
+          headingFontFamily: "DMSans_700Bold",
+          boldFontFamily: "DMSans_700Bold",
+        },
       },
     };
   }, [
@@ -434,8 +691,13 @@ function renderFeedEntry(
   props: Pick<ThreadFeedProps, "bearerToken" | "dpopAccessToken" | "httpBaseUrl"> & {
     readonly copiedRowId: string | null;
     readonly expandedWorkGroups: Record<string, boolean>;
+    readonly expandedWorkRows: Record<string, boolean>;
+    readonly terminalAssistantMessageIds: ReadonlySet<string>;
+    readonly unsettledTurnId: TurnId | null;
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
     readonly onToggleWorkGroup: (groupId: string) => void;
+    readonly onToggleWorkRow: (rowId: string) => void;
+    readonly onToggleTurnFold: (turnId: TurnId) => void;
     readonly onPressImage: (uri: string, headers?: Record<string, string>) => void;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly userBubbleColor: string | import("react-native").ColorValue;
@@ -447,19 +709,50 @@ function renderFeedEntry(
   const entry = info.item;
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
 
+  if (entry.type === "turn-fold") {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: entry.expanded }}
+        onPress={() => props.onToggleTurnFold(entry.turnId)}
+        hitSlop={4}
+        className="mb-3 min-h-11 flex-row items-center gap-2 border-b border-neutral-200/80 px-2 dark:border-white/[0.08]"
+      >
+        <Text className="font-t3-medium text-sm tabular-nums text-foreground-muted">
+          {entry.label}
+        </Text>
+        <SymbolView
+          name={entry.expanded ? "chevron.down" : "chevron.right"}
+          size={15}
+          tintColor={iconSubtleColor}
+          type="monochrome"
+        />
+      </Pressable>
+    );
+  }
+
   if (entry.type === "message") {
     const { message } = entry;
     const isUser = message.role === "user";
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
-    const timestampLabel = `${relativeTime(message.createdAt)}${message.streaming ? " • live" : ""}`;
+    const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];
     const hasReviewCommentContext = message.text.includes("<review_comment");
+    const assistantTurnStillInProgress =
+      message.role === "assistant" &&
+      props.unsettledTurnId !== null &&
+      message.turnId === props.unsettledTurnId;
+    const showAssistantMeta =
+      message.role === "assistant" &&
+      props.terminalAssistantMessageIds.has(message.id) &&
+      !assistantTurnStillInProgress &&
+      !message.streaming;
 
     if (isUser) {
       return (
         <View className="mb-5 items-end">
           <View
-            className="max-w-[85%] gap-2 rounded-[22px] rounded-br-[6px] px-3.5 py-2.5"
+            className="max-w-[85%] gap-2 rounded-[20px] px-3.5 py-2.5"
             style={{
               backgroundColor: userBubbleColor,
               ...(hasReviewCommentContext ? { width: props.reviewCommentBubbleWidth } : null),
@@ -489,9 +782,20 @@ function renderFeedEntry(
               );
             })}
           </View>
-          <Text className="mt-1.5 px-1 text-right font-t3-medium text-xs text-neutral-600 dark:text-neutral-400">
-            {timestampLabel}
-          </Text>
+          <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
+            <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
+              {timestampLabel}
+            </Text>
+            {message.text.trim().length > 0 ? (
+              <CopyTextButton
+                accessibilityLabel="Copy message"
+                text={message.text}
+                tintColor={iconSubtleColor}
+                buttonSize={28}
+                iconSize={13}
+              />
+            ) : null}
+          </View>
         </View>
       );
     }
@@ -503,16 +807,20 @@ function renderFeedEntry(
     }
 
     return (
-      <View className="mb-5 px-1">
+      <View className={cn(showAssistantMeta ? "mb-5 px-1" : "mb-2 px-1")}>
         {message.text.trim().length > 0 ? (
-          <Markdown
-            options={{ gfm: true }}
-            renderers={styles.renderers}
-            styles={styles.styles}
-            theme={styles.theme}
-          >
-            {message.text}
-          </Markdown>
+          hasNativeSelectableMarkdownText() ? (
+            <SelectableMarkdownText markdown={message.text} textStyle={styles.nativeTextStyle} />
+          ) : (
+            <Markdown
+              options={{ gfm: true }}
+              renderers={styles.renderers}
+              styles={styles.styles}
+              theme={styles.theme}
+            >
+              {message.text}
+            </Markdown>
+          )
         ) : null}
         {attachments.map((attachment) => {
           const uri = messageImageUrl(props.httpBaseUrl, attachment.id);
@@ -530,9 +838,20 @@ function renderFeedEntry(
             />
           );
         })}
-        <Text className="mt-1.5 font-t3-medium text-xs text-neutral-600 dark:text-neutral-400">
-          {timestampLabel}
-        </Text>
+        {showAssistantMeta ? (
+          <View className="mt-1 flex-row items-center gap-1">
+            <CopyTextButton
+              accessibilityLabel="Copy message"
+              text={message.text}
+              tintColor={iconSubtleColor}
+              buttonSize={28}
+              iconSize={13}
+            />
+            <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
+              {timestampLabel}
+            </Text>
+          </View>
+        ) : null}
       </View>
     );
   }
@@ -561,67 +880,121 @@ function renderFeedEntry(
     );
   }
 
-  const rows = buildActivityRows(entry.activities);
+  const rows = buildActivityRows(entry.activities).filter(
+    (activity) => !(activity.toolLike && activity.status === "neutral"),
+  );
+  if (rows.length === 0) {
+    return null;
+  }
   const isExpanded = props.expandedWorkGroups[entry.id] ?? false;
   const hasOverflow = rows.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
   const visibleRows = hasOverflow && !isExpanded ? rows.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES) : rows;
   const hiddenCount = rows.length - visibleRows.length;
-  const showHeader = hasOverflow;
+  const onlyToolRows = rows.every((row) => row.toolLike);
+  const headerTitle = onlyToolRows
+    ? rows.length === 1
+      ? "1 tool call"
+      : `${rows.length} tool calls`
+    : "Work log";
 
   return (
-    <View className="mb-3 rounded-[20px] border border-neutral-200/80 bg-neutral-50/85 px-3 py-2 dark:border-white/[0.06] dark:bg-white/[0.025]">
-      {showHeader ? (
-        <View className="mb-1.5 flex-row items-center justify-between gap-3 px-0.5">
-          <Text className="font-t3-bold text-[10px] uppercase tracking-[0.8px] text-neutral-500 dark:text-neutral-500">
-            Tool calls ({rows.length})
-          </Text>
-          <Pressable onPress={() => props.onToggleWorkGroup(entry.id)}>
-            <Text className="font-t3-medium text-[10px] uppercase tracking-[0.8px] text-neutral-500 dark:text-neutral-500">
+    <View className="mb-3 rounded-[16px] border border-neutral-300/70 bg-background px-2 py-2.5 dark:border-white/[0.1] dark:bg-white/[0.035]">
+      <View className="mb-1.5 flex-row items-center justify-between gap-3 px-2">
+        <Text className="font-t3-medium text-xs text-foreground">{headerTitle}</Text>
+        {hasOverflow ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: isExpanded }}
+            onPress={() => props.onToggleWorkGroup(entry.id)}
+            className="flex-row items-center gap-1"
+          >
+            <Text className="font-t3-medium text-xs text-foreground-muted">
               {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
             </Text>
+            <SymbolView
+              name={isExpanded ? "chevron.up" : "chevron.down"}
+              size={12}
+              tintColor={iconSubtleColor}
+              type="monochrome"
+            />
           </Pressable>
-        </View>
-      ) : null}
+        ) : null}
+      </View>
       {visibleRows.map((row, index) => (
-        <View
+        <Pressable
           key={row.id}
+          accessibilityRole={row.fullDetail ? "button" : undefined}
+          accessibilityState={
+            row.fullDetail ? { expanded: props.expandedWorkRows[row.id] ?? false } : undefined
+          }
+          onPress={() => {
+            if (row.fullDetail) {
+              props.onToggleWorkRow(row.id);
+            }
+          }}
+          onLongPress={() => props.onCopyWorkRow(row.id, row.copyText)}
           className={cn(
-            "flex-row items-center gap-2 rounded-lg px-1 py-1",
+            "rounded-lg px-2 py-1.5",
             index > 0 && "border-t border-neutral-200/80 dark:border-white/[0.06]",
           )}
         >
-          <View className="items-center justify-center pt-0.5">
-            <SymbolView name="terminal" size={13} tintColor={iconSubtleColor} type="monochrome" />
-          </View>
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            directionalLockEnabled
-            showsHorizontalScrollIndicator={false}
-            bounces={false}
-            className="flex-1"
-            contentContainerStyle={{ paddingRight: 12 }}
-            style={{ flex: 1 }}
-          >
+          <View className="flex-row items-center gap-2">
+            <View className="w-4 items-center justify-center">
+              <SymbolView
+                name={
+                  row.status === "failure"
+                    ? "xmark"
+                    : row.status === "success"
+                      ? "checkmark"
+                      : row.status === "neutral"
+                        ? "minus"
+                        : "terminal"
+                }
+                size={row.status ? 11 : 13}
+                tintColor={row.status === "failure" ? "#e11d48" : iconSubtleColor}
+                type="monochrome"
+              />
+            </View>
             <Text
-              className="text-[12px] leading-[18px] text-neutral-600 dark:text-neutral-400"
-              onLongPress={() => {
-                const copyValue = row.detail ?? row.summary;
-                props.onCopyWorkRow(row.id, copyValue);
-              }}
-              style={{
-                fontFamily: "ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace",
-              }}
+              className="min-w-0 flex-1 text-[12px] leading-[18px] text-neutral-700 dark:text-neutral-300"
+              numberOfLines={props.expandedWorkRows[row.id] ? undefined : 1}
             >
               {row.detail ? `${row.summary} - ${row.detail}` : row.summary}
             </Text>
-          </ScrollView>
-          {props.copiedRowId === row.id ? (
-            <Text className="shrink-0 font-t3-medium text-[10px] uppercase tracking-[0.8px] text-emerald-600 dark:text-emerald-400">
-              Copied
-            </Text>
+            {row.fullDetail ? (
+              <SymbolView
+                name={props.expandedWorkRows[row.id] ? "chevron.up" : "chevron.down"}
+                size={11}
+                tintColor={iconSubtleColor}
+                type="monochrome"
+              />
+            ) : null}
+            {props.copiedRowId === row.id ? (
+              <Text className="shrink-0 font-t3-medium text-[10px] text-emerald-600 dark:text-emerald-400">
+                Copied
+              </Text>
+            ) : null}
+          </View>
+          {row.fullDetail && props.expandedWorkRows[row.id] ? (
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              directionalLockEnabled
+              showsHorizontalScrollIndicator
+              bounces={false}
+              className="mt-2 rounded-lg bg-neutral-100 dark:bg-black/20"
+              contentContainerStyle={{ paddingHorizontal: 10, paddingVertical: 8 }}
+            >
+              <Text
+                selectable
+                className="text-[11px] leading-[17px] text-neutral-600 dark:text-neutral-400"
+                style={{ fontFamily: "ui-monospace" }}
+              >
+                {row.fullDetail}
+              </Text>
+            </ScrollView>
           ) : null}
-        </View>
+        </Pressable>
       ))}
     </View>
   );
@@ -841,8 +1214,6 @@ function compactFileName(filePath: string): string {
   return lastSlashIndex >= 0 ? normalized.slice(lastSlashIndex + 1) : normalized;
 }
 
-const IOS_NAV_BAR_HEIGHT = 44;
-
 function ThreadFeedPlaceholder(props: {
   readonly bottomInset: number;
   readonly detail: string;
@@ -877,9 +1248,27 @@ function ThreadFeedPlaceholder(props: {
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const listRef = useRef<LegendListRef>(null);
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollFrameRef = useRef<number | null>(null);
+  const foldSettleFrameRef = useRef<number | null>(null);
+  const foldSettleSecondFrameRef = useRef<number | null>(null);
+  const suppressAutoFollowRef = useRef(false);
+  const previousLatestTurnRef = useRef(props.latestTurn);
+  const isNearEndRef = useRef(true);
+  const followKeyboardRef = useRef(true);
+  const lastMessageContentHeightRef = useRef(0);
   const { width: viewportWidth } = useWindowDimensions();
-  const [copiedRowId, setCopiedRowId] = useState<string | null>(null);
-  const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
+  const [interactionState, setInteractionState] = useState<{
+    readonly copiedRowId: string | null;
+    readonly expandedWorkGroups: Record<string, boolean>;
+    readonly expandedWorkRows: Record<string, boolean>;
+    readonly expandedTurnIds: ReadonlySet<TurnId>;
+  }>({
+    copiedRowId: null,
+    expandedWorkGroups: {},
+    expandedWorkRows: {},
+    expandedTurnIds: new Set(),
+  });
+  const { copiedRowId, expandedWorkGroups, expandedWorkRows, expandedTurnIds } = interactionState;
   const [expandedImage, setExpandedImage] = useState<{
     uri: string;
     headers?: Record<string, string>;
@@ -888,23 +1277,195 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const contentWidth = Math.max(0, viewportWidth - horizontalPadding * 2);
   const reviewCommentBubbleWidth = Math.min(Math.max(280, contentWidth * 0.85), contentWidth);
   const insets = useSafeAreaInsets();
-  const topContentInset = insets.top + IOS_NAV_BAR_HEIGHT;
+  const topContentInset = props.contentTopInset ?? insets.top + 44;
   const bottomContentInset = props.contentBottomInset ?? 18;
+  const viewportHeight = useSharedValue(0);
+  const messageContentHeight = useSharedValue(0);
+  const footerHeight = useSharedValue(0);
+  const keyboardInset = useSharedValue(0);
+  const topInset = useSharedValue(topContentInset);
+  const bottomInset = useSharedValue(bottomContentInset);
+  const interactiveKeyboardDismissal = useSharedValue(false);
 
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
   const userBubbleColor = useThemeColor("--color-user-bubble");
   const markdownStyles = useMarkdownStyles();
   const reviewCommentColors = useReviewCommentColors();
+  const presentedFeed = useMemo(
+    () => deriveThreadFeedPresentation(props.feed, props.latestTurn, expandedTurnIds),
+    [expandedTurnIds, props.feed, props.latestTurn],
+  );
+  const terminalAssistantMessageIds = useMemo(() => {
+    const terminalIdsByTurn = new Map<TurnId, string>();
+    for (const entry of props.feed) {
+      if (entry.type === "message" && entry.message.role === "assistant" && entry.message.turnId) {
+        terminalIdsByTurn.set(entry.message.turnId, entry.message.id);
+      }
+    }
+    return new Set(terminalIdsByTurn.values());
+  }, [props.feed]);
+  const unsettledTurnId =
+    props.latestTurn &&
+    (props.latestTurn.completedAt === null || props.latestTurn.state === "running")
+      ? props.latestTurn.turnId
+      : null;
+
+  const scrollToEnd = useCallback(() => {
+    if (scrollFrameRef.current !== null) {
+      return;
+    }
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      listRef.current?.scrollToEnd({ animated: false });
+    });
+  }, []);
+
+  const captureKeyboardFollowState = useCallback(() => {
+    followKeyboardRef.current = isNearEndRef.current;
+  }, []);
+
+  const handleKeyboardEnd = useCallback(
+    (_nextKeyboardInset: number, keyboardVisible: boolean) => {
+      if (keyboardVisible && followKeyboardRef.current) {
+        scrollToEnd();
+      }
+    },
+    [scrollToEnd],
+  );
+
+  useKeyboardHandler(
+    {
+      onStart: () => {
+        "worklet";
+        interactiveKeyboardDismissal.value = false;
+        runOnJS(captureKeyboardFollowState)();
+      },
+      onMove: (event) => {
+        "worklet";
+        if (!interactiveKeyboardDismissal.value) {
+          keyboardInset.value = Math.max(0, event.height - insets.bottom);
+        }
+      },
+      onInteractive: () => {
+        "worklet";
+        // Keep the list geometry fixed while the composer follows the drag.
+        // Resizing both surfaces during overscroll makes the feed jump.
+        interactiveKeyboardDismissal.value = true;
+      },
+      onEnd: (event) => {
+        "worklet";
+        const nextKeyboardInset = Math.max(0, event.height - insets.bottom);
+        keyboardInset.value = nextKeyboardInset;
+        interactiveKeyboardDismissal.value = false;
+        runOnJS(handleKeyboardEnd)(nextKeyboardInset, event.height > 0);
+      },
+    },
+    [captureKeyboardFollowState, handleKeyboardEnd, insets.bottom],
+  );
+
+  const listAnimatedProps = useAnimatedProps(() => ({
+    scrollIndicatorInsets: {
+      top: topInset.value,
+      left: 0,
+      right: 0,
+      bottom: bottomInset.value + keyboardInset.value,
+    },
+  }));
+
+  const footerSpacerStyle = useAnimatedStyle(() => {
+    const effectiveBottomInset = bottomInset.value + keyboardInset.value;
+    const nextFooterHeight = threadFeedFooterHeight({
+      viewportHeight: viewportHeight.value,
+      messageContentHeight: messageContentHeight.value,
+      topInset: 0,
+      bottomInset: effectiveBottomInset,
+    });
+    footerHeight.value = nextFooterHeight;
+    return { height: nextFooterHeight };
+  });
+
+  const onListLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      viewportHeight.value = event.nativeEvent.layout.height;
+    },
+    [viewportHeight],
+  );
+
+  const onListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentInset, contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    isNearEndRef.current = isThreadFeedNearEnd(
+      {
+        contentHeight: contentSize.height,
+        viewportHeight: layoutMeasurement.height,
+        offsetY: contentOffset.y,
+        bottomInset: contentInset.bottom,
+      },
+      THREAD_FEED_END_THRESHOLD,
+    );
+  }, []);
+
+  const onListContentSizeChange = useCallback(
+    (_width: number, height: number) => {
+      const nextMessageContentHeight = threadFeedMessageContentHeight(height, footerHeight.value);
+      const contentGrew = nextMessageContentHeight > lastMessageContentHeightRef.current + 0.5;
+
+      lastMessageContentHeightRef.current = nextMessageContentHeight;
+      messageContentHeight.value = nextMessageContentHeight;
+
+      if (contentGrew && isNearEndRef.current && !suppressAutoFollowRef.current) {
+        scrollToEnd();
+      }
+    },
+    [footerHeight, messageContentHeight, scrollToEnd],
+  );
 
   useEffect(() => {
-    setCopiedRowId(null);
-    setExpandedWorkGroups({});
-  }, [props.threadId]);
+    topInset.value = topContentInset;
+    bottomInset.value = bottomContentInset;
+    if (isNearEndRef.current) {
+      scrollToEnd();
+    }
+  }, [bottomContentInset, bottomInset, scrollToEnd, topContentInset, topInset]);
+
+  useEffect(() => {
+    const previous = previousLatestTurnRef.current;
+    previousLatestTurnRef.current = props.latestTurn;
+    if (!props.latestTurn || !previous) {
+      return;
+    }
+    if (props.latestTurn.turnId === previous.turnId) {
+      if (previous.state === "running" && props.latestTurn.state === "interrupted") {
+        const interruptedTurnId = props.latestTurn.turnId;
+        setInteractionState((current) => ({
+          ...current,
+          expandedTurnIds: new Set(current.expandedTurnIds).add(interruptedTurnId),
+        }));
+      }
+      return;
+    }
+    setInteractionState((current) => {
+      if (!current.expandedTurnIds.has(previous.turnId)) {
+        return current;
+      }
+      const next = new Set(current.expandedTurnIds);
+      next.delete(previous.turnId);
+      return { ...current, expandedTurnIds: next };
+    });
+  }, [props.latestTurn]);
 
   useEffect(() => {
     return () => {
       if (copyFeedbackTimeoutRef.current) {
         clearTimeout(copyFeedbackTimeoutRef.current);
+      }
+      if (scrollFrameRef.current !== null) {
+        cancelAnimationFrame(scrollFrameRef.current);
+      }
+      if (foldSettleFrameRef.current !== null) {
+        cancelAnimationFrame(foldSettleFrameRef.current);
+      }
+      if (foldSettleSecondFrameRef.current !== null) {
+        cancelAnimationFrame(foldSettleSecondFrameRef.current);
       }
     };
   }, []);
@@ -912,21 +1473,62 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const onCopyWorkRow = useCallback((rowId: string, value: string) => {
     void Clipboard.setStringAsync(value);
     void Haptics.selectionAsync();
-    setCopiedRowId(rowId);
+    setInteractionState((current) => ({ ...current, copiedRowId: rowId }));
     if (copyFeedbackTimeoutRef.current) {
       clearTimeout(copyFeedbackTimeoutRef.current);
     }
     copyFeedbackTimeoutRef.current = setTimeout(() => {
-      setCopiedRowId((current) => (current === rowId ? null : current));
+      setInteractionState((current) =>
+        current.copiedRowId === rowId ? { ...current, copiedRowId: null } : current,
+      );
       copyFeedbackTimeoutRef.current = null;
     }, 1200);
   }, []);
 
   const onToggleWorkGroup = useCallback((groupId: string) => {
-    setExpandedWorkGroups((current) => ({
+    setInteractionState((current) => ({
       ...current,
-      [groupId]: !(current[groupId] ?? false),
+      expandedWorkGroups: {
+        ...current.expandedWorkGroups,
+        [groupId]: !(current.expandedWorkGroups[groupId] ?? false),
+      },
     }));
+  }, []);
+
+  const onToggleWorkRow = useCallback((rowId: string) => {
+    setInteractionState((current) => ({
+      ...current,
+      expandedWorkRows: {
+        ...current.expandedWorkRows,
+        [rowId]: !(current.expandedWorkRows[rowId] ?? false),
+      },
+    }));
+  }, []);
+
+  const onToggleTurnFold = useCallback((turnId: TurnId) => {
+    suppressAutoFollowRef.current = true;
+    if (foldSettleFrameRef.current !== null) {
+      cancelAnimationFrame(foldSettleFrameRef.current);
+    }
+    if (foldSettleSecondFrameRef.current !== null) {
+      cancelAnimationFrame(foldSettleSecondFrameRef.current);
+    }
+    setInteractionState((current) => {
+      const next = new Set(current.expandedTurnIds);
+      if (next.has(turnId)) {
+        next.delete(turnId);
+      } else {
+        next.add(turnId);
+      }
+      return { ...current, expandedTurnIds: next };
+    });
+    foldSettleFrameRef.current = requestAnimationFrame(() => {
+      foldSettleSecondFrameRef.current = requestAnimationFrame(() => {
+        suppressAutoFollowRef.current = false;
+        foldSettleFrameRef.current = null;
+        foldSettleSecondFrameRef.current = null;
+      });
+    });
   }, []);
 
   const onPressImage = useCallback((uri: string, headers?: Record<string, string>) => {
@@ -941,8 +1543,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         copiedRowId,
         httpBaseUrl: props.httpBaseUrl,
         expandedWorkGroups,
+        expandedWorkRows,
+        terminalAssistantMessageIds,
+        unsettledTurnId,
         onCopyWorkRow,
         onToggleWorkGroup,
+        onToggleWorkRow,
+        onToggleTurnFold,
         onPressImage,
         iconSubtleColor,
         userBubbleColor,
@@ -953,6 +1560,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [
       copiedRowId,
       expandedWorkGroups,
+      expandedWorkRows,
+      terminalAssistantMessageIds,
+      unsettledTurnId,
       iconSubtleColor,
       userBubbleColor,
       markdownStyles,
@@ -960,7 +1570,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentBubbleWidth,
       onCopyWorkRow,
       onPressImage,
+      onToggleTurnFold,
       onToggleWorkGroup,
+      onToggleWorkRow,
       props.bearerToken,
       props.dpopAccessToken,
       props.httpBaseUrl,
@@ -1006,33 +1618,38 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   return (
     <>
-      <KeyboardAvoidingLegendList
-        ref={listRef}
-        key={props.threadId}
-        style={{ flex: 1 }}
-        alignItemsAtEnd
-        contentInsetAdjustmentBehavior="never"
-        contentInset={{ top: topContentInset, bottom: bottomContentInset }}
-        scrollIndicatorInsets={{ top: topContentInset, bottom: bottomContentInset }}
-        data={props.feed as ThreadFeedEntry[]}
-        renderItem={renderItem}
-        keyExtractor={(entry) => `${entry.type}:${entry.id}`}
-        getItemType={(entry) =>
-          entry.type === "message" ? `message:${entry.message.role}` : entry.type
-        }
-        keyboardShouldPersistTaps="handled"
-        estimatedItemSize={180}
-        initialScrollAtEnd
-        maintainScrollAtEnd={{
-          on: { layout: true, itemLayout: true, dataChange: true },
-        }}
-        maintainScrollAtEndThreshold={0.1}
-        safeAreaInsetBottom={insets.bottom}
-        contentContainerStyle={{
-          paddingTop: 12,
-          paddingHorizontal: horizontalPadding,
-        }}
-      />
+      <Animated.View style={{ flex: 1 }}>
+        <AnimatedLegendList
+          ref={listRef}
+          key={props.threadId}
+          style={{ flex: 1 }}
+          animatedProps={listAnimatedProps}
+          automaticallyAdjustContentInsets={false}
+          automaticallyAdjustsScrollIndicatorInsets={false}
+          contentInsetAdjustmentBehavior="never"
+          contentInset={{ top: 0, bottom: 0 }}
+          scrollIndicatorInsets={{ top: 0, bottom: 0 }}
+          data={presentedFeed}
+          renderItem={renderItem}
+          keyExtractor={(entry) => `${entry.type}:${entry.id}`}
+          getItemType={(entry) =>
+            entry.type === "message" ? `message:${entry.message.role}` : entry.type
+          }
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          estimatedItemSize={180}
+          onContentSizeChange={onListContentSizeChange}
+          onLayout={onListLayout}
+          onScroll={onListScroll}
+          scrollEventThrottle={16}
+          ListHeaderComponent={<View style={{ height: topContentInset }} />}
+          ListFooterComponent={<Animated.View style={footerSpacerStyle} />}
+          contentContainerStyle={{
+            paddingTop: 12,
+            paddingHorizontal: horizontalPadding,
+          }}
+        />
+      </Animated.View>
 
       <ImageViewing
         images={

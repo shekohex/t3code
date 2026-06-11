@@ -4,6 +4,7 @@ import type {
   EnvironmentId,
   ModelSelection,
   ProviderInteractionMode,
+  ProviderOptionSelection,
   RuntimeMode,
 } from "@t3tools/contracts";
 import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "@t3tools/contracts";
@@ -30,7 +31,6 @@ import {
 } from "../../state/use-remote-environment-registry";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
-import type { ClaudeAgentEffort } from "./claudeEffortOptions";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -80,9 +80,6 @@ type NewTaskFlowContextValue = {
   readonly availableBranches: ReadonlyArray<VcsRef>;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
-  readonly effort: ClaudeAgentEffort;
-  readonly fastMode: boolean;
-  readonly contextWindow: string;
   readonly expandedProvider: string | null;
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
@@ -110,9 +107,9 @@ type NewTaskFlowContextValue = {
   readonly loadBranches: () => Promise<void>;
   readonly setRuntimeMode: (value: RuntimeMode) => void;
   readonly setInteractionMode: (value: ProviderInteractionMode) => void;
-  readonly setEffort: (value: ClaudeAgentEffort) => void;
-  readonly setFastMode: (value: boolean) => void;
-  readonly setContextWindow: (value: string) => void;
+  readonly setSelectedModelOptions: (
+    value: ReadonlyArray<ProviderOptionSelection> | undefined,
+  ) => void;
   readonly setExpandedProvider: (value: string | null) => void;
 };
 
@@ -165,9 +162,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const [interactionMode, setInteractionMode] = useState<ProviderInteractionMode>(
     DEFAULT_PROVIDER_INTERACTION_MODE,
   );
-  const [effort, setEffort] = useState<ClaudeAgentEffort>("high");
-  const [fastMode, setFastMode] = useState(false);
-  const [contextWindow, setContextWindow] = useState("1M");
+  const [modelSelectionOverrides, setModelSelectionOverrides] = useState<
+    Record<string, ModelSelection>
+  >({});
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
 
   const reset = useCallback(() => {
@@ -185,9 +182,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     setBranchQuery("");
     setRuntimeMode(DEFAULT_RUNTIME_MODE);
     setInteractionMode(DEFAULT_PROVIDER_INTERACTION_MODE);
-    setEffort("high");
-    setFastMode(false);
-    setContextWindow("1M");
+    setModelSelectionOverrides({});
     setExpandedProvider(null);
   }, [projects]);
 
@@ -270,11 +265,23 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [selectedEnvironmentServerConfig, selectedProject?.defaultModelSelection],
   );
 
-  const selectedModel =
+  const defaultModelKey = selectedProject?.defaultModelSelection
+    ? `${selectedProject.defaultModelSelection.instanceId}:${selectedProject.defaultModelSelection.model}`
+    : null;
+  const baseSelectedModel =
     modelOptions.find((option) => option.key === selectedModelKey)?.selection ??
+    (defaultModelKey
+      ? modelOptions.find((option) => option.key === defaultModelKey)?.selection
+      : null) ??
     selectedProject?.defaultModelSelection ??
     modelOptions[0]?.selection ??
     null;
+  const selectedModelIdentity = baseSelectedModel
+    ? `${baseSelectedModel.instanceId}:${baseSelectedModel.model}`
+    : null;
+  const selectedModel =
+    (selectedModelIdentity ? modelSelectionOverrides[selectedModelIdentity] : null) ??
+    baseSelectedModel;
 
   const selectedModelOption =
     modelOptions.find(
@@ -283,6 +290,24 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         option.selection.instanceId === selectedModel.instanceId &&
         option.selection.model === selectedModel.model,
     ) ?? null;
+  const setSelectedModelOptions = useCallback(
+    (options: ReadonlyArray<ProviderOptionSelection> | undefined) => {
+      if (!selectedModel || !selectedModelIdentity) {
+        return;
+      }
+      const nextSelection: ModelSelection = options
+        ? { ...selectedModel, options }
+        : {
+            instanceId: selectedModel.instanceId,
+            model: selectedModel.model,
+          };
+      setModelSelectionOverrides((current) => ({
+        ...current,
+        [selectedModelIdentity]: nextSelection,
+      }));
+    },
+    [selectedModel, selectedModelIdentity],
+  );
 
   const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
   const setPrompt = useCallback(
@@ -365,6 +390,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     setSelectedProjectKey(nextProjectKey);
     setSelectedBranchName(null);
     setSelectedWorktreePath(null);
+    setModelSelectionOverrides({});
   }, []);
 
   const selectEnvironment = useCallback((environmentId: EnvironmentId) => {
@@ -373,6 +399,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     setSelectedProjectKey(null);
     setSelectedBranchName(null);
     setSelectedWorktreePath(null);
+    setModelSelectionOverrides({});
   }, []);
 
   const selectBranch = useCallback(
@@ -432,9 +459,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       availableBranches,
       runtimeMode,
       interactionMode,
-      effort,
-      fastMode,
-      contextWindow,
       expandedProvider,
       environments,
       selectedProject,
@@ -459,9 +483,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       loadBranches,
       setRuntimeMode,
       setInteractionMode,
-      setEffort,
-      setFastMode,
-      setContextWindow,
+      setSelectedModelOptions,
       setExpandedProvider,
     }),
     [
@@ -469,11 +491,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       availableBranches,
       branchQuery,
       branchesLoading,
-      contextWindow,
-      effort,
       environments,
       expandedProvider,
-      fastMode,
       filteredBranches,
       interactionMode,
       loadBranches,
@@ -489,6 +508,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedModel,
       selectedModelKey,
       selectedModelOption,
+      setSelectedModelOptions,
       selectedProject,
       selectedProjectKey,
       selectedWorktreePath,
