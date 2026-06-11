@@ -30,6 +30,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -327,11 +328,20 @@ function errorMessage(error: unknown): string {
 }
 
 export function CommandPalette({ children }: { children: ReactNode }) {
-  const open = useCommandPaletteStore((store) => store.open);
-  const setOpen = useCommandPaletteStore((store) => store.setOpen);
+  const composerHandleRef = useRef<ChatComposerHandle | null>(null);
+
+  return (
+    <ComposerHandleContext value={composerHandleRef}>
+      <CommandPaletteKeyboardShortcutController />
+      {children}
+      <CommandPaletteDialogRoot />
+    </ComposerHandleContext>
+  );
+}
+
+function CommandPaletteKeyboardShortcutController() {
   const toggleOpen = useCommandPaletteStore((store) => store.toggleOpen);
   const keybindings = useServerKeybindings();
-  const composerHandleRef = useRef<ChatComposerHandle | null>(null);
   const routeTarget = useParams({
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
@@ -343,51 +353,89 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       : false,
   );
 
+  useCommandPaletteKeyboardShortcut({
+    keybindings,
+    terminalOpen,
+    toggleOpen,
+  });
+
+  return null;
+}
+
+function useCommandPaletteKeyboardShortcut({
+  keybindings,
+  terminalOpen,
+  toggleOpen,
+}: {
+  keybindings: ReturnType<typeof useServerKeybindings>;
+  terminalOpen: boolean;
+  toggleOpen: () => void;
+}) {
+  const onKeyDown = useEffectEvent((event: globalThis.KeyboardEvent) => {
+    if (event.defaultPrevented) return;
+    const command = resolveShortcutCommand(event, keybindings, {
+      context: {
+        terminalFocus: isTerminalFocused(),
+        terminalOpen,
+      },
+    });
+    if (command !== "commandPalette.toggle") {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    toggleOpen();
+  });
+
   useEffect(() => {
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented) return;
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: {
-          terminalFocus: isTerminalFocused(),
-          terminalOpen,
-        },
-      });
-      if (command !== "commandPalette.toggle") {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      toggleOpen();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, terminalOpen, toggleOpen]);
+    const listener = (event: globalThis.KeyboardEvent) => onKeyDown(event);
+    window.addEventListener("keydown", listener);
+    return () => window.removeEventListener("keydown", listener);
+  }, [onKeyDown]);
+}
+
+function CommandPaletteDialogRoot() {
+  const open = useCommandPaletteStore((store) => store.open);
+  const setOpen = useCommandPaletteStore((store) => store.setOpen);
+  useCloseCommandPaletteOnUnmount(setOpen);
 
   return (
-    <ComposerHandleContext value={composerHandleRef}>
-      <CommandDialog open={open} onOpenChange={setOpen}>
-        {children}
-        <CommandPaletteDialog />
-      </CommandDialog>
-    </ComposerHandleContext>
+    <CommandDialog open={open} onOpenChange={setOpen}>
+      {open ? <OpenCommandPaletteDialog /> : null}
+    </CommandDialog>
   );
 }
 
-function CommandPaletteDialog() {
-  const open = useCommandPaletteStore((store) => store.open);
-  const setOpen = useCommandPaletteStore((store) => store.setOpen);
-
+function useCloseCommandPaletteOnUnmount(setOpen: (open: boolean) => void) {
   useEffect(() => {
     return () => {
       setOpen(false);
     };
   }, [setOpen]);
+}
 
-  if (!open) {
-    return null;
-  }
+function usePrefetchBrowseParent({
+  filteredBrowseEntriesLength,
+  isBrowsing,
+  prefetchBrowsePath,
+  query,
+}: {
+  filteredBrowseEntriesLength: number;
+  isBrowsing: boolean;
+  prefetchBrowsePath: (partialPath: string) => void;
+  query: string;
+}) {
+  // Prefetch only the parent (for back-navigation). Prefetching the
+  // highlighted child on every arrow-key press triggers a macOS TCC prompt
+  // whenever the highlighted entry is a permission-gated home dir (Music,
+  // Documents, Downloads, Desktop, etc.), so we wait for explicit navigation.
+  useEffect(() => {
+    if (!isBrowsing || filteredBrowseEntriesLength === 0) return;
 
-  return <OpenCommandPaletteDialog />;
+    if (canNavigateUp(query)) {
+      prefetchBrowsePath(getBrowseParentPath(query)!);
+    }
+  }, [filteredBrowseEntriesLength, isBrowsing, prefetchBrowsePath, query]);
 }
 
 function OpenCommandPaletteDialog() {
@@ -583,17 +631,12 @@ function OpenCommandPaletteDialog() {
     [browseEnvironmentId, currentProjectCwdForBrowse, fetchBrowseResult, queryClient],
   );
 
-  // Prefetch only the parent (for back-navigation). Prefetching the
-  // highlighted child on every arrow-key press triggers a macOS TCC prompt
-  // whenever the highlighted entry is a permission-gated home dir (Music,
-  // Documents, Downloads, Desktop, etc.), so we wait for explicit navigation.
-  useEffect(() => {
-    if (!isBrowsing || filteredBrowseEntries.length === 0) return;
-
-    if (canNavigateUp(query)) {
-      prefetchBrowsePath(getBrowseParentPath(query)!);
-    }
-  }, [filteredBrowseEntries.length, isBrowsing, prefetchBrowsePath, query]);
+  usePrefetchBrowseParent({
+    filteredBrowseEntriesLength: filteredBrowseEntries.length,
+    isBrowsing,
+    prefetchBrowsePath,
+    query,
+  });
 
   const openProjectFromSearch = useMemo(
     () => async (project: (typeof projects)[number]) => {
