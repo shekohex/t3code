@@ -512,7 +512,7 @@ describe("deriveMessagesTimelineRows", () => {
     );
     expect(foldRow?.turnId).toBe("turn-1");
     expect(foldRow?.expanded).toBe(false);
-    // User message boundary (00:00:00) → terminal message completedAt (00:00:22).
+    // User message boundary (00:00:00) → terminal message updatedAt (00:00:22).
     expect(foldRow?.label).toBe("Worked for 22s");
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
@@ -545,7 +545,7 @@ describe("deriveMessagesTimelineRows", () => {
     // A steer ends the previous turn early: its only message completes the
     // instant it is created, and trailing work entries land after it. The
     // fold duration must span from the user message that started the turn to
-    // the last entry, not message createdAt → message completedAt (~0ms).
+    // the last entry, not message createdAt → message updatedAt (~0ms).
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
         {
@@ -558,6 +558,7 @@ describe("deriveMessagesTimelineRows", () => {
             text: "do it once more",
             turnId: null,
             createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
             streaming: false,
           },
         },
@@ -571,7 +572,7 @@ describe("deriveMessagesTimelineRows", () => {
             text: "Kicking off call 1.",
             turnId: "turn-1" as never,
             createdAt: "2026-01-01T00:00:09Z",
-            completedAt: "2026-01-01T00:00:09Z",
+            updatedAt: "2026-01-01T00:00:09Z",
             streaming: false,
           },
         },
@@ -597,6 +598,7 @@ describe("deriveMessagesTimelineRows", () => {
             text: "actually do 15",
             turnId: null,
             createdAt: "2026-01-01T00:00:14Z",
+            updatedAt: "2026-01-01T00:00:14Z",
             streaming: false,
           },
         },
@@ -610,6 +612,7 @@ describe("deriveMessagesTimelineRows", () => {
             text: "One down — adjusting.",
             turnId: "turn-2" as never,
             createdAt: "2026-01-01T00:00:17Z",
+            updatedAt: "2026-01-01T00:00:17Z",
             streaming: true,
           },
         },

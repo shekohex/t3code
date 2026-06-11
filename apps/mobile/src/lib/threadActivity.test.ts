@@ -238,6 +238,84 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("measures a steer-superseded turn from its user boundary through trailing work", () => {
+    const firstTurnId = TurnId.make("turn-1");
+    const secondTurnId = TurnId.make("turn-2");
+    const thread = makeThread({
+      id: ThreadId.make("thread-steered"),
+      projectId: ProjectId.make("project-1"),
+      title: "Steered work",
+      latestTurn: {
+        turnId: secondTurnId,
+        state: "running",
+        requestedAt: "2026-04-01T00:00:14.000Z",
+        startedAt: "2026-04-01T00:00:14.000Z",
+        completedAt: null,
+        assistantMessageId: MessageId.make("assistant-next"),
+      },
+      messages: [
+        {
+          id: MessageId.make("user-1"),
+          role: "user",
+          text: "Do it once more.",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:00.000Z",
+          updatedAt: "2026-04-01T00:00:00.000Z",
+        },
+        {
+          id: MessageId.make("assistant-commentary"),
+          role: "assistant",
+          text: "Kicking off call 1.",
+          turnId: firstTurnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:09.000Z",
+          updatedAt: "2026-04-01T00:00:09.000Z",
+        },
+        {
+          id: MessageId.make("user-2"),
+          role: "user",
+          text: "Actually do 15.",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:14.000Z",
+          updatedAt: "2026-04-01T00:00:14.000Z",
+        },
+        {
+          id: MessageId.make("assistant-next"),
+          role: "assistant",
+          text: "One down - adjusting.",
+          turnId: secondTurnId,
+          streaming: true,
+          createdAt: "2026-04-01T00:00:17.000Z",
+          updatedAt: "2026-04-01T00:00:17.000Z",
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("work-1"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Ran command",
+          createdAt: "2026-04-01T00:00:12.000Z",
+          turnId: firstTurnId,
+          payload: {
+            title: "Ran command",
+            itemType: "command_execution",
+            status: "completed",
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread, [], null);
+    const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
+    expect(collapsed.find((entry) => entry.type === "turn-fold")).toMatchObject({
+      turnId: firstTurnId,
+      label: "Worked for 12s",
+    });
+  });
+
   it("keeps an active turn expanded and classifies error-shaped tool output", () => {
     const turnId = TurnId.make("turn-running");
     const thread = makeThread({

@@ -903,6 +903,16 @@ function computeElapsedMs(startIso: string, endIso: string): number | null {
   return Math.max(0, end - start);
 }
 
+function maxIsoTimestamp(a: string | null, b: string | null): string | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  const aMs = Date.parse(a);
+  const bMs = Date.parse(b);
+  if (!Number.isFinite(aMs)) return b;
+  if (!Number.isFinite(bMs)) return a;
+  return bMs > aMs ? b : a;
+}
+
 function deriveUnsettledTurnId(latestTurn: ThreadFeedLatestTurn | null): TurnId | null {
   if (!latestTurn) {
     return null;
@@ -929,8 +939,17 @@ function deriveThreadFeedTurnFolds(
     }
   }
 
-  const entriesByTurn = new Map<TurnId, ThreadFeedEntry[]>();
+  interface TurnGroup {
+    readonly entries: ThreadFeedEntry[];
+    readonly startBoundary: string | null;
+  }
+  const groupsByTurnId = new Map<TurnId, TurnGroup>();
+  let pendingUserBoundary: string | null = null;
   for (const entry of feed) {
+    if (entry.type === "message" && entry.message.role === "user") {
+      pendingUserBoundary = entry.message.createdAt;
+      continue;
+    }
     const turnId =
       entry.type === "message" && entry.message.role === "assistant"
         ? entry.message.turnId
@@ -940,14 +959,22 @@ function deriveThreadFeedTurnFolds(
     if (!turnId) {
       continue;
     }
-    const entries = entriesByTurn.get(turnId) ?? [];
-    entries.push(entry);
-    entriesByTurn.set(turnId, entries);
+    let group = groupsByTurnId.get(turnId);
+    if (!group) {
+      group = {
+        entries: [],
+        startBoundary: pendingUserBoundary,
+      };
+      pendingUserBoundary = null;
+      groupsByTurnId.set(turnId, group);
+    }
+    group.entries.push(entry);
   }
 
   const unsettledTurnId = deriveUnsettledTurnId(latestTurn);
   const foldsByAnchorId = new Map<string, ThreadFeedTurnFold>();
-  for (const [turnId, entries] of entriesByTurn) {
+  for (const [turnId, group] of groupsByTurnId) {
+    const { entries } = group;
     if (turnId === unsettledTurnId) {
       continue;
     }
@@ -972,14 +999,17 @@ function deriveThreadFeedTurnFolds(
       ? entries.find((entry) => entry.id === terminalAssistantMessageId)
       : null;
     const latestTurnMatches = latestTurn?.turnId === turnId;
+    const lastEntryEnd =
+      lastEntry.type === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
     const elapsedMs =
       latestTurnMatches && latestTurn.startedAt && latestTurn.completedAt
         ? computeElapsedMs(latestTurn.startedAt, latestTurn.completedAt)
         : computeElapsedMs(
-            firstEntry.createdAt,
-            terminalEntry?.type === "message"
-              ? terminalEntry.message.updatedAt
-              : lastEntry.createdAt,
+            group.startBoundary ?? firstEntry.createdAt,
+            maxIsoTimestamp(
+              terminalEntry?.type === "message" ? terminalEntry.message.updatedAt : null,
+              lastEntryEnd,
+            ) ?? lastEntryEnd,
           );
     const duration = elapsedMs === null ? null : formatDuration(elapsedMs);
     const interrupted = latestTurnMatches && latestTurn.state === "interrupted";
