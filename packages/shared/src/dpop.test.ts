@@ -1,6 +1,6 @@
 import * as NodeCrypto from "node:crypto";
 
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 
 import {
   computeDpopAccessTokenHash,
@@ -56,59 +56,61 @@ describe("verifyDpopProof", () => {
 
   it("verifies an ES256 DPoP proof and returns the RFC 7638 thumbprint", () => {
     const thumbprint = computeDpopJwkThumbprint(publicJwk);
-    expect(
-      verifyDpopProof({
-        proof,
-        method: "POST",
-        url: "https://example.com/oauth/token",
-        nowEpochSeconds: 101,
-        expectedThumbprint: thumbprint,
-      }),
-    ).toMatchObject({
-      ok: true,
-      thumbprint,
-      jti: "proof-1",
+    const result = verifyDpopProof({
+      proof,
+      method: "POST",
+      url: "https://example.com/oauth/token",
+      nowEpochSeconds: 101,
+      expectedThumbprint: thumbprint,
     });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.thumbprint, thumbprint);
+    assert.equal(result.jti, "proof-1");
   });
 
   it("rejects method, URL, thumbprint, and time-window mismatches", () => {
     const thumbprint = computeDpopJwkThumbprint(publicJwk);
-    expect(
+    assert.equal(
       verifyDpopProof({
         proof,
         method: "GET",
         url: "https://example.com/oauth/token",
         nowEpochSeconds: 101,
         expectedThumbprint: thumbprint,
-      }),
-    ).toMatchObject({ ok: false });
-    expect(
+      }).ok,
+      false,
+    );
+    assert.equal(
       verifyDpopProof({
         proof,
         method: "POST",
         url: "https://example.com/other",
         nowEpochSeconds: 101,
         expectedThumbprint: thumbprint,
-      }),
-    ).toMatchObject({ ok: false });
-    expect(
+      }).ok,
+      false,
+    );
+    assert.equal(
       verifyDpopProof({
         proof,
         method: "POST",
         url: "https://example.com/oauth/token",
         nowEpochSeconds: 101,
         expectedThumbprint: "other-thumbprint",
-      }),
-    ).toMatchObject({ ok: false });
-    expect(
+      }).ok,
+      false,
+    );
+    assert.equal(
       verifyDpopProof({
         proof,
         method: "POST",
         url: "https://example.com/oauth/token",
         nowEpochSeconds: 1_000,
         expectedThumbprint: thumbprint,
-      }),
-    ).toMatchObject({ ok: false });
+      }).ok,
+      false,
+    );
   });
 
   it("requires the RFC 9449 access token hash when an access token is expected", () => {
@@ -122,7 +124,7 @@ describe("verifyDpopProof", () => {
       accessToken: "clerk-access-token",
     });
 
-    expect(
+    assert.equal(
       verifyDpopProof({
         proof: accessTokenProof,
         method: "POST",
@@ -130,32 +132,36 @@ describe("verifyDpopProof", () => {
         nowEpochSeconds: 101,
         expectedThumbprint: thumbprint,
         expectedAccessToken: "clerk-access-token",
-      }),
-    ).toMatchObject({ ok: true });
-    expect(
-      verifyDpopProof({
-        proof,
-        method: "POST",
-        url: "https://example.com/oauth/token",
-        nowEpochSeconds: 101,
-        expectedThumbprint: thumbprint,
-        expectedAccessToken: "clerk-access-token",
-      }),
-    ).toMatchObject({ ok: false, reason: "DPoP access token hash mismatch." });
-    expect(
-      verifyDpopProof({
-        proof: accessTokenProof,
-        method: "POST",
-        url: "https://example.com/v1/environments/env/connect",
-        nowEpochSeconds: 101,
-        expectedThumbprint: thumbprint,
-        expectedAccessToken: "other-access-token",
-      }),
-    ).toMatchObject({ ok: false, reason: "DPoP access token hash mismatch." });
+      }).ok,
+      true,
+    );
+
+    const missingHash = verifyDpopProof({
+      proof,
+      method: "POST",
+      url: "https://example.com/oauth/token",
+      nowEpochSeconds: 101,
+      expectedThumbprint: thumbprint,
+      expectedAccessToken: "clerk-access-token",
+    });
+    assert.equal(missingHash.ok, false);
+    assert.equal(missingHash.reason, "DPoP access token hash mismatch.");
+
+    const mismatchedHash = verifyDpopProof({
+      proof: accessTokenProof,
+      method: "POST",
+      url: "https://example.com/v1/environments/env/connect",
+      nowEpochSeconds: 101,
+      expectedThumbprint: thumbprint,
+      expectedAccessToken: "other-access-token",
+    });
+    assert.equal(mismatchedHash.ok, false);
+    assert.equal(mismatchedHash.reason, "DPoP access token hash mismatch.");
   });
 
   it("normalizes htu by excluding query and fragment components per RFC 9449", () => {
-    expect(normalizeDpopHtu("https://example.com/v1/environments/env/connect?foo=bar#frag")).toBe(
+    assert.equal(
+      normalizeDpopHtu("https://example.com/v1/environments/env/connect?foo=bar#frag"),
       "https://example.com/v1/environments/env/connect",
     );
 
@@ -168,15 +174,16 @@ describe("verifyDpopProof", () => {
       publicJwk,
     });
 
-    expect(
+    assert.equal(
       verifyDpopProof({
         proof: queryProof,
         method: "POST",
         url: "https://example.com/v1/environments/env/connect?foo=bar#frag",
         nowEpochSeconds: 101,
         expectedThumbprint: thumbprint,
-      }),
-    ).toMatchObject({ ok: true });
+      }).ok,
+      true,
+    );
   });
 
   it("rejects DPoP public JWK headers that expose private key material", () => {
@@ -192,14 +199,15 @@ describe("verifyDpopProof", () => {
       publicJwk: privateJwk,
     });
 
-    expect(
-      verifyDpopProof({
-        proof: proofWithPrivateJwk,
-        method: "POST",
-        url: "https://example.com/oauth/token",
-        nowEpochSeconds: 101,
-        expectedThumbprint: thumbprint,
-      }),
-    ).toMatchObject({ ok: false, reason: "Invalid DPoP JWT header." });
+    const result = verifyDpopProof({
+      proof: proofWithPrivateJwk,
+      method: "POST",
+      url: "https://example.com/oauth/token",
+      nowEpochSeconds: 101,
+      expectedThumbprint: thumbprint,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "Invalid DPoP JWT header.");
   });
 });
