@@ -464,12 +464,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     let result = NSMutableAttributedString()
     let source = value as NSString
     var cursor = 0
-    let validTokens = tokens.filter {
-      $0.start >= cursor &&
-        $0.end > $0.start &&
-        $0.end <= source.length &&
-        source.substring(with: NSRange(location: $0.start, length: $0.end - $0.start)) == $0.source
-    }
+    let validTokens = currentValidTokens()
 
     for token in validTokens {
       if token.start < cursor {
@@ -678,11 +673,12 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
 
   private func displayOffset(forSourceOffset sourceOffset: Int) -> Int {
     let boundedOffset = max(0, min((value as NSString).length, sourceOffset))
+    let active = currentValidTokens()
     var collapsedLength = 0
-    for token in tokens where token.end <= boundedOffset {
+    for token in active where token.end <= boundedOffset {
       collapsedLength += max(0, token.end - token.start - 1)
     }
-    if let token = tokens.first(where: { $0.start < boundedOffset && boundedOffset < $0.end }) {
+    if let token = active.first(where: { $0.start < boundedOffset && boundedOffset < $0.end }) {
       return token.start - collapsedLength + 1
     }
     return boundedOffset - collapsedLength
@@ -723,9 +719,9 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     return try? JSONDecoder().decode(type, from: data)
   }
 
-  private func tokensMatchCurrentValue() -> Bool {
+  private func currentValidTokens() -> [ComposerTokenPayload] {
     let source = value as NSString
-    return tokens.allSatisfy {
+    return tokens.filter {
       $0.start >= 0 &&
         $0.end > $0.start &&
         $0.end <= source.length &&
@@ -733,19 +729,12 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     }
   }
 
+  private func tokensMatchCurrentValue() -> Bool {
+    currentValidTokens().count == tokens.count
+  }
+
   private func documentMatchesExpectedTokens() -> Bool {
-    let source = value as NSString
-    let expectedSources = tokens.compactMap { token -> String? in
-      guard token.start >= 0,
-            token.end > token.start,
-            token.end <= source.length,
-            source.substring(
-              with: NSRange(location: token.start, length: token.end - token.start)
-            ) == token.source else {
-        return nil
-      }
-      return token.source
-    }
+    let expectedSources = currentValidTokens().map(\.source)
     var renderedSources: [String] = []
     textView.attributedText.enumerateAttribute(
       .attachment,
