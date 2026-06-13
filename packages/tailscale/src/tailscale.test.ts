@@ -141,11 +141,7 @@ describe("tailscale", () => {
     );
 
     return Effect.gen(function* () {
-      const fiber = yield* readTailscaleStatus.pipe(
-        Effect.provide(layer),
-        Effect.flip,
-        Effect.forkScoped,
-      );
+      const fiber = yield* readTailscaleStatus.pipe(Effect.flip, Effect.forkScoped);
       yield* Effect.yieldNow;
       yield* TestClock.adjust(TAILSCALE_STATUS_TIMEOUT);
       const error = yield* Fiber.join(fiber);
@@ -153,7 +149,7 @@ describe("tailscale", () => {
       assert.equal(error._tag, "TailscaleCommandError");
       assert.equal(error.message, "Tailscale status timed out.");
       assert.equal(error.exitCode, null);
-    });
+    }).pipe(Effect.provide(layer));
   });
 
   it.effect("configures tailscale serve through the process spawner service", () => {

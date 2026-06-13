@@ -88,7 +88,7 @@ export const make = Effect.fn("makeVcsProjectConfig")(function* () {
       return "auto" as const;
     }
 
-    return configuredKind(parsed);
+    return configuredKind(parsed.value);
   });
 
   const resolveKind: VcsProjectConfigShape["resolveKind"] = Effect.fn(
