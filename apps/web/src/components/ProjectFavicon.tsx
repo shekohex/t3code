@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { FolderIcon } from "lucide-react";
-import { useState } from "react";
-import { useEnvironment } from "../state/environments";
+import { useEffect, useState } from "react";
+import { useAssetUrl } from "../assets/assetUrls";
 
 const loadedProjectFaviconSrcs = new Set<string>();
 
@@ -10,39 +10,16 @@ export function ProjectFavicon(input: {
   cwd: string;
   className?: string;
 }) {
-  const environment = useEnvironment(input.environmentId);
-  const src = (() => {
-    try {
-      const baseUrl = environment
-        ? (() => {
-            const entry = environment.entry;
-            switch (entry.target._tag) {
-              case "PrimaryConnectionTarget":
-                return entry.target.httpBaseUrl;
-              case "BearerConnectionTarget":
-                return entry.profile._tag === "Some" &&
-                  entry.profile.value._tag === "BearerConnectionProfile"
-                  ? entry.profile.value.httpBaseUrl
-                  : null;
-              case "RelayConnectionTarget":
-              case "SshConnectionTarget":
-                return null;
-            }
-          })()
-        : null;
-      if (baseUrl === null) {
-        return null;
-      }
-      const url = new URL("/api/project-favicon", baseUrl);
-      url.searchParams.set("cwd", input.cwd);
-      return url.toString();
-    } catch {
-      return null;
-    }
-  })();
+  const src = useAssetUrl(input.environmentId, {
+    _tag: "project-favicon",
+    cwd: input.cwd,
+  });
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(() =>
     src && loadedProjectFaviconSrcs.has(src) ? "loaded" : "loading",
   );
+  useEffect(() => {
+    setStatus(src && loadedProjectFaviconSrcs.has(src) ? "loaded" : "loading");
+  }, [src]);
 
   if (!src) {
     return (

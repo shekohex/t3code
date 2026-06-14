@@ -8,7 +8,7 @@ import {
   Minimize2Icon,
   WrapTextIcon,
 } from "lucide-react";
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import type { ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
 import React, {
   Children,
   Suspense,
@@ -65,6 +65,16 @@ import { cn } from "../lib/utils";
 import { useActiveEnvironmentId } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
+import { assetEnvironment } from "../state/assets";
+import { usePreparedConnection } from "../state/session";
+import { usePreviewActions } from "../state/preview";
+import { useAtomSet } from "@effect/atom-react";
+import { isPreviewSupportedInRuntime } from "../previewStateStore";
+import {
+  isBrowserPreviewFile,
+  openFileInPreview,
+  openUrlInPreview,
+} from "../browser/openFileInPreview";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -90,6 +100,7 @@ class CodeHighlightErrorBoundary extends React.Component<
 interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
+  threadRef?: ScopedThreadRef | undefined;
   isStreaming?: boolean;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   className?: string;
@@ -674,6 +685,7 @@ interface MarkdownFileLinkProps {
   copyMarkdown: string;
   theme: "light" | "dark";
   onOpen: (targetPath: string) => Promise<unknown>;
+  onOpenInBrowser?: (() => Promise<void>) | undefined;
   className?: string | undefined;
 }
 
@@ -949,6 +961,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   copyMarkdown,
   theme,
   onOpen,
+  onOpenInBrowser,
   className,
 }: MarkdownFileLinkProps) {
   const handleOpen = useCallback(() => {
@@ -1006,6 +1019,9 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       const clicked = await api.contextMenu.show(
         [
           { id: "open", label: "Open in editor" },
+          ...(onOpenInBrowser
+            ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
+            : []),
           { id: "copy-relative", label: "Copy relative path" },
           { id: "copy-full", label: "Copy full path" },
         ] as const,
@@ -1016,6 +1032,18 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         handleOpen();
         return;
       }
+      if (clicked === "open-in-browser") {
+        void onOpenInBrowser?.().catch((error) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Unable to open file in browser",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        });
+        return;
+      }
       if (clicked === "copy-relative") {
         handleCopy(displayPath, "Relative path");
         return;
@@ -1024,7 +1052,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         handleCopy(targetPath, "Full path");
       }
     },
-    [displayPath, handleCopy, handleOpen, targetPath],
+    [displayPath, handleCopy, handleOpen, onOpenInBrowser, targetPath],
   );
 
   return (
@@ -1071,6 +1099,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.copyMarkdown === next.copyMarkdown &&
     previous.theme === next.theme &&
     previous.onOpen === next.onOpen &&
+    previous.onOpenInBrowser === next.onOpenInBrowser &&
     previous.className === next.className
   );
 }
@@ -1078,12 +1107,16 @@ function areMarkdownFileLinkPropsEqual(
 function ChatMarkdown({
   text,
   cwd,
+  threadRef,
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
   className,
   lineBreaks = false,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
+  const createAssetUrl = useAtomSet(assetEnvironment.createUrl, { mode: "promise" });
+  const { open: openPreview } = usePreviewActions();
+  const preparedConnection = usePreparedConnection(threadRef?.environmentId ?? null);
   const environmentId = useActiveEnvironmentId();
   const serverConfig = useEnvironmentQuery(
     environmentId === null ? null : serverEnvironment.config({ environmentId, input: {} }),
@@ -1126,6 +1159,28 @@ function ChatMarkdown({
     event.clipboardData.setData("text/plain", payload.text);
     event.clipboardData.setData("text/html", payload.html);
   }, []);
+  const openExternalLinkInPreview = useCallback(
+    (url: string) => {
+      if (!threadRef) return Promise.reject(new Error("Thread context is unavailable."));
+      return openUrlInPreview({ threadRef, url, openPreview });
+    },
+    [openPreview, threadRef],
+  );
+  const openMarkdownFileInPreview = useCallback(
+    (path: string) => {
+      if (!threadRef || preparedConnection._tag === "None") {
+        return Promise.reject(new Error("Environment is not connected."));
+      }
+      return openFileInPreview({
+        threadRef,
+        filePath: path,
+        httpBaseUrl: preparedConnection.value.httpBaseUrl,
+        createAssetUrl,
+        openPreview,
+      });
+    },
+    [createAssetUrl, openPreview, preparedConnection, threadRef],
+  );
   const markdownComponents = useMemo<Components>(
     () => ({
       p({ node: _node, children, ...props }) {
@@ -1141,6 +1196,7 @@ function ChatMarkdown({
           const faviconHost = resolveExternalLinkHost(href);
           const isSameDocumentLink = href?.startsWith("#") ?? false;
           const onClick = props.onClick;
+          const canOpenInPreview = Boolean(threadRef) && isPreviewSupportedInRuntime();
           const link = (
             <a
               {...props}
@@ -1152,6 +1208,28 @@ function ChatMarkdown({
                 if (isSameDocumentLink && href) {
                   handleMarkdownFragmentClick(event, href);
                 }
+              }}
+              onContextMenu={(event) => {
+                if (!canOpenInPreview || !href) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const api = readLocalApi();
+                if (!api) return;
+                void api.contextMenu
+                  .show(
+                    [
+                      { id: "open-in-browser", label: "Open in integrated browser" },
+                      { id: "open-external", label: "Open in system browser" },
+                    ] as const,
+                    { x: event.clientX, y: event.clientY },
+                  )
+                  .then((clicked) => {
+                    if (clicked === "open-in-browser") {
+                      return openExternalLinkInPreview(href);
+                    }
+                    if (clicked === "open-external") return api.shell.openExternal(href);
+                  })
+                  .catch(() => undefined);
               }}
             >
               {faviconHost ? (
@@ -1200,6 +1278,13 @@ function ChatMarkdown({
             copyMarkdown={`[${fileLinkMeta.basename}](${normalizedHref})`}
             theme={resolvedTheme}
             onOpen={openInPreferredEditor}
+            onOpenInBrowser={
+              threadRef &&
+              isPreviewSupportedInRuntime() &&
+              isBrowserPreviewFile(fileLinkMeta.filePath)
+                ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
+                : undefined
+            }
             className={props.className}
           />
         );
@@ -1245,8 +1330,11 @@ function ChatMarkdown({
       isStreaming,
       markdownFileLinkMetaByHref,
       openInPreferredEditor,
+      openExternalLinkInPreview,
+      openMarkdownFileInPreview,
       resolvedTheme,
       skills,
+      threadRef,
     ],
   );
 

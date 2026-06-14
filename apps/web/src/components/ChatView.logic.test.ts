@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { Thread } from "../types";
 import {
+  MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
   createLocalDispatchSnapshot,
@@ -10,6 +11,7 @@ import {
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
+  reconcileRetainedMountedThreadIds,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
@@ -113,6 +115,30 @@ describe("deriveComposerSendState", () => {
     expect(state.trimmedPrompt).toBe("yoo  waddup");
     expect(state.expiredTerminalContextCount).toBe(1);
     expect(state.hasSendableContent).toBe(true);
+  });
+
+  it("treats element contexts as sendable content (no text, no images, no terminals)", () => {
+    const state = deriveComposerSendState({
+      prompt: "",
+      imageCount: 0,
+      terminalContexts: [],
+      elementContextCount: 1,
+    });
+
+    expect(state.trimmedPrompt).toBe("");
+    expect(state.expiredTerminalContextCount).toBe(0);
+    expect(state.hasSendableContent).toBe(true);
+  });
+
+  it("does NOT treat zero element contexts as sendable", () => {
+    expect(
+      deriveComposerSendState({
+        prompt: "",
+        imageCount: 0,
+        terminalContexts: [],
+        elementContextCount: 0,
+      }).hasSendableContent,
+    ).toBe(false);
   });
 });
 
@@ -229,6 +255,50 @@ describe("reconcileMountedTerminalThreadIds", () => {
         activeThreadTerminalOpen: false,
       }),
     ).toEqual(ids.slice(-MAX_HIDDEN_MOUNTED_TERMINAL_THREADS));
+  });
+});
+
+describe("reconcileRetainedMountedThreadIds", () => {
+  it("retains hidden open threads and adds the active open thread", () => {
+    expect(
+      reconcileRetainedMountedThreadIds({
+        currentThreadIds: [ThreadId.make("thread-hidden")],
+        openThreadIds: [ThreadId.make("thread-hidden")],
+        activeThreadId: ThreadId.make("thread-active"),
+        activeThreadOpen: true,
+        maxHiddenThreadCount: MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
+      }),
+    ).toEqual([ThreadId.make("thread-hidden"), ThreadId.make("thread-active")]);
+  });
+
+  it("can retain the active thread as hidden when it is inactive", () => {
+    expect(
+      reconcileRetainedMountedThreadIds({
+        currentThreadIds: [ThreadId.make("thread-active")],
+        openThreadIds: [ThreadId.make("thread-active")],
+        activeThreadId: ThreadId.make("thread-active"),
+        activeThreadOpen: false,
+        maxHiddenThreadCount: MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
+        retainInactiveActiveThread: true,
+      }),
+    ).toEqual([ThreadId.make("thread-active")]);
+  });
+
+  it("evicts the oldest hidden threads beyond the configured cap", () => {
+    const currentThreadIds = Array.from(
+      { length: MAX_HIDDEN_MOUNTED_PREVIEW_THREADS + 2 },
+      (_, index) => ThreadId.make(`thread-${index + 1}`),
+    );
+
+    expect(
+      reconcileRetainedMountedThreadIds({
+        currentThreadIds,
+        openThreadIds: currentThreadIds,
+        activeThreadId: null,
+        activeThreadOpen: false,
+        maxHiddenThreadCount: MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
+      }),
+    ).toEqual(currentThreadIds.slice(-MAX_HIDDEN_MOUNTED_PREVIEW_THREADS));
   });
 });
 
