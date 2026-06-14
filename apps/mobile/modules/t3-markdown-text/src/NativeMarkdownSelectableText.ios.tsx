@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Asset } from "expo-asset";
 import { Image, Linking, type TextStyle, useColorScheme } from "react-native";
-import { UITextView } from "react-native-uitextview";
 
-import { markdownFileIconSource } from "../lib/markdownFileIcons";
-import type { MarkdownFileIcon } from "../lib/markdownLinks";
-import type { NativeMarkdownTextRun } from "../lib/nativeMarkdownText";
+import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
+import { markdownFileIconSource } from "./markdownFileIcons";
+import type { MarkdownFileIcon } from "./markdownLinks";
+import type { NativeMarkdownTextRun } from "./nativeMarkdownText";
 import type { NativeMarkdownTextStyle } from "./SelectableMarkdownText.types";
 
 const EXTERNAL_LINK_PREFIX = "◉ ";
@@ -192,7 +192,7 @@ export function NativeMarkdownSelectableText(props: {
 
     return { key: `${signature}:${occurrence}`, run, text };
   });
-  // RNUITextView only rebuilds its attributed string during native layout. A
+  // T3MarkdownText only rebuilds its attributed string during native layout. A
   // color-only child update can otherwise leave the previous appearance cached.
   const appearanceKey = [
     colorScheme ?? "unspecified",
@@ -212,7 +212,7 @@ export function NativeMarkdownSelectableText(props: {
   ].join(":");
 
   return (
-    <UITextView
+    <MarkdownTextPrimitive
       key={appearanceKey}
       uiTextView
       selectable
@@ -227,7 +227,7 @@ export function NativeMarkdownSelectableText(props: {
       {keyedRuns.map(({ key, run, text }) => {
         const href = run.href;
         return (
-          <UITextView
+          <MarkdownTextPrimitive
             key={key}
             nativeID={
               run.fileIcon
@@ -249,9 +249,9 @@ export function NativeMarkdownSelectableText(props: {
             }
           >
             {text}
-          </UITextView>
+          </MarkdownTextPrimitive>
         );
       })}
-    </UITextView>
+    </MarkdownTextPrimitive>
   );
 }

@@ -1,19 +1,22 @@
 import { useEffect, useState } from "react";
 import { Image, ScrollView, Text, useColorScheme, View } from "react-native";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
-import { UITextView } from "react-native-uitextview";
 
-import { CopyTextButton } from "../components/CopyTextButton";
-import type { ReviewHighlightedToken } from "../features/review/shikiReviewHighlighter";
+import { CopyTextButton } from "./CopyTextButton";
+import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
 import {
   nativeMarkdownDocumentRuns,
   nativeMarkdownListItemBlocks,
   nativeMarkdownTextRuns,
-} from "../lib/nativeMarkdownText";
+} from "./nativeMarkdownText";
 import { NativeMarkdownSelectableText } from "./NativeMarkdownSelectableText.ios";
-import type { NativeMarkdownTextStyle } from "./SelectableMarkdownText.types";
+import type {
+  MarkdownCodeHighlighter,
+  MarkdownHighlightedToken,
+  NativeMarkdownTextStyle,
+} from "./SelectableMarkdownText.types";
 
-type HighlightedCode = ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>>;
+type HighlightedCode = ReadonlyArray<ReadonlyArray<MarkdownHighlightedToken>>;
 
 const highlightedCodeCache = new Map<string, HighlightedCode>();
 const highlightedCodePromiseCache = new Map<string, Promise<HighlightedCode>>();
@@ -71,6 +74,7 @@ function loadHighlightedCode(
   code: string,
   language: string | undefined,
   theme: "light" | "dark",
+  highlightCode: MarkdownCodeHighlighter,
 ): Promise<HighlightedCode> {
   const key = codeHighlightCacheKey(code, language, theme);
   const cached = highlightedCodeCache.get(key);
@@ -83,8 +87,7 @@ function loadHighlightedCode(
     return pending;
   }
 
-  const promise = import("../features/review/shikiReviewHighlighter")
-    .then(({ highlightCodeSnippet }) => highlightCodeSnippet({ code, language, theme }))
+  const promise = highlightCode({ code, language, theme })
     .then((tokens) => {
       cacheHighlightedCode(key, tokens);
       highlightedCodePromiseCache.delete(key);
@@ -102,6 +105,7 @@ function useHighlightedCode(
   code: string,
   language: string | undefined,
   theme: "light" | "dark",
+  highlightCode: MarkdownCodeHighlighter,
 ): HighlightedCode | null {
   const key = codeHighlightCacheKey(code, language, theme);
   const [highlighted, setHighlighted] = useState<{
@@ -123,7 +127,7 @@ function useHighlightedCode(
       };
     }
 
-    void loadHighlightedCode(code, language, theme)
+    void loadHighlightedCode(code, language, theme, highlightCode)
       .then((tokens) => {
         if (active) {
           setHighlighted({ key, tokens });
@@ -137,7 +141,7 @@ function useHighlightedCode(
     return () => {
       active = false;
     };
-  }, [code, key, language, theme]);
+  }, [code, highlightCode, key, language, theme]);
 
   return highlighted.key === key ? highlighted.tokens : null;
 }
@@ -149,7 +153,7 @@ function HighlightedCodeText(props: {
 }) {
   if (!props.highlighted) {
     return (
-      <UITextView
+      <MarkdownTextPrimitive
         uiTextView
         selectable
         style={{
@@ -160,7 +164,7 @@ function HighlightedCodeText(props: {
         }}
       >
         {props.content}
-      </UITextView>
+      </MarkdownTextPrimitive>
     );
   }
   const highlighted = props.highlighted;
@@ -184,7 +188,7 @@ function HighlightedCodeText(props: {
   });
 
   return (
-    <UITextView
+    <MarkdownTextPrimitive
       uiTextView
       selectable
       style={{
@@ -195,9 +199,9 @@ function HighlightedCodeText(props: {
       }}
     >
       {keyedLines.map((line, lineIndex) => (
-        <UITextView key={line.key}>
+        <MarkdownTextPrimitive key={line.key}>
           {line.tokens.map(({ key, token }) => (
-            <UITextView
+            <MarkdownTextPrimitive
               key={key}
               style={{
                 color: token.color ?? props.textStyle.codeColor,
@@ -208,24 +212,25 @@ function HighlightedCodeText(props: {
               }}
             >
               {token.content}
-            </UITextView>
+            </MarkdownTextPrimitive>
           ))}
           {lineIndex + 1 < keyedLines.length ? "\n" : ""}
-        </UITextView>
+        </MarkdownTextPrimitive>
       ))}
-    </UITextView>
+    </MarkdownTextPrimitive>
   );
 }
 
 function NativeCodeBlock(props: {
   readonly node: MarkdownNode;
   readonly textStyle: NativeMarkdownTextStyle;
+  readonly highlightCode: MarkdownCodeHighlighter;
   readonly compact?: boolean;
 }) {
   const content = nodeText(props.node).replace(/\n$/, "");
   const colorScheme = useColorScheme();
   const theme = colorScheme === "dark" ? "dark" : "light";
-  const highlighted = useHighlightedCode(content, props.node.language, theme);
+  const highlighted = useHighlightedCode(content, props.node.language, theme, props.highlightCode);
   const languageLabel = props.node.language?.toUpperCase() ?? "CODE";
   return (
     <View
@@ -442,6 +447,7 @@ function NativeMixedParagraph(props: {
 function NativeList(props: {
   readonly node: MarkdownNode;
   readonly textStyle: NativeMarkdownTextStyle;
+  readonly highlightCode: MarkdownCodeHighlighter;
   readonly depth: number;
 }) {
   const ordered = props.node.ordered ?? false;
@@ -501,6 +507,7 @@ function NativeList(props: {
                   key={nodeKey(child, childIndex)}
                   node={child}
                   textStyle={props.textStyle}
+                  highlightCode={props.highlightCode}
                   depth={props.depth + 1}
                   compact
                 />
@@ -516,6 +523,7 @@ function NativeList(props: {
 export function NativeMarkdownBlock(props: {
   readonly node: MarkdownNode;
   readonly textStyle: NativeMarkdownTextStyle;
+  readonly highlightCode: MarkdownCodeHighlighter;
   readonly depth?: number;
   readonly compact?: boolean;
 }) {
@@ -529,6 +537,7 @@ export function NativeMarkdownBlock(props: {
               key={nodeKey(child, index)}
               node={child}
               textStyle={props.textStyle}
+              highlightCode={props.highlightCode}
               depth={depth}
             />
           ))}
@@ -536,7 +545,12 @@ export function NativeMarkdownBlock(props: {
       );
     case "code_block":
       return (
-        <NativeCodeBlock node={props.node} textStyle={props.textStyle} compact={props.compact} />
+        <NativeCodeBlock
+          node={props.node}
+          textStyle={props.textStyle}
+          highlightCode={props.highlightCode}
+          compact={props.compact}
+        />
       );
     case "table":
       return <NativeTable node={props.node} textStyle={props.textStyle} />;
@@ -568,6 +582,7 @@ export function NativeMarkdownBlock(props: {
               key={nodeKey(child, index)}
               node={child}
               textStyle={props.textStyle}
+              highlightCode={props.highlightCode}
               depth={depth}
               compact
             />
@@ -575,7 +590,14 @@ export function NativeMarkdownBlock(props: {
         </View>
       );
     case "list":
-      return <NativeList node={props.node} textStyle={props.textStyle} depth={depth} />;
+      return (
+        <NativeList
+          node={props.node}
+          textStyle={props.textStyle}
+          highlightCode={props.highlightCode}
+          depth={depth}
+        />
+      );
     case "paragraph":
       return (props.node.children ?? []).some((child) => child.type === "image") ? (
         <NativeMixedParagraph node={props.node} textStyle={props.textStyle} />
@@ -612,6 +634,7 @@ export function NativeMarkdownBlock(props: {
               key={nodeKey(child, index)}
               node={child}
               textStyle={props.textStyle}
+              highlightCode={props.highlightCode}
               depth={depth}
               compact
             />

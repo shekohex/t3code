@@ -19,6 +19,18 @@ export interface NativeMarkdownTextStyle {
   readonly boldFontFamily: string;
 }
 
+export interface MarkdownHighlightedToken {
+  readonly content: string;
+  readonly color: string | null;
+  readonly fontStyle: number | null;
+}
+
+export type MarkdownCodeHighlighter = (input: {
+  readonly code: string;
+  readonly language?: string | null;
+  readonly theme: "light" | "dark";
+}) => Promise<ReadonlyArray<ReadonlyArray<MarkdownHighlightedToken>>>;
+
 export interface SelectableMarkdownSkill {
   readonly name: string;
   readonly displayName?: string | null;
@@ -27,6 +39,7 @@ export interface SelectableMarkdownSkill {
 export interface SelectableMarkdownTextProps {
   readonly markdown: string;
   readonly textStyle: NativeMarkdownTextStyle;
+  readonly highlightCode: MarkdownCodeHighlighter;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly marginTop?: number;
   readonly marginBottom?: number;

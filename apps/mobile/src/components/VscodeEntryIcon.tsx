@@ -1,8 +1,8 @@
 import { SymbolView } from "expo-symbols";
 import { Image, type ImageStyle, type StyleProp } from "react-native";
 
-import { markdownFileIconSource } from "../lib/markdownFileIcons";
-import { resolveMarkdownFileIcon } from "../lib/markdownLinks";
+import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
+import { resolveMarkdownFileIcon } from "@t3tools/mobile-markdown-text/links";
 
 export function VscodeEntryIcon(props: {
   readonly path: string;

@@ -1,6 +1,6 @@
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
-import type { SelectableMarkdownSkill } from "../native/SelectableMarkdownText.types";
+import type { SelectableMarkdownSkill } from "./SelectableMarkdownText.types";
 import { resolveMarkdownLinkPresentation, type MarkdownFileIcon } from "./markdownLinks";
 
 export interface NativeMarkdownTextRun {

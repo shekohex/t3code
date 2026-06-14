@@ -14,7 +14,7 @@ import {
   type ComposerTrigger,
 } from "@t3tools/shared/composerTrigger";
 import type { ReactNode } from "react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -84,6 +84,7 @@ export interface ThreadComposerProps {
   readonly activeThreadBusy: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
+  readonly editorRef?: RefObject<ComposerEditorHandle | null>;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onPickDraftImages: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
@@ -201,7 +202,8 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const isDarkMode = useColorScheme() === "dark";
   const foregroundColor = useThemeColor("--color-foreground");
-  const inputRef = useRef<ComposerEditorHandle>(null);
+  const fallbackInputRef = useRef<ComposerEditorHandle>(null);
+  const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
   const wasExpandedBeforePreviewRef = useRef(false);
   const { onExpandedChange } = props;
@@ -224,11 +226,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     if (wasExpandedBeforePreviewRef.current) {
       setTimeout(() => inputRef.current?.focus(), 100);
     }
-  }, []);
+  }, [inputRef]);
 
-  useEffect(() => {
-    onExpandedChange?.(isExpanded);
-  }, [isExpanded, onExpandedChange]);
+  const handleFocus = useCallback(() => {
+    setIsFocused(true);
+    onExpandedChange?.(true);
+  }, [onExpandedChange]);
+
+  const handleBlur = useCallback(() => {
+    setIsFocused(false);
+    onExpandedChange?.(false);
+  }, [onExpandedChange]);
   const showStopAction =
     props.selectedThread.session?.status === "running" ||
     props.selectedThread.session?.status === "starting";
@@ -692,8 +700,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               onSelectionChange={handleSelectionChange}
               onPasteImages={(uris) => void props.onNativePasteImages(uris)}
               placeholder={props.placeholder}
-              onFocus={() => setIsFocused(true)}
-              onBlur={() => setIsFocused(false)}
+              onFocus={handleFocus}
+              onBlur={handleBlur}
               scrollEnabled={isExpanded}
               contentInsetVertical={isExpanded ? 0 : 6}
               style={

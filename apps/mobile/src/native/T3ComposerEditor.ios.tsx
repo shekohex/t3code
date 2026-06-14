@@ -4,8 +4,8 @@ import { useImperativeHandle, useMemo, useRef, type Ref } from "react";
 import type { NativeSyntheticEvent, StyleProp, ViewProps, ViewStyle } from "react-native";
 import { Image, StyleSheet } from "react-native";
 
-import { markdownFileIconSource } from "../lib/markdownFileIcons";
-import { resolveMarkdownFileIcon } from "../lib/markdownLinks";
+import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
+import { resolveMarkdownFileIcon } from "@t3tools/mobile-markdown-text/links";
 import { useThemeColor } from "../lib/useThemeColor";
 import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerEditor.types";
 

@@ -1,6 +1,6 @@
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
-import { AnimatedLegendList } from "@legendapp/list/reanimated";
+import { KeyboardAvoidingLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
 import type { ThreadId, TurnId } from "@t3tools/contracts";
 import { SymbolView } from "expo-symbols";
@@ -28,13 +28,6 @@ import {
 } from "react-native";
 import { TouchableOpacity } from "react-native-gesture-handler";
 import ImageViewing from "react-native-image-viewing";
-import { useKeyboardHandler } from "react-native-keyboard-controller";
-import Animated, {
-  runOnJS,
-  useAnimatedProps,
-  useAnimatedStyle,
-  useSharedValue,
-} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 import {
@@ -61,8 +54,8 @@ import {
 import { buildReviewParsedDiff } from "../review/reviewModel";
 import { cn } from "../../lib/cn";
 import type { LayoutVariant } from "../../lib/layout";
-import { markdownFileIconSource } from "../../lib/markdownFileIcons";
-import { resolveMarkdownLinkPresentation } from "../../lib/markdownLinks";
+import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
+import { resolveMarkdownLinkPresentation } from "@t3tools/mobile-markdown-text/links";
 import {
   deriveThreadFeedPresentation,
   type ThreadFeedEntry,
@@ -1286,8 +1279,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const suppressAutoFollowRef = useRef(false);
   const previousLatestTurnRef = useRef(props.latestTurn);
   const isNearEndRef = useRef(true);
-  const followKeyboardRef = useRef(true);
-  const keyboardTransitionRef = useRef(false);
   const initialScrollReadyRef = useRef(false);
   const lastContentHeightRef = useRef(0);
   const { width: viewportWidth } = useWindowDimensions();
@@ -1313,10 +1304,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const insets = useSafeAreaInsets();
   const topContentInset = props.contentTopInset ?? insets.top + 44;
   const bottomContentInset = props.contentBottomInset ?? 18;
-  const keyboardInset = useSharedValue(0);
-  const topInset = useSharedValue(topContentInset);
-  const bottomInset = useSharedValue(bottomContentInset);
-  const interactiveKeyboardDismissal = useSharedValue(false);
 
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
   const userBubbleColor = useThemeColor("--color-user-bubble");
@@ -1360,76 +1347,22 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     });
   }, []);
 
-  const captureKeyboardFollowState = useCallback(() => {
-    keyboardTransitionRef.current = true;
-    followKeyboardRef.current = isNearEndRef.current;
-  }, []);
-
-  const handleKeyboardEnd = useCallback(
-    (_nextKeyboardInset: number, keyboardVisible: boolean) => {
-      keyboardTransitionRef.current = false;
-      if (keyboardVisible && followKeyboardRef.current) {
-        scrollToEnd();
-      }
+  const onListScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent> | NativeScrollEvent) => {
+      const scrollEvent = "nativeEvent" in event ? event.nativeEvent : event;
+      const { contentInset, contentOffset, contentSize, layoutMeasurement } = scrollEvent;
+      isNearEndRef.current = isThreadFeedNearEnd(
+        {
+          contentHeight: contentSize.height,
+          viewportHeight: layoutMeasurement.height,
+          offsetY: contentOffset.y,
+          bottomInset: contentInset.bottom,
+        },
+        THREAD_FEED_END_THRESHOLD,
+      );
     },
-    [scrollToEnd],
+    [],
   );
-
-  useKeyboardHandler(
-    {
-      onStart: () => {
-        "worklet";
-        interactiveKeyboardDismissal.value = false;
-        runOnJS(captureKeyboardFollowState)();
-      },
-      onMove: (event) => {
-        "worklet";
-        if (!interactiveKeyboardDismissal.value) {
-          keyboardInset.value = Math.max(0, event.height - insets.bottom);
-        }
-      },
-      onInteractive: () => {
-        "worklet";
-        // Keep the list geometry fixed while the composer follows the drag.
-        // Resizing both surfaces during overscroll makes the feed jump.
-        interactiveKeyboardDismissal.value = true;
-      },
-      onEnd: (event) => {
-        "worklet";
-        const nextKeyboardInset = Math.max(0, event.height - insets.bottom);
-        keyboardInset.value = nextKeyboardInset;
-        interactiveKeyboardDismissal.value = false;
-        runOnJS(handleKeyboardEnd)(nextKeyboardInset, event.height > 0);
-      },
-    },
-    [captureKeyboardFollowState, handleKeyboardEnd, insets.bottom],
-  );
-
-  const listAnimatedProps = useAnimatedProps(() => ({
-    scrollIndicatorInsets: {
-      top: topInset.value,
-      left: 0,
-      right: 0,
-      bottom: bottomInset.value + keyboardInset.value,
-    },
-  }));
-
-  const footerSpacerStyle = useAnimatedStyle(() => {
-    return { height: bottomInset.value + keyboardInset.value };
-  });
-
-  const onListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { contentInset, contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    isNearEndRef.current = isThreadFeedNearEnd(
-      {
-        contentHeight: contentSize.height,
-        viewportHeight: layoutMeasurement.height,
-        offsetY: contentOffset.y,
-        bottomInset: contentInset.bottom,
-      },
-      THREAD_FEED_END_THRESHOLD,
-    );
-  }, []);
 
   const onListContentSizeChange = useCallback(
     (_width: number, height: number) => {
@@ -1438,7 +1371,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
       if (
         initialScrollReadyRef.current &&
-        !keyboardTransitionRef.current &&
         contentGrew &&
         isNearEndRef.current &&
         !suppressAutoFollowRef.current
@@ -1452,14 +1384,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const onListLoad = useCallback(() => {
     initialScrollReadyRef.current = true;
   }, []);
-
-  useEffect(() => {
-    topInset.value = topContentInset;
-    bottomInset.value = bottomContentInset;
-    if (initialScrollReadyRef.current && isNearEndRef.current) {
-      scrollToEnd();
-    }
-  }, [bottomContentInset, bottomInset, scrollToEnd, topContentInset, topInset]);
 
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
@@ -1654,18 +1578,23 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   return (
     <>
-      <Animated.View style={{ flex: 1 }}>
-        <AnimatedLegendList
+      <View style={{ flex: 1 }}>
+        <KeyboardAvoidingLegendList
           ref={listRef}
           key={props.threadId}
           style={{ flex: 1 }}
-          animatedProps={listAnimatedProps}
-          automaticallyAdjustContentInsets={false}
           automaticallyAdjustsScrollIndicatorInsets={false}
-          contentInsetAdjustmentBehavior="never"
           contentInset={{ top: 0, bottom: 0 }}
-          scrollIndicatorInsets={{ top: 0, bottom: 0 }}
+          scrollIndicatorInsets={{ top: topContentInset, bottom: 0 }}
           alignItemsAtEnd
+          maintainScrollAtEnd={{
+            animated: false,
+            on: {
+              dataChange: true,
+              itemLayout: true,
+              layout: true,
+            },
+          }}
           data={presentedFeed}
           extraData={listAppearanceData}
           renderItem={renderItem}
@@ -1673,8 +1602,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           getItemType={(entry) =>
             entry.type === "message" ? `message:${entry.message.role}` : entry.type
           }
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="always"
+          keyboardDismissMode="none"
           estimatedItemSize={180}
           initialScrollAtEnd
           onContentSizeChange={onListContentSizeChange}
@@ -1682,13 +1611,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           onScroll={onListScroll}
           scrollEventThrottle={16}
           ListHeaderComponent={<View style={{ height: topContentInset }} />}
-          ListFooterComponent={<Animated.View style={footerSpacerStyle} />}
           contentContainerStyle={{
             paddingTop: 12,
+            paddingBottom: bottomContentInset,
             paddingHorizontal: horizontalPadding,
           }}
         />
-      </Animated.View>
+      </View>
 
       <ImageViewing
         images={
