@@ -121,19 +121,18 @@ selects the concrete relay deployment, but changing that URL does not require a 
 
 The desktop app opens OAuth in the system browser and returns to the app with a custom URL scheme.
 In **Clerk Dashboard > Native applications**, enable native application support and add these
-entries under the mobile SSO redirect allowlist:
+entry under the mobile SSO redirect allowlist:
 
 ```text
-t3code-dev://auth/callback
-t3code://auth/callback
+t3code-dev://app/
+t3code://app/
 ```
 
-The first entry is for local desktop development. The second is for packaged desktop builds.
-The app also adds a request-scoped `t3_state` query parameter and validates it on callback. Initial
-sign-in and linked-account OAuth flows both return through this bridge. The desktop provider keeps
-Clerk's stock profile component, replaces its renderer-page callback with the custom-scheme callback,
-and opens the provider URL in the system browser. Do not add the local renderer URL as an OAuth
-redirect: an external browser cannot use it to reopen the packaged app.
+Local desktop development uses `t3code-dev://app`, while packaged builds use `t3code://app`. Add the
+matching origin to each Clerk instance's Backend API `allowed_origins` array as well. The development
+Clerk instance should only need `t3code-dev://app`; the production Clerk instance should only need
+`t3code://app`. `@clerk/electron` owns the native request adapter, encrypted Clerk token persistence,
+external-browser OAuth transport, and callback delivery for initial sign-in and linked-account flows.
 
 The current mobile UI uses Clerk's native authentication view. If a future mobile browser OAuth
 flow uses a custom redirect URI, add that exact URI to the same allowlist.
