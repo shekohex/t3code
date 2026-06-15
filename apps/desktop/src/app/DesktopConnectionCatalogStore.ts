@@ -88,11 +88,20 @@ export class DesktopConnectionCatalogStoreMigrationError extends Data.TaggedErro
   }
 }
 
+export class DesktopConnectionCatalogStoreEncryptionUnavailableError extends Data.TaggedError(
+  "DesktopConnectionCatalogStoreEncryptionUnavailableError",
+)<{}> {
+  override get message() {
+    return "Cannot read the encrypted connection catalog because encryption is unavailable.";
+  }
+}
+
 export interface DesktopConnectionCatalogStoreShape {
   readonly get: Effect.Effect<
     Option.Option<string>,
     | DesktopConnectionCatalogStoreReadError
     | DesktopConnectionCatalogStoreDecodeError
+    | DesktopConnectionCatalogStoreEncryptionUnavailableError
     | DesktopConnectionCatalogStoreMigrationError
     | ElectronSafeStorage.ElectronSafeStorageAvailabilityError
     | ElectronSafeStorage.ElectronSafeStorageDecryptError
@@ -300,7 +309,7 @@ export const layer = Layer.effect(
           return yield* migrateLegacyCatalog;
         }
         if (!(yield* safeStorage.isEncryptionAvailable)) {
-          return Option.none<string>();
+          return yield* new DesktopConnectionCatalogStoreEncryptionUnavailableError();
         }
         const decrypted = yield* decodeSecretBytes(document.value.encryptedCatalog).pipe(
           Effect.flatMap(safeStorage.decryptString),

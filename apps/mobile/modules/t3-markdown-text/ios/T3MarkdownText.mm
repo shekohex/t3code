@@ -616,7 +616,7 @@ T3MarkdownOutsideTapCoordinatorForWindow(UIWindow *window)
   ];
 
   int currIndex = -1;
-  for (UIView* child in self.subviews) {
+  for (UIView* child in _view.subviews) {
     if (![child isKindOfClass:[T3MarkdownTextRun class]]) {
       continue;
     }
