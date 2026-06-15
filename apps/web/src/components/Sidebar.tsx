@@ -3079,22 +3079,28 @@ export default function Sidebar() {
   }, []);
 
   const animatedProjectLists = useMemo(() => new WeakSet<HTMLElement>(), []);
-  const attachProjectListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
-    if (!node || animatedProjectLists.has(node)) {
-      return;
-    }
-    autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
-    animatedProjectLists.add(node);
-  }, [animatedProjectLists]);
+  const attachProjectListAutoAnimateRef = useCallback(
+    (node: HTMLElement | null) => {
+      if (!node || animatedProjectLists.has(node)) {
+        return;
+      }
+      autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
+      animatedProjectLists.add(node);
+    },
+    [animatedProjectLists],
+  );
 
   const animatedThreadLists = useMemo(() => new WeakSet<HTMLElement>(), []);
-  const attachThreadListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
-    if (!node || animatedThreadLists.has(node)) {
-      return;
-    }
-    autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
-    animatedThreadLists.add(node);
-  }, [animatedThreadLists]);
+  const attachThreadListAutoAnimateRef = useCallback(
+    (node: HTMLElement | null) => {
+      if (!node || animatedThreadLists.has(node)) {
+        return;
+      }
+      autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
+      animatedThreadLists.add(node);
+    },
+    [animatedThreadLists],
+  );
 
   const visibleThreads = useMemo(
     () => sidebarThreads.filter((thread) => thread.archivedAt === null),
