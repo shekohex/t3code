@@ -6,7 +6,7 @@ import { memo } from "react";
 import { Pressable, ScrollView, useColorScheme, View, type ViewStyle } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { VscodeEntryIcon } from "../../components/VscodeEntryIcon";
+import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 
 export type ComposerCommandItem =
   | {
@@ -151,7 +151,7 @@ const CommandRow = memo(function CommandRow(props: {
       })}
     >
       {props.item.type === "path" ? (
-        <VscodeEntryIcon path={props.item.path} kind={props.item.kind} size={16} />
+        <PierreEntryIcon path={props.item.path} kind={props.item.kind} size={16} />
       ) : iconName ? (
         <SymbolView name={iconName} size={14} tintColor={iconColor} type="monochrome" />
       ) : null}

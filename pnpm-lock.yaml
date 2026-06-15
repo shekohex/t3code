@@ -374,6 +374,9 @@ importers:
       '@effect/vitest':
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(patch_hash=42b87cc47e70d74e62496e7a8261b3fd298ecad4464d209348ab04b96f853a5f)(effect@4.0.0-beta.78(patch_hash=883249d8efbb462e928e21fefef96027b66aec50751178cafdce45f08eee3754))
+      '@pierre/trees':
+        specifier: 1.0.0-beta.4
+        version: 1.0.0-beta.4(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@types/react':
         specifier: ~19.2.0
         version: 19.2.16
@@ -12549,6 +12552,13 @@ snapshots:
       react: 19.2.6
       react-dom: 19.2.6(react@19.2.6)
       shiki: 3.23.0
+
+  '@pierre/trees@1.0.0-beta.4(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+    dependencies:
+      preact: 11.0.0-beta.0
+      preact-render-to-string: 6.6.5(preact@11.0.0-beta.0)
+      react: 19.2.3
+      react-dom: 19.2.3(react@19.2.3)
 
   '@pierre/trees@1.0.0-beta.4(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:

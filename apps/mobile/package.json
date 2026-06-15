@@ -34,6 +34,7 @@
     "config:preview": "APP_VARIANT=preview expo config",
     "config:prod": "APP_VARIANT=production expo config",
     "profile:android:hermes": "mkdir -p profiles/review && react-native profile-hermes profiles/review",
+    "sync:pierre-icons": "node modules/t3-markdown-text/scripts/sync-pierre-file-icons.mjs",
     "test": "vp test run",
     "typecheck": "tsc --noEmit"
   },
@@ -107,6 +108,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@pierre/trees": "1.0.0-beta.4",
     "@types/react": "~19.2.0",
     "babel-preset-expo": "~56.0.0",
     "tailwindcss": "^4.0.0",

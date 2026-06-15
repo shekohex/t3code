@@ -34,8 +34,27 @@ describe("resolveMarkdownLinkPresentation", () => {
     });
     expect(resolveMarkdownLinkPresentation("package.json")).toEqual({
       kind: "file",
-      icon: "npm",
+      icon: "package",
       label: "package.json",
+    });
+  });
+
+  it("uses the Pierre complete icon mappings", () => {
+    expect(resolveMarkdownLinkPresentation("src/Button.tsx")).toMatchObject({
+      kind: "file",
+      icon: "react",
+    });
+    expect(resolveMarkdownLinkPresentation("vite.config.ts")).toMatchObject({
+      kind: "file",
+      icon: "vite",
+    });
+    expect(resolveMarkdownLinkPresentation("Dockerfile")).toMatchObject({
+      kind: "file",
+      icon: "docker",
+    });
+    expect(resolveMarkdownLinkPresentation("pnpm-lock.yaml")).toMatchObject({
+      kind: "file",
+      icon: "pnpm",
     });
   });
 
