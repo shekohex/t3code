@@ -35,12 +35,13 @@ catalogs:
       version: 0.1.24
 
 overrides:
-  '@base-org/account': '-'
-  '@coinbase/wallet-sdk': '-'
-  '@solana/wallet-adapter-base': '-'
-  '@solana/wallet-adapter-react': '-'
-  '@solana/wallet-standard': '-'
-  '@wallet-standard/core': '-'
+  '@clerk/clerk-js': https://pkg.pr.new/clerk/javascript/@clerk/clerk-js@235c6e7
+  '@clerk/clerk-js>@base-org/account': '-'
+  '@clerk/clerk-js>@coinbase/wallet-sdk': '-'
+  '@clerk/clerk-js>@solana/wallet-adapter-base': '-'
+  '@clerk/clerk-js>@solana/wallet-adapter-react': '-'
+  '@clerk/clerk-js>@solana/wallet-standard': '-'
+  '@clerk/clerk-js>@wallet-standard/core': '-'
   '@effect/atom-react': 4.0.0-beta.78
   '@effect/platform-bun': 4.0.0-beta.78
   '@effect/platform-node': 4.0.0-beta.78
@@ -1511,10 +1512,6 @@ packages:
 
   '@clerk/backend@3.4.14':
     resolution: {integrity: sha512-0iaMT7k4wDk31QVC3HMaoeVFttblwsCECTHKNQpbRzIyD8j2gHdKEw/FNjffoyqyBqPw869IQlk1YokUlwVAqQ==}
-    engines: {node: '>=20.9.0'}
-
-  '@clerk/clerk-js@6.14.0':
-    resolution: {integrity: sha512-xreDPw31OIk/VQj36qdgjzc4Rk2HwMar25nOu/ts2gf7PrbhU4XQdrtnt74g4fTmSMp8xeyjzHqa9adDXVjISw==}
     engines: {node: '>=20.9.0'}
 
   '@clerk/clerk-js@https://pkg.pr.new/clerk/javascript/@clerk/clerk-js@235c6e7':
@@ -10984,9 +10981,9 @@ snapshots:
       - react
       - react-dom
 
-  '@clerk/clerk-js@6.14.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/clerk-js@https://pkg.pr.new/clerk/javascript/@clerk/clerk-js@235c6e7(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@clerk/shared': 4.15.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': https://pkg.pr.new/clerk/javascript/@clerk/shared@235c6e7(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@stripe/stripe-js': 5.6.0
       '@swc/helpers': 0.5.21
       '@tanstack/query-core': 5.100.14
@@ -11035,7 +11032,7 @@ snapshots:
 
   '@clerk/expo@3.3.1(expo-auth-session@56.0.13(expo@56.0.8)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3))(expo-constants@56.0.16)(expo-crypto@56.0.4(expo@56.0.8))(expo-secure-store@56.0.4(expo@56.0.8))(expo-web-browser@56.0.5(expo@56.0.8)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6)))(expo@56.0.8)(react-dom@19.2.3(react@19.2.3))(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)':
     dependencies:
-      '@clerk/clerk-js': 6.14.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/clerk-js': https://pkg.pr.new/clerk/javascript/@clerk/clerk-js@235c6e7(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@clerk/react': 6.7.3(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@clerk/shared': 4.15.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       base-64: 1.0.0
@@ -11099,6 +11096,16 @@ snapshots:
     optionalDependencies:
       react: 19.2.6
       react-dom: 19.2.6(react@19.2.6)
+
+  '@clerk/shared@https://pkg.pr.new/clerk/javascript/@clerk/shared@235c6e7(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+    dependencies:
+      '@tanstack/query-core': 5.100.14
+      dequal: 2.0.3
+      glob-to-regexp: 0.4.1
+      js-cookie: 3.0.7
+    optionalDependencies:
+      react: 19.2.3
+      react-dom: 19.2.3(react@19.2.3)
 
   '@clerk/shared@https://pkg.pr.new/clerk/javascript/@clerk/shared@235c6e7(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
