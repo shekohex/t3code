@@ -41,6 +41,7 @@ import {
   type SupervisorConnectionState,
 } from "./model.ts";
 import {
+  ConnectionPersistenceError,
   ConnectionRegistrationStore,
   ConnectionTargetStore,
   EnvironmentCacheStore,
@@ -133,7 +134,9 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   initialCredentials: ReadonlyArray<readonly [string, ConnectionCredential]> = [],
   options?: {
     readonly beforeSessionConnect?: (environmentId: EnvironmentId) => Effect.Effect<void>;
-    readonly beforeRegistrationRemove?: (target: ConnectionTarget) => Effect.Effect<void>;
+    readonly beforeRegistrationRemove?: (
+      target: ConnectionTarget,
+    ) => Effect.Effect<void, ConnectionPersistenceError>;
   },
 ) {
   const storedTargets = yield* Ref.make(
@@ -143,6 +146,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   const cacheClears = yield* Ref.make<ReadonlyArray<EnvironmentId>>([]);
   const ownedDataClears = yield* Ref.make<ReadonlyArray<EnvironmentId>>([]);
   const sessions = yield* Ref.make<ReadonlyArray<SessionControl>>([]);
+  const releasedSessions = yield* Ref.make(0);
   const storedProfiles = yield* Ref.make(
     new Map(initialProfiles.map((profile) => [profile.connectionId, profile])),
   );
@@ -347,7 +351,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
             probe: Effect.void,
             closed: Deferred.await(closed),
           } satisfies RpcSession),
-          () => Effect.void,
+          () => Ref.update(releasedSessions, (count) => count + 1),
         );
         yield* reportProgress({ stage: "synchronizing", prepared });
         yield* session.ready;
@@ -381,6 +385,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     cacheClears,
     ownedDataClears,
     sessions,
+    releasedSessions,
     storedProfiles,
     profileReadCount,
     storedCredentials,
@@ -676,6 +681,39 @@ describe("EnvironmentRegistry", () => {
         expect(
           (yield* SubscriptionRef.get(registry.entries)).has(BEARER_TARGET.environmentId),
         ).toBe(true);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("closes relay runtimes before fallible persistence removal", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([RELAY_TARGET], [], [], {
+        beforeRegistrationRemove: () =>
+          Effect.fail(
+            new ConnectionPersistenceError({
+              operation: "remove-connection",
+              message: "Storage is unavailable.",
+            }),
+          ),
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          RELAY_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        const error = yield* Effect.flip(registry.removeRelayEnvironments());
+
+        expect(error._tag).toBe("ConnectionPersistenceError");
+        expect(yield* Ref.get(harness.releasedSessions)).toBe(1);
+        expect((yield* SubscriptionRef.get(registry.entries)).has(RELAY_TARGET.environmentId)).toBe(
+          false,
+        );
+        expect((yield* Ref.get(harness.storedTargets)).has(RELAY_TARGET.environmentId)).toBe(true);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

@@ -421,13 +421,13 @@ const makeEnvironmentRegistry = Effect.fn("EnvironmentRegistry.make")(function* 
           );
         }
 
-        yield* registrations.remove(target);
         yield* closeServiceScope(environmentId);
         yield* SubscriptionRef.update(entries, (current) => {
           const next = new Map(current);
           next.delete(environmentId);
           return next;
         });
+        yield* registrations.remove(target);
         yield* Effect.all([cache.clear(environmentId), ownedDataCleanup.clear(environmentId)], {
           concurrency: "unbounded",
           discard: true,

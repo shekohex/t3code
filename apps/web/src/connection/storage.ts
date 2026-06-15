@@ -19,8 +19,8 @@ import {
 } from "@t3tools/client-runtime/connection";
 import {
   EnvironmentId,
-  OrchestrationThread,
   OrchestrationShellSnapshot,
+  OrchestrationThread,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -167,7 +167,7 @@ function removeDatabaseValuesInRange(database: IDBDatabase, storeName: string, r
     const transaction = database.transaction(storeName, "readwrite");
     transaction.addEventListener("error", () => {
       resume(
-        Effect.fail(catalogError("remove", transaction.error ?? "Unknown IndexedDB remove error")),
+        Effect.fail(catalogError("remove", transaction.error ?? "Unknown IndexedDB cursor error")),
       );
     });
     transaction.addEventListener("complete", () => {
@@ -211,6 +211,7 @@ const encodeCatalog = Effect.fn("web.connectionStorage.encodeCatalog")(function*
 interface CatalogBackend {
   readonly read: Effect.Effect<string | null, ConnectionTransientError>;
   readonly write: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
+  readonly quarantine?: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
 }
 
 function makeCatalogBackend(database: IDBDatabase): CatalogBackend {
@@ -242,6 +243,8 @@ function makeCatalogBackend(database: IDBDatabase): CatalogBackend {
       Effect.map((value) => (typeof value === "string" ? value : null)),
     ),
     write: (raw) => writeDatabaseValue(database, CATALOG_STORE_NAME, CATALOG_KEY, raw),
+    quarantine: (raw) =>
+      writeDatabaseValue(database, CATALOG_STORE_NAME, `${CATALOG_KEY}:corrupt:${Date.now()}`, raw),
   };
 }
 
@@ -252,7 +255,7 @@ interface CatalogStore {
   ) => Effect.Effect<void, ConnectionTransientError>;
 }
 
-const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStore")(function* (
+export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStore")(function* (
   backend: CatalogBackend,
 ) {
   const state = yield* Ref.make<Option.Option<ConnectionCatalogDocumentType>>(Option.none());
@@ -264,10 +267,36 @@ const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStore")(fun
       return cached.value;
     }
     const raw = yield* backend.read;
-    const catalog =
-      raw === null || raw.trim() === ""
-        ? EMPTY_CONNECTION_CATALOG_DOCUMENT
-        : yield* decodeCatalog(raw);
+    let catalog = EMPTY_CONNECTION_CATALOG_DOCUMENT;
+    if (raw !== null && raw.trim() !== "") {
+      catalog = yield* decodeCatalog(raw).pipe(
+        Effect.catch((error) =>
+          Effect.gen(function* () {
+            yield* Effect.logWarning("Discarding a corrupt web connection catalog.", {
+              error: error.message,
+            });
+            if (backend.quarantine !== undefined) {
+              yield* backend.quarantine(raw).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Could not quarantine the corrupt web connection catalog.", {
+                    error: cause.message,
+                  }),
+                ),
+              );
+            }
+            const encoded = yield* encodeCatalog(EMPTY_CONNECTION_CATALOG_DOCUMENT);
+            yield* backend.write(encoded).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not persist the recovered web connection catalog.", {
+                  error: cause.message,
+                }),
+              ),
+            );
+            return EMPTY_CONNECTION_CATALOG_DOCUMENT;
+          }),
+        ),
+      );
+    }
     yield* Ref.set(state, Option.some(catalog));
     return catalog;
   });

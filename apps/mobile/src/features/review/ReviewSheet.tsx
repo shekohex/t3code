@@ -32,6 +32,7 @@ import { useReviewFileVisibility } from "./reviewFileVisibility";
 import { useReviewSections } from "./useReviewSections";
 import { useNativeReviewDiffBridge } from "./useNativeReviewDiffBridge";
 import { useReviewCommentSelectionController } from "./useReviewCommentSelectionController";
+import { resolveReviewAvailability } from "./reviewAvailability";
 
 const IOS_NAV_BAR_HEIGHT = 44;
 const REVIEW_HEADER_SPACING = 0;
@@ -199,7 +200,13 @@ export function ReviewSheet() {
   const parsedDiffNotice =
     parsedDiff.kind === "files" || parsedDiff.kind === "raw" ? parsedDiff.notice : null;
   const hasCachedSelectedDiff = selectedSection?.diff != null;
-  const showConnectionNotice = environment.isReady && !isEnvironmentReady && !hasCachedSelectedDiff;
+  const hasAnyCachedDiff = reviewSections.some((section) => section.diff != null);
+  const { showConnectionNotice, showSectionToolbar } = resolveReviewAvailability({
+    hasEnvironmentPresentation: environment.isReady,
+    isEnvironmentConnected: isEnvironmentReady,
+    hasCachedSelectedDiff,
+    hasAnyCachedDiff,
+  });
   const handleRetryEnvironment = useCallback(() => {
     void environmentActions.retryNow(environmentId);
   }, [environmentActions, environmentId]);
@@ -328,7 +335,7 @@ export function ReviewSheet() {
         }}
       />
 
-      {showConnectionNotice ? null : (
+      {showSectionToolbar ? (
         <Stack.Toolbar placement="right">
           <Stack.Toolbar.Menu icon="ellipsis.circle" title="Select diff" separateBackground>
             {reviewSections.map((section) => (
@@ -354,7 +361,7 @@ export function ReviewSheet() {
             </Stack.Toolbar.MenuAction>
           </Stack.Toolbar.Menu>
         </Stack.Toolbar>
-      )}
+      ) : null}
 
       <View className="flex-1 bg-sheet">
         {showConnectionNotice ? (

@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
 import { CommandId, EnvironmentId, IsoDateTime, MessageId, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/unstable/reactivity";
@@ -52,6 +53,16 @@ export const queuedMessagesByThreadKeyAtom = Atom.make<
 >({}).pipe(Atom.keepAlive, Atom.withLabel("mobile:thread-outbox:queued-messages"));
 
 let loadPromise: Promise<void> | null = null;
+let mutationQueue: Promise<void> = Promise.resolve();
+
+export function serializeThreadOutboxMutation<A>(mutation: () => Promise<A>): Promise<A> {
+  const result = mutationQueue.then(mutation, mutation);
+  mutationQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
 
 function storedMessage(message: QueuedThreadMessage): StoredQueuedThreadMessage {
   return {
@@ -99,6 +110,28 @@ export function threadOutboxRetryDelayMs(attempt: number): number {
   return Math.min(1_000 * 2 ** Math.max(0, attempt - 1), THREAD_OUTBOX_MAX_RETRY_DELAY_MS);
 }
 
+function errorMessage(error: unknown): string | null {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "object" && error !== null && "message" in error) {
+    return typeof error.message === "string" ? error.message : null;
+  }
+  return typeof error === "string" ? error : null;
+}
+
+export function shouldRetryThreadOutboxDelivery(error: unknown): boolean {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "ConnectionTransientError"
+  ) {
+    return true;
+  }
+  return isTransportConnectionErrorMessage(errorMessage(error));
+}
+
 export function decodeQueuedThreadMessage(value: unknown): QueuedThreadMessage {
   const { schemaVersion: _, ...message } = decodeStoredQueuedThreadMessage(value);
   return message;
@@ -133,76 +166,85 @@ export function ensureThreadOutboxLoaded(): void {
     return;
   }
   loadPromise = loadPersistedMessages()
-    .then((persistedMessages) => {
-      const current = flattenQueues(appAtomRegistry.get(queuedMessagesByThreadKeyAtom));
-      appAtomRegistry.set(
-        queuedMessagesByThreadKeyAtom,
-        groupQueuedThreadMessages([...persistedMessages, ...current]),
-      );
-    })
+    .then((persistedMessages) =>
+      serializeThreadOutboxMutation(async () => {
+        const current = flattenQueues(appAtomRegistry.get(queuedMessagesByThreadKeyAtom));
+        appAtomRegistry.set(
+          queuedMessagesByThreadKeyAtom,
+          groupQueuedThreadMessages([...persistedMessages, ...current]),
+        );
+      }),
+    )
     .catch((error) => {
+      loadPromise = null;
       console.warn("[thread-outbox] failed to load persisted messages", error);
     });
 }
 
 export async function enqueueThreadOutboxMessage(message: QueuedThreadMessage): Promise<void> {
-  const encoded = encodeStoredQueuedThreadMessage(storedMessage(message));
-  const file = await getMessageFile(message.messageId);
-  if (!file.exists) {
-    file.create({ intermediates: true, overwrite: true });
-  }
-  file.write(JSON.stringify(encoded));
+  await serializeThreadOutboxMutation(async () => {
+    const encoded = encodeStoredQueuedThreadMessage(storedMessage(message));
+    const file = await getMessageFile(message.messageId);
+    if (!file.exists) {
+      file.create({ intermediates: true, overwrite: true });
+    }
+    file.write(JSON.stringify(encoded));
 
-  const current = flattenQueues(appAtomRegistry.get(queuedMessagesByThreadKeyAtom));
-  appAtomRegistry.set(
-    queuedMessagesByThreadKeyAtom,
-    groupQueuedThreadMessages([...current, message]),
-  );
+    const current = flattenQueues(appAtomRegistry.get(queuedMessagesByThreadKeyAtom));
+    appAtomRegistry.set(
+      queuedMessagesByThreadKeyAtom,
+      groupQueuedThreadMessages([...current, message]),
+    );
+  });
 }
 
 export async function removeThreadOutboxMessage(message: QueuedThreadMessage): Promise<void> {
-  const file = await getMessageFile(message.messageId);
-  if (file.exists) {
-    file.delete();
-  }
+  await serializeThreadOutboxMutation(async () => {
+    const file = await getMessageFile(message.messageId);
+    if (file.exists) {
+      file.delete();
+    }
 
-  const current = flattenQueues(appAtomRegistry.get(queuedMessagesByThreadKeyAtom));
-  appAtomRegistry.set(
-    queuedMessagesByThreadKeyAtom,
-    groupQueuedThreadMessages(
-      current.filter((candidate) => candidate.messageId !== message.messageId),
-    ),
-  );
+    const current = flattenQueues(appAtomRegistry.get(queuedMessagesByThreadKeyAtom));
+    appAtomRegistry.set(
+      queuedMessagesByThreadKeyAtom,
+      groupQueuedThreadMessages(
+        current.filter((candidate) => candidate.messageId !== message.messageId),
+      ),
+    );
+  });
 }
 
 export async function clearThreadOutboxEnvironment(environmentId: EnvironmentId): Promise<void> {
-  const current = flattenQueues(appAtomRegistry.get(queuedMessagesByThreadKeyAtom));
-  const persisted = await loadPersistedMessages().catch((error) => {
-    console.warn("[thread-outbox] failed to load messages while clearing environment", error);
-    return [];
-  });
-  const allMessages = flattenQueues(groupQueuedThreadMessages([...persisted, ...current]));
-  const removed = allMessages.filter((message) => message.environmentId === environmentId);
+  await serializeThreadOutboxMutation(async () => {
+    const current = flattenQueues(appAtomRegistry.get(queuedMessagesByThreadKeyAtom));
+    const persisted = await loadPersistedMessages().catch((error) => {
+      console.warn("[thread-outbox] failed to load messages while clearing environment", error);
+      return [];
+    });
+    const allMessages = flattenQueues(groupQueuedThreadMessages([...persisted, ...current]));
+    const removed = allMessages.filter((message) => message.environmentId === environmentId);
 
-  await Promise.all(
-    removed.map(async (message) => {
-      try {
-        const file = await getMessageFile(message.messageId);
-        if (file.exists) {
-          file.delete();
+    await Promise.all(
+      removed.map(async (message) => {
+        try {
+          const file = await getMessageFile(message.messageId);
+          if (file.exists) {
+            file.delete();
+          }
+        } catch (error) {
+          console.warn("[thread-outbox] failed to clear persisted message", error);
         }
-      } catch (error) {
-        console.warn("[thread-outbox] failed to clear persisted message", error);
-      }
-    }),
-  );
+      }),
+    );
 
-  appAtomRegistry.set(
-    queuedMessagesByThreadKeyAtom,
-    groupQueuedThreadMessages(
-      allMessages.filter((message) => message.environmentId !== environmentId),
-    ),
-  );
+    appAtomRegistry.set(
+      queuedMessagesByThreadKeyAtom,
+      groupQueuedThreadMessages(
+        allMessages.filter((message) => message.environmentId !== environmentId),
+      ),
+    );
+  });
 }
 
 export function useThreadOutboxMessages() {

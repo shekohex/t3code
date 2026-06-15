@@ -372,7 +372,11 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
           }
           break;
         case "ConnectRequested":
+          break;
         case "Wakeup":
+          if (next.reason === "credentials-changed" && target._tag === "RelayConnectionTarget") {
+            return;
+          }
           break;
       }
     }
@@ -391,6 +395,9 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
           }
           break;
         case "Wakeup":
+          if (next.reason === "credentials-changed" && target._tag === "RelayConnectionTarget") {
+            return;
+          }
           if (next.reason === "application-active") {
             const probe = yield* lease.session.probe.pipe(
               Effect.timeoutOrElse({

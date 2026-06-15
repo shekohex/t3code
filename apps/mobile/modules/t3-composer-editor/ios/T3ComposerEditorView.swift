@@ -50,6 +50,9 @@ private final class ComposerTextAttachment: NSTextAttachment {
 }
 
 private final class ComposerTextView: UITextView {
+  private static let pastedImageDirectoryName = "t3-composer-paste"
+  private static let stalePastedImageAge: TimeInterval = 60 * 60
+
   var onPasteImages: (([String]) -> Void)?
   var onAttributedMutation: (() -> Void)?
 
@@ -212,17 +215,43 @@ private final class ComposerTextView: UITextView {
       return nil
     }
     let directory = FileManager.default.temporaryDirectory
-      .appendingPathComponent("t3-composer-paste", isDirectory: true)
+      .appendingPathComponent(pastedImageDirectoryName, isDirectory: true)
     do {
       try FileManager.default.createDirectory(
         at: directory,
         withIntermediateDirectories: true
       )
+      removeStaleTemporaryImages(in: directory)
       let url = directory.appendingPathComponent("\(UUID().uuidString).png")
       try data.write(to: url, options: .atomic)
       return url.absoluteString
     } catch {
       return nil
+    }
+  }
+
+  private static func removeStaleTemporaryImages(in directory: URL) {
+    let cutoff = Date().addingTimeInterval(-stalePastedImageAge)
+    guard let urls = try? FileManager.default.contentsOfDirectory(
+      at: directory,
+      includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+      options: [.skipsHiddenFiles]
+    ) else {
+      return
+    }
+
+    for url in urls {
+      guard
+        let values = try? url.resourceValues(
+          forKeys: [.contentModificationDateKey, .isRegularFileKey]
+        ),
+        values.isRegularFile == true,
+        let modifiedAt = values.contentModificationDate,
+        modifiedAt < cutoff
+      else {
+        continue
+      }
+      try? FileManager.default.removeItem(at: url)
     }
   }
 }

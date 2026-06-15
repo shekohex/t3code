@@ -3,6 +3,7 @@
 #import "T3MarkdownTextComponentDescriptor.h"
 #import "T3MarkdownTextRun.h"
 #import <React/RCTConversions.h>
+#import <objc/runtime.h>
 
 #import <react/renderer/textlayoutmanager/RCTAttributedTextUtils.h>
 #import <react/renderer/components/T3MarkdownTextSpec/EventEmitters.h>
@@ -177,15 +178,116 @@ static NSArray<NSDictionary<NSString *, id> *> *T3MarkdownTextExtractChipBackgro
 
 @end
 
+@protocol T3MarkdownOutsideTapTarget <NSObject>
+- (void)clearSelectionForOutsideTapWithHitView:(UIView *)hitView;
+@end
+
+@interface T3MarkdownOutsideTapCoordinator : NSObject <UIGestureRecognizerDelegate>
+
+- (instancetype)initWithWindow:(UIWindow *)window;
+- (void)addTarget:(id<T3MarkdownOutsideTapTarget>)target;
+- (void)removeTarget:(id<T3MarkdownOutsideTapTarget>)target;
+
+@end
+
+static const void *T3MarkdownOutsideTapCoordinatorKey =
+    &T3MarkdownOutsideTapCoordinatorKey;
+
+@implementation T3MarkdownOutsideTapCoordinator {
+  __weak UIWindow *_window;
+  UITapGestureRecognizer *_recognizer;
+  NSHashTable<id<T3MarkdownOutsideTapTarget>> *_targets;
+}
+
+- (instancetype)initWithWindow:(UIWindow *)window
+{
+  if (self = [super init]) {
+    _window = window;
+    _targets = [NSHashTable weakObjectsHashTable];
+    _recognizer = [[UITapGestureRecognizer alloc] initWithTarget:self
+                                                          action:@selector(handleTap:)];
+    _recognizer.cancelsTouchesInView = NO;
+    _recognizer.delegate = self;
+    [window addGestureRecognizer:_recognizer];
+  }
+  return self;
+}
+
+- (void)addTarget:(id<T3MarkdownOutsideTapTarget>)target
+{
+  [_targets addObject:target];
+}
+
+- (void)removeTarget:(id<T3MarkdownOutsideTapTarget>)target
+{
+  [_targets removeObject:target];
+  if (_targets.count > 0) {
+    return;
+  }
+
+  UIWindow *window = _window;
+  [window removeGestureRecognizer:_recognizer];
+  if (objc_getAssociatedObject(window, T3MarkdownOutsideTapCoordinatorKey) == self) {
+    objc_setAssociatedObject(
+        window,
+        T3MarkdownOutsideTapCoordinatorKey,
+        nil,
+        OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }
+}
+
+- (void)handleTap:(UITapGestureRecognizer *)sender
+{
+  UIWindow *window = _window;
+  if (window == nil) {
+    return;
+  }
+
+  UIView *hitView = [window hitTest:[sender locationInView:window] withEvent:nil];
+  if (hitView == nil) {
+    return;
+  }
+  for (id<T3MarkdownOutsideTapTarget> target in _targets.allObjects) {
+    [target clearSelectionForOutsideTapWithHitView:hitView];
+  }
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer
+    shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer
+{
+  return YES;
+}
+
+@end
+
+static T3MarkdownOutsideTapCoordinator *
+T3MarkdownOutsideTapCoordinatorForWindow(UIWindow *window)
+{
+  T3MarkdownOutsideTapCoordinator *coordinator =
+      objc_getAssociatedObject(window, T3MarkdownOutsideTapCoordinatorKey);
+  if (coordinator == nil) {
+    coordinator = [[T3MarkdownOutsideTapCoordinator alloc] initWithWindow:window];
+    objc_setAssociatedObject(
+        window,
+        T3MarkdownOutsideTapCoordinatorKey,
+        coordinator,
+        OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }
+  return coordinator;
+}
+
 @interface T3MarkdownText () <RCTT3MarkdownTextViewProtocol, UIGestureRecognizerDelegate, UITextViewDelegate>
 
 @end
 
-@implementation T3MarkdownText{
+@interface T3MarkdownText () <T3MarkdownOutsideTapTarget>
+@end
+
+@implementation T3MarkdownText {
   UIView * _view;
   T3MarkdownTextBackingView * _textView;
   T3MarkdownTextShadowNode::ConcreteState::Shared _state;
-  UITapGestureRecognizer * _outsideTapRecognizer;
+  __weak UIWindow * _outsideTapWindow;
   BOOL _suppressSelectionChange;
   NSMutableDictionary<NSString *, UIImage *> * _attachmentImages;
   NSMutableSet<NSString *> * _pendingAttachmentUris;
@@ -229,11 +331,6 @@ static NSArray<NSDictionary<NSString *, id> *> *T3MarkdownTextExtractChipBackgro
 
     [_textView addGestureRecognizer:pressGestureRecognizer];
     [_textView addGestureRecognizer:longPressGestureRecognizer];
-
-    _outsideTapRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self
-                                                                    action:@selector(handleOutsideTap:)];
-    _outsideTapRecognizer.cancelsTouchesInView = NO;
-    _outsideTapRecognizer.delegate = self;
   }
 
   return self;
@@ -242,22 +339,35 @@ static NSArray<NSDictionary<NSString *, id> *> *T3MarkdownTextExtractChipBackgro
 - (void)didMoveToWindow
 {
   [super didMoveToWindow];
-  if (self.window) {
-    [self.window addGestureRecognizer:_outsideTapRecognizer];
-  } else {
-    [_outsideTapRecognizer.view removeGestureRecognizer:_outsideTapRecognizer];
+  if (_outsideTapWindow == self.window) {
+    return;
+  }
+  if (_outsideTapWindow != nil) {
+    T3MarkdownOutsideTapCoordinator *coordinator =
+        objc_getAssociatedObject(_outsideTapWindow, T3MarkdownOutsideTapCoordinatorKey);
+    [coordinator removeTarget:self];
+  }
+  _outsideTapWindow = self.window;
+  if (_outsideTapWindow != nil) {
+    [T3MarkdownOutsideTapCoordinatorForWindow(_outsideTapWindow) addTarget:self];
   }
 }
 
 - (void)dealloc
 {
-  [_outsideTapRecognizer.view removeGestureRecognizer:_outsideTapRecognizer];
+  T3MarkdownOutsideTapCoordinator *coordinator =
+      objc_getAssociatedObject(_outsideTapWindow, T3MarkdownOutsideTapCoordinatorKey);
+  [coordinator removeTarget:self];
 }
 
 // See RCTParagraphComponentView
 - (void)prepareForRecycle
 {
   [super prepareForRecycle];
+  T3MarkdownOutsideTapCoordinator *coordinator =
+      objc_getAssociatedObject(_outsideTapWindow, T3MarkdownOutsideTapCoordinatorKey);
+  [coordinator removeTarget:self];
+  _outsideTapWindow = nil;
   _state.reset();
 
   // Reset the frame to zero so that when it properly lays out on the next use
@@ -443,7 +553,7 @@ static NSArray<NSDictionary<NSString *, id> *> *T3MarkdownTextExtractChipBackgro
       _textView.textContainer.lineBreakMode = NSLineBreakMode::NSLineBreakByClipping;
     }
   }
-  
+
 
   // I'm not sure if this is really the right way to handle this style. This means that the entire _view_ the text
   // is in will have this background color applied. To apply it just to a particular part of a string, you'd need
@@ -472,19 +582,14 @@ static NSArray<NSDictionary<NSString *, id> *> *T3MarkdownTextExtractChipBackgro
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch
 {
-  if (gestureRecognizer == _outsideTapRecognizer) {
-    UIWindow *window = touch.window;
-    if (!window) {
-      return NO;
-    }
-    UIView *hitView = [window hitTest:[touch locationInView:nil] withEvent:nil];
-    return ![hitView isDescendantOfView:self];
-  }
   return YES;
 }
 
-- (void)handleOutsideTap:(UITapGestureRecognizer *)sender
+- (void)clearSelectionForOutsideTapWithHitView:(UIView *)hitView
 {
+  if ([hitView isDescendantOfView:self]) {
+    return;
+  }
   // Defer past the current event loop turn so any in-flight edit-menu action
   // (Copy / Define / Look Up / …) reads the live selection before we clear it.
   UITextView *textView = _textView;

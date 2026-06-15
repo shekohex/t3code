@@ -51,6 +51,34 @@ const actionListeners = new Set<() => void>();
 const activeActionCounts = new Map<string, number>();
 const pullRequestResolutionCache = new Map<string, GitResolvePullRequestResult>();
 
+interface GitActionProgressListener {
+  readonly transportActionId: string;
+  readonly actionId: string;
+  readonly cwd: string;
+  readonly onProgress: (event: GitActionProgressEvent) => void;
+}
+
+export function createGitActionTransportId(environmentId: EnvironmentId, actionId: string): string {
+  return `${environmentId.length}:${environmentId}${actionId}`;
+}
+
+export function deliverGitActionProgress(
+  listener: GitActionProgressListener | null,
+  event: GitActionProgressEvent,
+): void {
+  if (
+    listener === null ||
+    event.actionId !== listener.transportActionId ||
+    event.cwd !== listener.cwd
+  ) {
+    return;
+  }
+  listener.onProgress({
+    ...event,
+    actionId: listener.actionId,
+  });
+}
+
 function actionKey(kind: SourceControlActionKind, scope: SourceControlActionScope): string {
   return `${kind}:${scope.environmentId ?? ""}:${scope.cwd ?? ""}`;
 }
@@ -200,14 +228,14 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
         })
       : null,
   );
-  const progressListenerRef = useRef<((event: GitActionProgressEvent) => void) | null>(null);
+  const progressListenerRef = useRef<GitActionProgressListener | null>(null);
 
   useEffect(() => {
     const event = Option.getOrNull(AsyncResult.value(progress));
-    if (event !== null && event.cwd === scope.cwd) {
-      progressListenerRef.current?.(event);
+    if (event !== null) {
+      deliverGitActionProgress(progressListenerRef.current, event);
     }
-  }, [progress, progressListenerRef, scope.cwd]);
+  }, [progress]);
 
   const action = useCallback(
     async (input: {
@@ -219,12 +247,21 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
       onProgress?: (event: GitActionProgressEvent) => void;
     }): Promise<GitRunStackedActionResult> => {
       const target = requireScope(scope, "Git action is unavailable.");
-      progressListenerRef.current = input.onProgress ?? null;
+      const transportActionId = createGitActionTransportId(target.environmentId, input.actionId);
+      progressListenerRef.current =
+        input.onProgress === undefined
+          ? null
+          : {
+              transportActionId,
+              actionId: input.actionId,
+              cwd: target.cwd,
+              onProgress: input.onProgress,
+            };
       try {
         const event = await runStackedAction({
           environmentId: target.environmentId,
           input: {
-            actionId: input.actionId,
+            actionId: transportActionId,
             cwd: target.cwd,
             action: input.action,
             ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),

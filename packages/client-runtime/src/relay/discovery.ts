@@ -2,6 +2,7 @@ import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
+import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 import {
   RelayEnvironmentConnectScope,
   RelayEnvironmentStatusScope,
@@ -20,6 +21,7 @@ import { CloudSession } from "../platform/capabilities.ts";
 import { Connectivity } from "../connection/connectivity.ts";
 import { mapManagedRelayError } from "../connection/errors.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "../connection/model.ts";
+import { ConnectionWakeups } from "../connection/wakeups.ts";
 
 export type RelayEnvironmentAvailability = "checking" | "online" | "offline" | "error";
 
@@ -92,18 +94,36 @@ function validateStatus(
   return Effect.succeed(status);
 }
 
+function relayAccountId(clerkToken: string): Option.Option<string> {
+  try {
+    return Option.fromNullishOr(decodeRelayJwt(clerkToken).sub).pipe(
+      Option.filter((subject) => subject.length > 0),
+    );
+  } catch {
+    return Option.none();
+  }
+}
+
 const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
   const relay = yield* ManagedRelayClient;
   const session = yield* CloudSession;
   const connectivity = yield* Connectivity;
+  const wakeups = yield* ConnectionWakeups;
   const state = yield* SubscriptionRef.make(EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
   const refreshLock = yield* Semaphore.make(1);
   const hasRefreshed = yield* Ref.make(false);
+  const accountGeneration = yield* Ref.make(0);
+  const activeAccountId = yield* Ref.make<Option.Option<string>>(Option.none());
+  const refreshGeneration = yield* Ref.make(0);
 
   const updateEnvironment = Effect.fn("RelayEnvironmentDiscovery.updateEnvironment")(function* (
+    generation: number,
     environmentId: string,
     update: (current: RelayDiscoveredEnvironment) => RelayDiscoveredEnvironment,
   ) {
+    if ((yield* Ref.get(accountGeneration)) !== generation) {
+      return;
+    }
     yield* SubscriptionRef.update(state, (current) => {
       const entry = current.environments.get(environmentId);
       if (entry === undefined) {
@@ -116,6 +136,7 @@ const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make"
   });
 
   const refreshStatus = Effect.fn("RelayEnvironmentDiscovery.refreshStatus")(function* (
+    generation: number,
     clerkToken: string,
     environment: RelayClientEnvironmentRecord,
   ) {
@@ -132,7 +153,7 @@ const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make"
       );
 
     if (result._tag === "Success") {
-      yield* updateEnvironment(environment.environmentId, (current) => ({
+      yield* updateEnvironment(generation, environment.environmentId, (current) => ({
         ...current,
         availability: result.success.status,
         status: Option.some(result.success),
@@ -141,7 +162,7 @@ const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make"
       return;
     }
 
-    yield* updateEnvironment(environment.environmentId, (current) => ({
+    yield* updateEnvironment(generation, environment.environmentId, (current) => ({
       ...current,
       availability: "error",
       error: Option.some(result.failure),
@@ -160,25 +181,42 @@ const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make"
         return;
       }
 
-      yield* SubscriptionRef.update(state, (current) => ({
-        ...current,
+      let generation = yield* Ref.get(accountGeneration);
+      yield* Ref.set(refreshGeneration, generation);
+      yield* SubscriptionRef.set(state, {
+        environments: new Map(),
         refreshing: true,
         offline: false,
         error: Option.none(),
-      }));
+      });
 
       const clerkToken = yield* session.clerkToken;
+      if ((yield* Ref.get(accountGeneration)) !== generation) {
+        return;
+      }
+      const accountId = relayAccountId(clerkToken);
+      const previousAccountId = yield* Ref.get(activeAccountId);
+      if (
+        Option.isSome(previousAccountId) &&
+        (!Option.isSome(accountId) || previousAccountId.value !== accountId.value)
+      ) {
+        generation = yield* Ref.updateAndGet(accountGeneration, (current) => current + 1);
+        yield* Ref.set(refreshGeneration, generation);
+      }
+      yield* Ref.set(activeAccountId, accountId);
+
       const environments = yield* relay
         .listEnvironments({ clerkToken })
         .pipe(Effect.mapError(mapManagedRelayError));
-      const previous = (yield* SubscriptionRef.get(state)).environments;
+      if ((yield* Ref.get(accountGeneration)) !== generation) {
+        return;
+      }
       const next = new Map<string, RelayDiscoveredEnvironment>();
       for (const environment of environments) {
-        const existing = previous.get(environment.environmentId);
         next.set(environment.environmentId, {
           environment,
           availability: "checking",
-          status: existing?.status ?? Option.none(),
+          status: Option.none(),
           error: Option.none(),
         });
       }
@@ -187,21 +225,34 @@ const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make"
         environments: next,
       }));
 
-      yield* Effect.forEach(environments, (environment) => refreshStatus(clerkToken, environment), {
-        concurrency: "unbounded",
-        discard: true,
-      });
+      yield* Effect.forEach(
+        environments,
+        (environment) => refreshStatus(generation, clerkToken, environment),
+        {
+          concurrency: "unbounded",
+          discard: true,
+        },
+      );
+      if ((yield* Ref.get(accountGeneration)) !== generation) {
+        return;
+      }
       yield* SubscriptionRef.update(state, (current) => ({
         ...current,
         refreshing: false,
       }));
     }).pipe(
       Effect.catch((error) =>
-        SubscriptionRef.update(state, (current) => ({
-          ...current,
-          refreshing: false,
-          error: Option.some(error),
-        })),
+        Effect.gen(function* () {
+          const generation = yield* Ref.get(refreshGeneration);
+          if ((yield* Ref.get(accountGeneration)) !== generation) {
+            return;
+          }
+          yield* SubscriptionRef.update(state, (current) => ({
+            ...current,
+            refreshing: false,
+            error: Option.some(error),
+          }));
+        }),
       ),
     ),
   );
@@ -218,6 +269,22 @@ const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make"
         : Ref.get(hasRefreshed).pipe(
             Effect.flatMap((shouldRefresh) => (shouldRefresh ? refresh : Effect.void)),
           ),
+    ),
+    Effect.forkScoped,
+  );
+  yield* wakeups.changes.pipe(
+    Stream.runForEach((reason) =>
+      reason === "credentials-changed"
+        ? Effect.gen(function* () {
+            yield* Ref.update(accountGeneration, (current) => current + 1);
+            yield* Ref.set(activeAccountId, Option.none());
+            const shouldRefresh = yield* Ref.get(hasRefreshed);
+            yield* SubscriptionRef.set(state, EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
+            if (shouldRefresh) {
+              yield* refresh.pipe(Effect.forkScoped);
+            }
+          })
+        : Effect.void,
     ),
     Effect.forkScoped,
   );

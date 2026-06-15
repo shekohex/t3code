@@ -51,4 +51,34 @@ describe("mobile connection catalog storage", () => {
       expect(memory.values.has(CONNECTION_CATALOG_KEY)).toBe(true);
     }),
   );
+
+  it.effect("falls back to valid legacy data when the current catalog is corrupt", () =>
+    Effect.gen(function* () {
+      const memory = makeStorage({
+        [CONNECTION_CATALOG_KEY]: "{not-json",
+        [LEGACY_CONNECTIONS_KEY]: JSON.stringify({
+          connections: [
+            {
+              environmentId: "legacy-environment",
+              environmentLabel: "Legacy",
+              pairingUrl: "https://legacy.example.test/pair",
+              displayUrl: "https://legacy.example.test",
+              httpBaseUrl: "https://legacy.example.test",
+              wsBaseUrl: "wss://legacy.example.test",
+              bearerToken: "legacy-token",
+              authenticationMethod: "bearer",
+            },
+          ],
+        }),
+      });
+      const catalog = yield* makeCatalogStore(memory.storage);
+
+      expect((yield* catalog.read).targets).toHaveLength(1);
+      expect(memory.deleted).toEqual([CONNECTION_CATALOG_KEY, LEGACY_CONNECTIONS_KEY]);
+
+      yield* catalog.update((document) => document);
+      expect(memory.values.has(CONNECTION_CATALOG_KEY)).toBe(true);
+      expect(memory.values.has(LEGACY_CONNECTIONS_KEY)).toBe(false);
+    }),
+  );
 });

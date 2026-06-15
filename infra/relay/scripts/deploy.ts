@@ -43,6 +43,7 @@ export interface RelayDeployOptions {
   readonly yes: boolean;
   readonly adopt: boolean;
   readonly githubOutput: boolean;
+  readonly githubEnvFile: Option.Option<string>;
   readonly readState: boolean;
 }
 
@@ -125,6 +126,14 @@ export function serializeGithubOutput(entries: Readonly<Record<string, string | 
     .join("");
 }
 
+export function serializeRelayClientTracingEnvironment(config: RelayPublicConfig): string {
+  return serializeGithubOutput({
+    T3CODE_RELAY_CLIENT_OTLP_TRACES_URL: config.clientTracingUrl,
+    T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET: config.clientTracingDataset,
+    T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN: config.clientTracingToken,
+  });
+}
+
 const relayRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
@@ -172,9 +181,6 @@ const writeGithubOutput = Effect.fn("relay.deploy.writeGithubOutput")(function* 
 ) {
   const fs = yield* FileSystem.FileSystem;
   const githubOutputPath = yield* Config.nonEmptyString("GITHUB_OUTPUT");
-  if (Option.isSome(outcome.publicConfig)) {
-    yield* Console.log(`::add-mask::${outcome.publicConfig.value.clientTracingToken}`);
-  }
   yield* fs.writeFileString(
     githubOutputPath,
     serializeGithubOutput({
@@ -183,13 +189,27 @@ const writeGithubOutput = Effect.fn("relay.deploy.writeGithubOutput")(function* 
       ...(Option.isSome(outcome.publicConfig)
         ? {
             relay_url: outcome.publicConfig.value.relayUrl,
-            client_tracing_url: outcome.publicConfig.value.clientTracingUrl,
-            client_tracing_dataset: outcome.publicConfig.value.clientTracingDataset,
-            client_tracing_token: outcome.publicConfig.value.clientTracingToken,
           }
         : {}),
     }),
     { flag: "a" },
+  );
+});
+
+const writeGithubEnvFile = Effect.fn("relay.deploy.writeGithubEnvFile")(function* (
+  outcome: RelayDeployOutcome,
+  outputPath: string,
+) {
+  if (Option.isNone(outcome.publicConfig)) {
+    return yield* new RelayDeployError({
+      message: "Relay public client config is unavailable for the GitHub environment file",
+    });
+  }
+  const fs = yield* FileSystem.FileSystem;
+  yield* Console.log(`::add-mask::${outcome.publicConfig.value.clientTracingToken}`);
+  yield* fs.writeFileString(
+    outputPath,
+    serializeRelayClientTracingEnvironment(outcome.publicConfig.value),
   );
 });
 
@@ -358,6 +378,9 @@ export const deploy = Effect.fn("relay.deploy")(function* (options: RelayDeployO
   if (options.githubOutput) {
     yield* writeGithubOutput(outcome);
   }
+  if (Option.isSome(options.githubEnvFile)) {
+    yield* writeGithubEnvFile(outcome, options.githubEnvFile.value);
+  }
 });
 
 export const relayDeployCommand = Command.make(
@@ -392,6 +415,12 @@ export const relayDeployCommand = Command.make(
     githubOutput: Flag.boolean("github-output").pipe(
       Flag.withDescription("Append relay deployment metadata to GITHUB_OUTPUT."),
       Flag.withDefault(false),
+    ),
+    githubEnvFile: Flag.string("github-env-file").pipe(
+      Flag.withDescription(
+        "Write relay client tracing variables to a file suitable for GITHUB_ENV.",
+      ),
+      Flag.optional,
     ),
     readState: Flag.boolean("read-state").pipe(
       Flag.withDescription("Read the deployed stack output without planning or applying changes."),

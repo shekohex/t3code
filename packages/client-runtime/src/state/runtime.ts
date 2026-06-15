@@ -41,7 +41,7 @@ interface EnvironmentSubscriptionAtomOptions<Input, A, E, R> {
   readonly idleTtlMs?: number;
 }
 
-function environmentRpcKey<Input>(target: {
+export function environmentRpcKey<Input>(target: {
   readonly environmentId: EnvironmentIdType;
   readonly input: Input;
 }): string {

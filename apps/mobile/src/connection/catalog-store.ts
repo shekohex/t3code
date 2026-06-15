@@ -60,6 +60,27 @@ export const makeCatalogStore = Effect.fn("mobile.connectionStorage.makeCatalogS
   const state = yield* Ref.make<Option.Option<ConnectionCatalogDocumentType>>(Option.none());
   const lock = yield* Semaphore.make(1);
 
+  const loadLegacyCatalog = Effect.fn("mobile.connectionStorage.loadLegacyCatalog")(function* () {
+    const legacyRaw = yield* storage.getItem(LEGACY_CONNECTIONS_KEY);
+    const catalog =
+      legacyRaw === null || legacyRaw.trim() === ""
+        ? EMPTY_CONNECTION_CATALOG_DOCUMENT
+        : yield* migrateLegacyConnectionCatalog(legacyRaw).pipe(
+            Effect.mapError((cause) => catalogError("migrate", cause)),
+            Effect.catch((error) =>
+              Effect.logWarning("Discarding corrupt legacy mobile connections", error).pipe(
+                Effect.as(EMPTY_CONNECTION_CATALOG_DOCUMENT),
+              ),
+            ),
+          );
+    if (legacyRaw !== null && legacyRaw.trim() !== "") {
+      const encoded = yield* encodeCatalog(catalog);
+      yield* storage.setItem(CONNECTION_CATALOG_KEY, encoded);
+      yield* storage.deleteItem(LEGACY_CONNECTIONS_KEY);
+    }
+    return catalog;
+  });
+
   const loadUnlocked = Effect.fn("mobile.connectionStorage.loadCatalog")(function* () {
     const cached = yield* Ref.get(state);
     if (Option.isSome(cached)) {
@@ -72,28 +93,12 @@ export const makeCatalogStore = Effect.fn("mobile.connectionStorage.makeCatalogS
         Effect.catch((error) =>
           Effect.logWarning("Discarding corrupt mobile connection catalog", error).pipe(
             Effect.andThen(storage.deleteItem(CONNECTION_CATALOG_KEY)),
-            Effect.as(EMPTY_CONNECTION_CATALOG_DOCUMENT),
+            Effect.andThen(loadLegacyCatalog()),
           ),
         ),
       );
     } else {
-      const legacyRaw = yield* storage.getItem(LEGACY_CONNECTIONS_KEY);
-      catalog =
-        legacyRaw === null || legacyRaw.trim() === ""
-          ? EMPTY_CONNECTION_CATALOG_DOCUMENT
-          : yield* migrateLegacyConnectionCatalog(legacyRaw).pipe(
-              Effect.mapError((cause) => catalogError("migrate", cause)),
-              Effect.catch((error) =>
-                Effect.logWarning("Discarding corrupt legacy mobile connections", error).pipe(
-                  Effect.as(EMPTY_CONNECTION_CATALOG_DOCUMENT),
-                ),
-              ),
-            );
-      if (legacyRaw !== null && legacyRaw.trim() !== "") {
-        const encoded = yield* encodeCatalog(catalog);
-        yield* storage.setItem(CONNECTION_CATALOG_KEY, encoded);
-        yield* storage.deleteItem(LEGACY_CONNECTIONS_KEY);
-      }
+      catalog = yield* loadLegacyCatalog();
     }
     yield* Ref.set(state, Option.some(catalog));
     return catalog;

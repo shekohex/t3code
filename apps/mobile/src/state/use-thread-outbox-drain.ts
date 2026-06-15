@@ -10,6 +10,7 @@ import { useThreadShells } from "./entities";
 import {
   ensureThreadOutboxLoaded,
   removeThreadOutboxMessage,
+  shouldRetryThreadOutboxDelivery,
   threadOutboxRetryDelayMs,
   type QueuedThreadMessage,
   useThreadOutboxMessages,
@@ -66,7 +67,8 @@ export function useThreadOutboxDrain(): void {
     async (queuedMessage: QueuedThreadMessage) => {
       const thread = findThread(threads, queuedMessage);
       if (!thread) {
-        return false;
+        await removeThreadOutboxMessage(queuedMessage);
+        return true;
       }
 
       try {
@@ -89,13 +91,19 @@ export function useThreadOutboxDrain(): void {
         await removeThreadOutboxMessage(queuedMessage);
         return true;
       } catch (error) {
+        const retry = shouldRetryThreadOutboxDelivery(error);
         console.warn("[thread-outbox] queued message delivery failed", {
           environmentId: queuedMessage.environmentId,
           threadId: queuedMessage.threadId,
           messageId: queuedMessage.messageId,
           error,
+          retry,
         });
-        return false;
+        if (retry) {
+          return false;
+        }
+        await removeThreadOutboxMessage(queuedMessage);
+        return true;
       }
     },
     [startTurn, threads],

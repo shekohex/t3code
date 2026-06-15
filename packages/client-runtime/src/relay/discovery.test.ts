@@ -21,7 +21,8 @@ import {
 } from "./managedRelay.ts";
 import { CloudSession } from "../platform/capabilities.ts";
 import { Connectivity } from "../connection/connectivity.ts";
-import type { NetworkStatus } from "../connection/model.ts";
+import { ConnectionBlockedError, type NetworkStatus } from "../connection/model.ts";
+import { ConnectionWakeups } from "../connection/wakeups.ts";
 import { RelayEnvironmentDiscovery, relayEnvironmentDiscoveryLayer } from "./discovery.ts";
 
 const environments = [
@@ -62,7 +63,16 @@ function status(
 const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>("online");
   const listCalls = yield* Ref.make(0);
+  const listFailure = yield* Ref.make<ManagedRelayClientError | null>(null);
   const secondListCall = yield* Deferred.make<void>();
+  const clerkToken = yield* Ref.make<string | null>("clerk-token");
+  const wakeups = yield* SubscriptionRef.make<{
+    readonly sequence: number;
+    readonly reason: "application-active" | "credentials-changed";
+  }>({
+    sequence: 0,
+    reason: "application-active",
+  });
   const statusRequests = yield* Ref.make(
     new Map<string, Deferred.Deferred<RelayEnvironmentStatusResponse, ManagedRelayClientError>>(),
   );
@@ -78,12 +88,17 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
   const client = ManagedRelayClient.of({
     relayUrl: "https://relay.example.test",
     listEnvironments: () =>
-      Ref.updateAndGet(listCalls, (count) => count + 1).pipe(
-        Effect.tap((count) =>
-          count >= 2 ? Deferred.succeed(secondListCall, undefined) : Effect.void,
-        ),
-        Effect.as(environments),
-      ),
+      Effect.gen(function* () {
+        const count = yield* Ref.updateAndGet(listCalls, (current) => current + 1);
+        if (count >= 2) {
+          yield* Deferred.succeed(secondListCall, undefined);
+        }
+        const failure = yield* Ref.get(listFailure);
+        if (failure) {
+          return yield* failure;
+        }
+        return environments;
+      }),
     getEnvironmentStatus: ({ environmentId }) =>
       Ref.get(statusRequests).pipe(
         Effect.flatMap((requests) => Deferred.await(requests.get(environmentId)!)),
@@ -106,10 +121,33 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(ManagedRelayClient, client),
-        Layer.succeed(CloudSession, {
-          clerkToken: Effect.succeed("clerk-token"),
-        }),
+        Layer.succeed(
+          CloudSession,
+          CloudSession.of({
+            clerkToken: Ref.get(clerkToken).pipe(
+              Effect.flatMap((token) =>
+                token === null
+                  ? Effect.fail(
+                      new ConnectionBlockedError({
+                        reason: "authentication",
+                        message: "Signed out.",
+                      }),
+                    )
+                  : Effect.succeed(token),
+              ),
+            ),
+          }),
+        ),
         Layer.succeed(Connectivity, connectivity),
+        Layer.succeed(
+          ConnectionWakeups,
+          ConnectionWakeups.of({
+            changes: SubscriptionRef.changes(wakeups).pipe(
+              Stream.drop(1),
+              Stream.map((event) => event.reason),
+            ),
+          }),
+        ),
       ),
     ),
   );
@@ -117,9 +155,16 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
   return {
     layer,
     listCalls,
+    listFailure,
+    clerkToken,
     networkStatus,
     secondListCall,
     statusRequests,
+    wake: (reason: "application-active" | "credentials-changed") =>
+      SubscriptionRef.update(wakeups, (event) => ({
+        sequence: event.sequence + 1,
+        reason,
+      })),
   };
 });
 
@@ -241,6 +286,7 @@ describe("RelayEnvironmentDiscovery", () => {
               status: SubscriptionRef.get(networkStatus),
               changes: SubscriptionRef.changes(networkStatus),
             }),
+            Layer.succeed(ConnectionWakeups, ConnectionWakeups.of({ changes: Stream.never })),
           ),
         ),
       );
@@ -257,6 +303,69 @@ describe("RelayEnvironmentDiscovery", () => {
           message: "Relay environment listing timed out.",
         });
       }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("clears previously discovered rows when a refresh fails", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery;
+        const requests = yield* Ref.get(harness.statusRequests);
+        for (const environment of environments) {
+          yield* Deferred.succeed(
+            requests.get(environment.environmentId)!,
+            status(environment, "online"),
+          );
+        }
+        yield* discovery.refresh;
+        expect((yield* SubscriptionRef.get(discovery.state)).environments.size).toBe(2);
+
+        yield* Ref.set(
+          harness.listFailure,
+          new ManagedRelayClientError({
+            message: "Relay environment listing failed.",
+          }),
+        );
+        yield* discovery.refresh;
+
+        const failed = yield* SubscriptionRef.get(discovery.state);
+        expect(failed.environments.size).toBe(0);
+        expect(Option.isSome(failed.error)).toBe(true);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("does not republish stale rows after sign-out invalidates an in-flight refresh", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery;
+        const refreshFiber = yield* Effect.forkChild(discovery.refresh);
+        yield* SubscriptionRef.changes(discovery.state).pipe(
+          Stream.filter((state) => state.environments.size === environments.length),
+          Stream.runHead,
+        );
+
+        yield* Ref.set(harness.clerkToken, null);
+        yield* harness.wake("credentials-changed");
+        yield* SubscriptionRef.changes(discovery.state).pipe(
+          Stream.filter((state) => state.environments.size === 0),
+          Stream.runHead,
+        );
+
+        const requests = yield* Ref.get(harness.statusRequests);
+        for (const environment of environments) {
+          yield* Deferred.succeed(
+            requests.get(environment.environmentId)!,
+            status(environment, "online"),
+          );
+        }
+        yield* Fiber.join(refreshFiber);
+        yield* Effect.yieldNow;
+
+        expect((yield* SubscriptionRef.get(discovery.state)).environments.size).toBe(0);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
 });

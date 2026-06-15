@@ -21,7 +21,7 @@ function configuredRelayUrl(): string {
   return resolveCloudPublicConfig().relayUrl ?? "http://relay.invalid";
 }
 
-const httpClientLayer = remoteHttpClientLayer(globalThis.fetch);
+const httpClientLayer = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
 const relayTracingLayer = makeRelayClientTracingLayer(resolveRelayTracingConfig(), {
   serviceName: "t3-web-relay-client",
   serviceVersion: import.meta.env.APP_VERSION,

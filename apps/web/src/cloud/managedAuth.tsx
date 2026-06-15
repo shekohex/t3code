@@ -18,6 +18,25 @@ export async function readManagedRelayClerkToken(): Promise<string | null> {
   return relayTokenProvider?.() ?? null;
 }
 
+export function deactivateManagedRelayAuthentication(): void {
+  relayTokenProvider = null;
+  setManagedRelaySession(appAtomRegistry, null);
+}
+
+export function activateManagedRelayAuthentication(
+  accountId: string,
+  readClerkToken: () => Promise<string | null>,
+): void {
+  relayTokenProvider = readClerkToken;
+  setManagedRelaySession(
+    appAtomRegistry,
+    createManagedRelaySession({
+      accountId,
+      readClerkToken,
+    }),
+  );
+}
+
 export function ManagedRelayAuthProvider({ children }: { readonly children: ReactNode }) {
   const { getToken, isLoaded, isSignedIn, userId } = useAuth({
     treatPendingAsSignedOut: false,
@@ -53,44 +72,28 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
       return accountTransitionRef.current;
     };
 
-    relayTokenProvider = isSignedIn ? () => getToken(resolveRelayClerkTokenOptions()) : null;
     if (!isSignedIn || !userId) {
-      setManagedRelaySession(appAtomRegistry, null);
+      deactivateManagedRelayAuthentication();
       if (previousAccount !== null) {
         void queueAccountCleanup();
       }
     } else {
+      const tokenProvider = () => getToken(resolveRelayClerkTokenOptions());
+      const activateSession = () => {
+        if (!cancelled) {
+          activateManagedRelayAuthentication(userId, tokenProvider);
+        }
+      };
       if (previousAccount !== undefined && previousAccount !== null && previousAccount !== userId) {
-        setManagedRelaySession(appAtomRegistry, null);
-        void queueAccountCleanup().then(() => {
-          if (!cancelled) {
-            setManagedRelaySession(
-              appAtomRegistry,
-              createManagedRelaySession({
-                accountId: userId,
-                readClerkToken: () => getToken(resolveRelayClerkTokenOptions()),
-              }),
-            );
-          }
-        });
+        deactivateManagedRelayAuthentication();
+        void queueAccountCleanup().then(activateSession);
       } else {
-        void accountTransitionRef.current.then(() => {
-          if (!cancelled) {
-            setManagedRelaySession(
-              appAtomRegistry,
-              createManagedRelaySession({
-                accountId: userId,
-                readClerkToken: () => getToken(resolveRelayClerkTokenOptions()),
-              }),
-            );
-          }
-        });
+        void accountTransitionRef.current.then(activateSession);
       }
     }
     return () => {
       cancelled = true;
-      relayTokenProvider = null;
-      setManagedRelaySession(appAtomRegistry, null);
+      deactivateManagedRelayAuthentication();
     };
   }, [getToken, isLoaded, isSignedIn, removeRelayEnvironments, userId]);
 

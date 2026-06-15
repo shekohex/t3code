@@ -4,6 +4,8 @@ import { CommandId, EnvironmentId, MessageId, ThreadId } from "@t3tools/contract
 import {
   decodeQueuedThreadMessage,
   groupQueuedThreadMessages,
+  serializeThreadOutboxMutation,
+  shouldRetryThreadOutboxDelivery,
   threadOutboxRetryDelayMs,
   type QueuedThreadMessage,
 } from "./thread-outbox";
@@ -65,5 +67,39 @@ describe("thread outbox", () => {
     expect([1, 2, 3, 4, 5, 6].map(threadOutboxRetryDelayMs)).toEqual([
       1_000, 2_000, 4_000, 8_000, 16_000, 16_000,
     ]);
+  });
+
+  it("serializes mutations even when an earlier mutation is slower", async () => {
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    const first = serializeThreadOutboxMutation(async () => {
+      order.push("first:start");
+      await firstBlocked;
+      order.push("first:end");
+    });
+    const second = serializeThreadOutboxMutation(async () => {
+      order.push("second");
+    });
+
+    await Promise.resolve();
+    expect(order).toEqual(["first:start"]);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(order).toEqual(["first:start", "first:end", "second"]);
+  });
+
+  it("retries transport failures but drops deterministic command failures", () => {
+    expect(shouldRetryThreadOutboxDelivery(new Error("Socket is not connected"))).toBe(true);
+    expect(
+      shouldRetryThreadOutboxDelivery({
+        _tag: "ConnectionTransientError",
+        message: "temporarily unavailable",
+      }),
+    ).toBe(true);
+    expect(shouldRetryThreadOutboxDelivery(new Error("Thread no longer exists"))).toBe(false);
   });
 });

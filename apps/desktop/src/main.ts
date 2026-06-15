@@ -118,9 +118,8 @@ const desktopFoundationLayer = Layer.mergeAll(
   DesktopLifecycle.layerShutdown,
   DesktopAppSettings.layer,
   DesktopClientSettings.layer,
-  DesktopSavedEnvironments.layer,
+  DesktopConnectionCatalogStore.layer.pipe(Layer.provideMerge(DesktopSavedEnvironments.layer)),
   DesktopCloudAuthTokenStore.layer,
-  DesktopConnectionCatalogStore.layer,
   DesktopAssets.layer,
   DesktopObservability.layer,
 ).pipe(Layer.provideMerge(desktopEnvironmentLayer));

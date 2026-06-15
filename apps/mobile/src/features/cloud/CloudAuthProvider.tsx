@@ -23,6 +23,25 @@ function resetManagedRelayTokenCache(): Promise<void> {
   );
 }
 
+export function deactivateCloudRelayAccount(): void {
+  setAgentAwarenessRelayTokenProvider(null);
+  setManagedRelaySession(appAtomRegistry, null);
+}
+
+export function activateCloudRelayAccount(
+  accountId: string,
+  tokenProvider: () => Promise<string | null>,
+): void {
+  setAgentAwarenessRelayTokenProvider(tokenProvider, accountId);
+  setManagedRelaySession(
+    appAtomRegistry,
+    createManagedRelaySession({
+      accountId,
+      readClerkToken: tokenProvider,
+    }),
+  );
+}
+
 function CloudAuthBridge(props: { readonly children: ReactNode }) {
   const { getToken, isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const { removeRelayEnvironments } = useEnvironmentConnectionActions();
@@ -70,8 +89,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
     if (!isSignedIn || !userId) {
       const previous = previousTokenProviderRef.current;
       previousTokenProviderRef.current = null;
-      setAgentAwarenessRelayTokenProvider(null);
-      setManagedRelaySession(appAtomRegistry, null);
+      deactivateCloudRelayAccount();
       if (previousObservedAccount !== null) {
         void queueAccountCleanup(previous);
       }
@@ -85,14 +103,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
         return;
       }
       previousTokenProviderRef.current = { userId, provider: tokenProvider };
-      setAgentAwarenessRelayTokenProvider(tokenProvider, userId);
-      setManagedRelaySession(
-        appAtomRegistry,
-        createManagedRelaySession({
-          accountId: userId,
-          readClerkToken: tokenProvider,
-        }),
-      );
+      activateCloudRelayAccount(userId, tokenProvider);
     };
     if (
       previousObservedAccount !== undefined &&
@@ -100,8 +111,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
       previousObservedAccount !== userId
     ) {
       previousTokenProviderRef.current = null;
-      setAgentAwarenessRelayTokenProvider(null);
-      setManagedRelaySession(appAtomRegistry, null);
+      deactivateCloudRelayAccount();
       void queueAccountCleanup(previous).then(activateSession);
     } else {
       void accountTransitionRef.current.then(activateSession);
@@ -115,8 +125,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
   useEffect(
     () => () => {
       previousTokenProviderRef.current = null;
-      setAgentAwarenessRelayTokenProvider(null);
-      setManagedRelaySession(appAtomRegistry, null);
+      deactivateCloudRelayAccount();
     },
     [],
   );
@@ -131,8 +140,7 @@ export function CloudAuthProvider(props: { readonly children: ReactNode }) {
 
   useEffect(() => {
     if (!publishableKey || !relayUrl) {
-      setAgentAwarenessRelayTokenProvider(null);
-      setManagedRelaySession(appAtomRegistry, null);
+      deactivateCloudRelayAccount();
     }
   }, [publishableKey, relayUrl]);
 

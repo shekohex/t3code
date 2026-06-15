@@ -12,6 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import { projectThreadAwareness } from "@t3tools/shared/agentAwareness";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
   RELAY_ACTIVITY_PUBLISH_TYP,
   signRelayJwt,
@@ -419,6 +420,7 @@ const make = Effect.gen(function* () {
         });
       }),
       Effect.withSpan("AgentAwarenessRelay.publishThread"),
+      withRelayClientTracing,
     );
 
   const publishActiveThreadsUnsafe = Effect.gen(function* () {

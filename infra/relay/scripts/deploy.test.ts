@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vite-plus/test";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import {
   hasDeployChanges,
@@ -6,6 +10,7 @@ import {
   reconcileRootEnvPublicConfig,
   reconcileRootEnvRelayUrl,
   serializeGithubOutput,
+  serializeRelayClientTracingEnvironment,
 } from "./deploy.ts";
 
 describe("hasDeployChanges", () => {
@@ -125,6 +130,48 @@ describe("serializeGithubOutput", () => {
       }),
     ).toBe("changed=false\nresult=noop\nrelay_url=https://relay.example.test\n");
   });
+});
+
+describe("serializeRelayClientTracingEnvironment", () => {
+  it("serializes tracing config for downstream GITHUB_ENV loading", () => {
+    expect(
+      serializeRelayClientTracingEnvironment({
+        relayUrl: "https://relay.example.test",
+        mobileTracingUrl: "https://api.axiom.co/v1/traces",
+        mobileTracingDataset: "mobile",
+        mobileTracingToken: "mobile-token",
+        clientTracingUrl: "https://api.axiom.co/v1/traces",
+        clientTracingDataset: "relay",
+        clientTracingToken: "client-token",
+      }),
+    ).toBe(
+      [
+        "T3CODE_RELAY_CLIENT_OTLP_TRACES_URL=https://api.axiom.co/v1/traces",
+        "T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET=relay",
+        "T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=client-token",
+        "",
+      ].join("\n"),
+    );
+  });
+});
+
+describe("release workflow tracing config propagation", () => {
+  it.effect("uses an artifact instead of a masked cross-job token output", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workflowPath = yield* path.fromFileUrl(
+        new URL("../../../.github/workflows/release.yml", import.meta.url),
+      );
+      const workflow = yield* fileSystem.readFileString(workflowPath);
+
+      expect(workflow).not.toContain("client_tracing_token:");
+      expect(workflow).not.toContain("needs.relay_public_config.outputs.client_tracing_token");
+      expect(workflow).toContain('--github-env-file "$RUNNER_TEMP/relay-client-tracing.env"');
+      expect(workflow).toContain("name: relay-client-tracing-config");
+      expect(workflow).toContain('cat "$config_path" >> "$GITHUB_ENV"');
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("publicConfigFromOutput", () => {
