@@ -42,6 +42,7 @@ overrides:
   # Clerk publishes wallet auth integrations as required dependencies. T3 Code does
   # not support wallet auth, so keep that unused dependency tree out of installs.
   "@clerk/clerk-js": "https://pkg.pr.new/clerk/javascript/@clerk/clerk-js@235c6e7"
+  "@clerk/expo>@clerk/clerk-js": "6.14.0"
   "@clerk/clerk-js>@base-org/account": "-"
   "@clerk/clerk-js>@coinbase/wallet-sdk": "-"
   "@clerk/clerk-js>@solana/wallet-adapter-base": "-"
