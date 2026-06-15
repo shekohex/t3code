@@ -56,6 +56,8 @@ import { readLocalApi } from "~/localApi";
 import { useTerminalController } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
+import { usePreviewActions } from "../state/preview";
+import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -308,6 +310,7 @@ export function TerminalViewport({
     serverConfig.data?.availableEditors ?? [],
   );
   const openTerminalPath = useEffectEvent((target: string) => openInPreferredEditor(target));
+  const { open: openPreview } = usePreviewActions();
   const hasHandledExitRef = useRef(false);
   const selectionPointerRef = useRef<{ x: number; y: number } | null>(null);
   const selectionGestureActiveRef = useRef(false);
@@ -545,11 +548,21 @@ export function TerminalViewport({
                   );
                   return;
                 }
-                void localApi.shell.openExternal(match.text).catch((error: unknown) => {
-                  writeSystemMessage(
-                    latestTerminal,
-                    error instanceof Error ? error.message : "Unable to open link",
-                  );
+                const fallbackToBrowser = () => {
+                  void localApi.shell.openExternal(match.text).catch((error: unknown) => {
+                    writeSystemMessage(
+                      latestTerminal,
+                      error instanceof Error ? error.message : "Unable to open link",
+                    );
+                  });
+                };
+                void openTerminalLinkInPreview({
+                  url: match.text,
+                  position: { x: event.clientX, y: event.clientY },
+                  threadRef,
+                  openPreview,
+                  localApi,
+                  fallbackToBrowser,
                 });
                 return;
               }

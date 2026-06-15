@@ -1,16 +1,16 @@
 "use client";
 
-import { scopedThreadKey } from "@t3tools/client-runtime";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { type ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "~/composerDraftStore";
-import { ensureEnvironmentApi } from "~/environmentApi";
 import { previewAnnotationScreenshotFile } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
 import { selectThreadPreviewState, usePreviewStateStore } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
-import { readEnvironmentConnection } from "~/environments/runtime";
+import { useEnvironment, useEnvironmentHttpBaseUrl } from "~/state/environments";
+import { usePreviewActions } from "~/state/preview";
 
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
@@ -60,6 +60,9 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const rememberUrl = usePreviewStateStore((state) => state.rememberUrl);
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
   const addImage = useComposerDraftStore((store) => store.addImage);
+  const environment = useEnvironment(threadRef.environmentId);
+  const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
+  const { open } = usePreviewActions();
 
   usePreviewSession(threadRef);
 
@@ -83,19 +86,17 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const showEmptyState = shouldShowPreviewEmptyState(snapshot);
   const controller = desktopOverlay?.controller ?? "none";
   const loadProgress = useLoadingProgress(loading);
-  const environmentConnection = readEnvironmentConnection(threadRef.environmentId);
   const displayUrl =
-    url && environmentConnection
+    url && environment && environmentHttpBaseUrl
       ? (formatPreviewUrl({
           url,
-          environmentLabel: environmentConnection.knownEnvironment.label,
-          environmentHttpBaseUrl: environmentConnection.knownEnvironment.target.httpBaseUrl,
+          environmentLabel: environment.label,
+          environmentHttpBaseUrl,
         }) ?? undefined)
       : undefined;
 
   const handleSubmitUrl = useCallback(
     async (next: string) => {
-      const api = ensureEnvironmentApi(threadRef.environmentId);
       try {
         const resolvedUrl = resolveDiscoveredServerUrl(threadRef.environmentId, next);
         if (tabId && previewBridge) {
@@ -105,7 +106,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
           rememberUrl(threadRef, resolvedUrl);
         } else {
           await openPreviewSession({
-            previewApi: api.preview,
+            openPreview: open,
             threadRef,
             url: resolvedUrl,
             applyServerSnapshot,
@@ -116,7 +117,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         // Server-side `failed` event renders the unreachable view.
       }
     },
-    [applyServerSnapshot, rememberUrl, tabId, threadRef],
+    [applyServerSnapshot, open, rememberUrl, tabId, threadRef],
   );
 
   const handleRefresh = useCallback(() => {

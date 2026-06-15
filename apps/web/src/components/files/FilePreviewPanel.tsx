@@ -3,14 +3,15 @@ import { Editor } from "@pierre/diffs/editor";
 import { EditorProvider, File, Virtualizer } from "@pierre/diffs/react";
 import { ChevronRight, FolderTree, LoaderCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useAtomSet } from "@effect/atom-react";
 
-import { ensureEnvironmentApi } from "~/environmentApi";
 import { useTheme } from "~/hooks/useTheme";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Toggle } from "~/components/ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { projectEnvironment } from "~/state/projects";
 
 import FileBrowserPanel from "./FileBrowserPanel";
 import { projectFileCacheKey } from "./fileContentRevision";
@@ -51,23 +52,23 @@ function EditableFileSurface({
   resolvedTheme,
   onPendingChange,
 }: EditableFileSurfaceProps) {
+  const writeFile = useAtomSet(projectEnvironment.writeFile, { mode: "promise" });
   const saveCoordinator = useMemo(
     () =>
       new FileSaveCoordinator({
         debounceMs: FILE_SAVE_DEBOUNCE_MS,
         onPendingChange: (pending) => onPendingChange(relativePath, pending),
         persist: async (nextContents) => {
-          await ensureEnvironmentApi(environmentId).projects.writeFile({
-            cwd,
-            relativePath,
-            contents: nextContents,
+          await writeFile({
+            environmentId,
+            input: { cwd, relativePath, contents: nextContents },
           });
         },
         onConfirmed: (confirmedContents) => {
           confirmProjectFileQueryData(environmentId, cwd, relativePath, confirmedContents);
         },
       }),
-    [cwd, environmentId, onPendingChange, relativePath],
+    [cwd, environmentId, onPendingChange, relativePath, writeFile],
   );
   const editor = useMemo(
     () =>

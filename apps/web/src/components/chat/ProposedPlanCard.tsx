@@ -1,6 +1,6 @@
 import { memo, useState, useId } from "react";
 import { useAtomSet } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   buildCollapsedProposedPlanPreviewMarkdown,
   buildProposedPlanMarkdownFilename,
@@ -32,11 +32,13 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 export const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
   environmentId,
+  threadRef,
   cwd,
   workspaceRoot,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
+  threadRef?: ScopedThreadRef | undefined;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
 }) {
@@ -166,9 +168,19 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       <div className="mt-4">
         <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
           {canCollapse && !expanded ? (
-            <ChatMarkdown text={collapsedPreview ?? ""} cwd={cwd} isStreaming={false} />
+            <ChatMarkdown
+              text={collapsedPreview ?? ""}
+              cwd={cwd}
+              threadRef={threadRef}
+              isStreaming={false}
+            />
           ) : (
-            <ChatMarkdown text={displayedPlanMarkdown} cwd={cwd} isStreaming={false} />
+            <ChatMarkdown
+              text={displayedPlanMarkdown}
+              cwd={cwd}
+              threadRef={threadRef}
+              isStreaming={false}
+            />
           )}
           {canCollapse && !expanded ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />

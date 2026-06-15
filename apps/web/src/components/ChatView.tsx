@@ -235,6 +235,8 @@ const PreviewPanel = lazy(() =>
   import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
 const DiffPanel = lazy(() => import("./DiffPanel"));
+const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
   "textarea",
@@ -977,7 +979,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   );
 });
 
-export default function ChatView(props: ChatViewProps) {
+function ChatViewContent(props: ChatViewProps) {
   const {
     environmentId,
     threadId,
@@ -1293,6 +1295,9 @@ export default function ChatView(props: ChatViewProps) {
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;
   const rightPanelPlanOpen = rightPanelOpen && activeRightPanelSurface?.kind === "plan";
+  const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
+  const rightPanelMaximized =
+    canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
 
   useEffect(() => {
@@ -1378,10 +1383,42 @@ export default function ChatView(props: ChatViewProps) {
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
   const activeProject = useProject(activeProjectRef);
+  const activeProjectKey = activeProject
+    ? `${activeProject.environmentId}:${activeProject.workspaceRoot}`
+    : null;
+  const [pendingFileSurfaceIdsByProject, setPendingFileSurfaceIdsByProject] = useState<
+    ReadonlyMap<string, ReadonlySet<string>>
+  >(() => new Map());
+  const pendingFileSurfaceIds = activeProjectKey
+    ? (pendingFileSurfaceIdsByProject.get(activeProjectKey) ?? EMPTY_PENDING_FILE_SURFACE_IDS)
+    : EMPTY_PENDING_FILE_SURFACE_IDS;
+  const handleFilePendingChange = useCallback(
+    (relativePath: string, pending: boolean) => {
+      if (!activeProjectKey) return;
+      setPendingFileSurfaceIdsByProject((currentByProject) => {
+        const current = currentByProject.get(activeProjectKey) ?? EMPTY_PENDING_FILE_SURFACE_IDS;
+        const surfaceId = `file:${relativePath}`;
+        if (current.has(surfaceId) === pending) return currentByProject;
+        const next = new Set(current);
+        if (pending) next.add(surfaceId);
+        else next.delete(surfaceId);
+        const nextByProject = new Map(currentByProject);
+        if (next.size === 0) nextByProject.delete(activeProjectKey);
+        else nextByProject.set(activeProjectKey, next);
+        return nextByProject;
+      });
+    },
+    [activeProjectKey],
+  );
   const configuredPreviewUrls = useMemo(
     () => getConfiguredPreviewUrls(activeProject?.scripts),
     [activeProject?.scripts],
   );
+
+  useEffect(() => {
+    if (!activeThreadRef) return;
+    useRightPanelStore.getState().reconcileFileSurfaces(activeThreadRef, activeProject !== null);
+  }, [activeProject, activeThreadRef]);
 
   // Compute the list of environments this logical project spans, used to
   // drive the environment picker in BranchToolbar.
@@ -2681,6 +2718,7 @@ export default function ChatView(props: ChatViewProps) {
     });
   }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
   const closePlanSidebar = useCallback(() => {
+    setMaximizedRightPanelThreadKey(null);
     setPlanSidebarOpen(false);
     planSidebarDismissedForTurnRef.current =
       activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
@@ -2721,6 +2759,17 @@ export default function ChatView(props: ChatViewProps) {
     onDiffPanelOpen,
     threadId,
   ]);
+  const addFilesSurface = useCallback(() => {
+    if (!activeThreadRef || !activeProject) return;
+    useRightPanelStore.getState().open(activeThreadRef, "files");
+  }, [activeProject, activeThreadRef]);
+  const openFileSurface = useCallback(
+    (relativePath: string) => {
+      if (!activeThreadRef || !activeProject) return;
+      useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
+    },
+    [activeProject, activeThreadRef],
+  );
   const togglePreviewPanel = useCallback(() => {
     if (!activeThreadRef || !isPreviewSupportedInRuntime()) return;
     if (previewPanelOpen) {
@@ -2746,7 +2795,10 @@ export default function ChatView(props: ChatViewProps) {
     threadId,
   ]);
   const closePreviewPanel = useCallback(() => {
-    if (activeThreadRef) useRightPanelStore.getState().close(activeThreadRef);
+    if (activeThreadRef) {
+      setMaximizedRightPanelThreadKey(null);
+      useRightPanelStore.getState().close(activeThreadRef);
+    }
   }, [activeThreadRef]);
   const addTerminalSurface = useCallback(() => {
     if (!activeThreadRef || !activeThreadId || !activeProject) return;
@@ -2878,8 +2930,15 @@ export default function ChatView(props: ChatViewProps) {
   );
   const toggleRightPanel = useCallback(() => {
     if (!activeThreadRef) return;
+    if (rightPanelOpen) setMaximizedRightPanelThreadKey(null);
     useRightPanelStore.getState().toggleVisibility(activeThreadRef);
-  }, [activeThreadRef]);
+  }, [activeThreadRef, rightPanelOpen]);
+  const toggleRightPanelMaximized = useCallback(() => {
+    if (!canMaximizeRightPanel) return;
+    setMaximizedRightPanelThreadKey((threadKey) =>
+      threadKey === routeThreadKey ? null : routeThreadKey,
+    );
+  }, [canMaximizeRightPanel, routeThreadKey]);
   const closeRightPanelSurface = useCallback(
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
@@ -4344,11 +4403,30 @@ export default function ChatView(props: ChatViewProps) {
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
       {isElectron && activeThreadRef ? (
         <PreviewAutomationOwner threadRef={activeThreadRef} visible={previewPanelOpen} />
       ) : null}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
+      <PanelLayoutControls
+        terminalAvailable={activeProject !== null}
+        terminalOpen={terminalUiState.terminalOpen}
+        terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
+        rightPanelAvailable={activeProject !== null}
+        rightPanelOpen={rightPanelOpen}
+        rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
+        rightPanelMaximized={rightPanelMaximized}
+        canMaximizeRightPanel={canMaximizeRightPanel}
+        onToggleTerminal={toggleTerminalVisibility}
+        onToggleRightPanel={toggleRightPanel}
+        onToggleRightPanelMaximized={toggleRightPanelMaximized}
+      />
+      <div
+        className={cn(
+          "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
+          rightPanelMaximized ? "w-0 flex-none" : "flex-1",
+        )}
+        data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
+      >
         {/* Top bar */}
         <header
           className={cn(
@@ -4627,8 +4705,10 @@ export default function ChatView(props: ChatViewProps) {
       {!shouldUsePlanSidebarSheet && rightPanelOpen && activeThreadRef ? (
         <RightPanelTabs
           mode="inline"
+          maximized={rightPanelMaximized}
           surfaces={rightPanelState.surfaces}
           activeSurfaceId={activeRightPanelSurface?.id ?? null}
+          pendingSurfaceIds={pendingFileSurfaceIds}
           previewSessions={activePreviewState.sessions}
           terminalLabelsById={activeTerminalLabelsById}
           onActivate={activateRightPanelSurface}
@@ -4636,8 +4716,10 @@ export default function ChatView(props: ChatViewProps) {
           onAddBrowser={createBrowserSurface}
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
+          onAddFiles={addFilesSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
+          filesAvailable={activeProject !== null}
         >
           {activeRightPanelSurface?.kind === "preview" ? (
             <Suspense fallback={null}>
@@ -4685,6 +4767,24 @@ export default function ChatView(props: ChatViewProps) {
               mode="sheet"
               onClose={() => closeRightPanelSurface(activeRightPanelSurface)}
             />
+          ) : (activeRightPanelSurface?.kind === "files" ||
+              activeRightPanelSurface?.kind === "file") &&
+            activeProject ? (
+            <Suspense fallback={null}>
+              <FilePreviewPanel
+                key={`${activeProject.environmentId}:${activeProject.workspaceRoot}`}
+                environmentId={activeProject.environmentId}
+                cwd={activeProject.workspaceRoot}
+                projectName={activeProject.title}
+                relativePath={
+                  activeRightPanelSurface.kind === "file"
+                    ? activeRightPanelSurface.relativePath
+                    : null
+                }
+                onOpenFile={openFileSurface}
+                onPendingChange={handleFilePendingChange}
+              />
+            </Suspense>
           ) : null}
         </RightPanelTabs>
       ) : null}
@@ -4694,6 +4794,7 @@ export default function ChatView(props: ChatViewProps) {
             mode="sheet"
             surfaces={rightPanelState.surfaces}
             activeSurfaceId={activeRightPanelSurface?.id ?? null}
+            pendingSurfaceIds={pendingFileSurfaceIds}
             previewSessions={activePreviewState.sessions}
             terminalLabelsById={activeTerminalLabelsById}
             onActivate={activateRightPanelSurface}
@@ -4701,8 +4802,10 @@ export default function ChatView(props: ChatViewProps) {
             onAddBrowser={createBrowserSurface}
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
+            onAddFiles={addFilesSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
+            filesAvailable={activeProject !== null}
           >
             {activeRightPanelSurface?.kind === "preview" ? (
               <Suspense fallback={null}>
@@ -4750,6 +4853,24 @@ export default function ChatView(props: ChatViewProps) {
                 mode="sheet"
                 onClose={() => closeRightPanelSurface(activeRightPanelSurface)}
               />
+            ) : (activeRightPanelSurface?.kind === "files" ||
+                activeRightPanelSurface?.kind === "file") &&
+              activeProject ? (
+              <Suspense fallback={null}>
+                <FilePreviewPanel
+                  key={`${activeProject.environmentId}:${activeProject.workspaceRoot}`}
+                  environmentId={activeProject.environmentId}
+                  cwd={activeProject.workspaceRoot}
+                  projectName={activeProject.title}
+                  relativePath={
+                    activeRightPanelSurface.kind === "file"
+                      ? activeRightPanelSurface.relativePath
+                      : null
+                  }
+                  onOpenFile={openFileSurface}
+                  onPendingChange={handleFilePendingChange}
+                />
+              </Suspense>
             ) : null}
           </RightPanelTabs>
         </RightPanelSheet>

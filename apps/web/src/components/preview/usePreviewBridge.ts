@@ -9,8 +9,8 @@ import type {
 import { useEffect, useRef } from "react";
 
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
-import { ensureEnvironmentApi } from "~/environmentApi";
 import { type DesktopPreviewOverlay, usePreviewStateStore } from "~/previewStateStore";
+import { usePreviewActions } from "~/state/preview";
 
 import { previewBridge } from "./previewBridge";
 
@@ -22,6 +22,7 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
   const { threadRef, tabId } = input;
   const applyDesktopState = usePreviewStateStore((state) => state.applyDesktopState);
   const clearBrowserPointer = useBrowserPointerStore((state) => state.clear);
+  const { reportStatus } = usePreviewActions();
   const bridge = previewBridge;
 
   // One bridge subscription does both jobs (mirror state + forward to
@@ -31,7 +32,6 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
   const lastDesktopNavStatus = useRef<DesktopPreviewTabState["navStatus"] | null>(null);
   useEffect(() => {
     if (!bridge || typeof window === "undefined") return;
-    const api = ensureEnvironmentApi(threadRef.environmentId);
     lastReportedUrl.current = null;
     lastReportedKind.current = null;
     lastDesktopNavStatus.current = null;
@@ -52,10 +52,13 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
       if (!reported) return;
       lastReportedUrl.current = reported.lastReportedUrl;
       lastReportedKind.current = reported.lastReportedKind;
-      void api.preview.reportStatus(reported.input).catch(() => undefined);
+      void reportStatus({
+        environmentId: threadRef.environmentId,
+        input: reported.input,
+      }).catch(() => undefined);
     });
     return unsubscribe;
-  }, [applyDesktopState, bridge, clearBrowserPointer, tabId, threadRef]);
+  }, [applyDesktopState, bridge, clearBrowserPointer, reportStatus, tabId, threadRef]);
 }
 
 function shouldClearBrowserPointer(

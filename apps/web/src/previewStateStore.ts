@@ -11,7 +11,7 @@
  * The schema-level `tabId` exists because the server still keys sessions by
  * `(threadId, tabId)`; the client just always tracks one and ignores the rest.
  */
-import { scopedThreadKey } from "@t3tools/client-runtime";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   type PreviewEvent,
   type PreviewSessionSnapshot,

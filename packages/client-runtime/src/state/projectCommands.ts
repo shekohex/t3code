@@ -32,6 +32,18 @@ export function createProjectEnvironmentAtoms<R, E>(
       tag: WS_METHODS.projectsSearchEntries,
       staleTimeMs: 15_000,
     }),
+    listEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:list-entries",
+      tag: WS_METHODS.projectsListEntries,
+      staleTimeMs: 30_000,
+      idleTtlMs: 5 * 60_000,
+    }),
+    readFile: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:read-file",
+      tag: WS_METHODS.projectsReadFile,
+      staleTimeMs: 30_000,
+      idleTtlMs: 5 * 60_000,
+    }),
     create: createEnvironmentMutation(runtime, {
       label: "environment-data:commands:project:create",
       execute: (input: CreateProjectInput) => createProject(input),

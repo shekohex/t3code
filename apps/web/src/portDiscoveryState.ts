@@ -1,11 +1,9 @@
-import type {
-  DiscoveredLocalServer,
-  EnvironmentApi,
-  EnvironmentId,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { DiscoveredLocalServer, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useMemo } from "react";
 import { create } from "zustand";
+
+import { previewEnvironment } from "./state/preview";
+import { useEnvironmentQuery } from "./state/query";
 
 const EMPTY_PORTS: ReadonlyArray<DiscoveredLocalServer> = Object.freeze([]);
 
@@ -34,22 +32,15 @@ export const usePortDiscoveryStore = create<PortDiscoveryState>((set) => ({
   reset: () => set({ byEnvironment: {} }),
 }));
 
-export function subscribePortDiscovery(input: {
-  readonly environmentId: EnvironmentId;
-  readonly previewApi: Pick<EnvironmentApi["preview"], "subscribePorts">;
-}): () => void {
-  usePortDiscoveryStore.getState().clearEnvironment(input.environmentId);
-  return input.previewApi.subscribePorts((snapshot) => {
-    usePortDiscoveryStore.getState().setPorts(input.environmentId, snapshot.servers);
-  });
-}
-
 export function useDiscoveredPorts(
   environmentId: EnvironmentId | null,
 ): ReadonlyArray<DiscoveredLocalServer> {
-  return usePortDiscoveryStore(
-    (state) => (environmentId ? state.byEnvironment[environmentId] : undefined) ?? EMPTY_PORTS,
+  const query = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : previewEnvironment.discoveredServers({ environmentId, input: {} }),
   );
+  return query.data?.servers ?? EMPTY_PORTS;
 }
 
 export function useThreadDiscoveredPorts(input: {

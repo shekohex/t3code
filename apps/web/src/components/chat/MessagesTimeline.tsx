@@ -5,7 +5,7 @@ import {
   type ServerProviderSkill,
   type TurnId,
 } from "@t3tools/contracts";
-import { parseScopedThreadKey } from "@t3tools/client-runtime";
+import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   createContext,
   Fragment,

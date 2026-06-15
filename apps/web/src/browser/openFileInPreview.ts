@@ -1,6 +1,12 @@
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  AssetCreateUrlResult,
+  AssetResource,
+  EnvironmentId,
+  PreviewOpenInput,
+  PreviewSessionSnapshot,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 
-import { readEnvironmentApi } from "~/environmentApi";
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import { isPreviewSupportedInRuntime, usePreviewStateStore } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -8,29 +14,51 @@ import { useRightPanelStore } from "~/rightPanelStore";
 export const isBrowserPreviewFile = (path: string): boolean =>
   /\.(?:html?|pdf)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 
-export async function openUrlInPreview(threadRef: ScopedThreadRef, url: string): Promise<void> {
-  const api = readEnvironmentApi(threadRef.environmentId);
-  if (!api) {
-    throw new Error("Environment is not connected.");
-  }
+export type OpenPreviewMutation = (input: {
+  readonly environmentId: EnvironmentId;
+  readonly input: PreviewOpenInput;
+}) => Promise<PreviewSessionSnapshot>;
 
-  const snapshot = await api.preview.open({ threadId: threadRef.threadId, url });
-  usePreviewStateStore.getState().applyServerSnapshot(threadRef, snapshot);
-  usePreviewStateStore.getState().rememberUrl(threadRef, url);
-  useRightPanelStore.getState().openBrowser(threadRef, snapshot.tabId);
+export async function openUrlInPreview(input: {
+  readonly threadRef: ScopedThreadRef;
+  readonly url: string;
+  readonly openPreview: OpenPreviewMutation;
+}): Promise<void> {
+  const snapshot = await input.openPreview({
+    environmentId: input.threadRef.environmentId,
+    input: { threadId: input.threadRef.threadId, url: input.url },
+  });
+  usePreviewStateStore.getState().applyServerSnapshot(input.threadRef, snapshot);
+  usePreviewStateStore.getState().rememberUrl(input.threadRef, input.url);
+  useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
 }
 
-export async function openFileInPreview(
-  threadRef: ScopedThreadRef,
-  filePath: string,
-): Promise<void> {
+export async function openFileInPreview(input: {
+  readonly threadRef: ScopedThreadRef;
+  readonly filePath: string;
+  readonly httpBaseUrl: string;
+  readonly createAssetUrl: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly input: { readonly resource: AssetResource };
+  }) => Promise<AssetCreateUrlResult>;
+  readonly openPreview: OpenPreviewMutation;
+}): Promise<void> {
   if (!isPreviewSupportedInRuntime()) {
     throw new Error("The integrated browser is unavailable in this runtime.");
   }
-  const asset = await resolveAssetUrl(threadRef.environmentId, {
-    _tag: "workspace-file",
-    threadId: threadRef.threadId,
-    path: filePath,
+  const asset = await resolveAssetUrl({
+    environmentId: input.threadRef.environmentId,
+    httpBaseUrl: input.httpBaseUrl,
+    resource: {
+      _tag: "workspace-file",
+      threadId: input.threadRef.threadId,
+      path: input.filePath,
+    },
+    createUrl: input.createAssetUrl,
   });
-  await openUrlInPreview(threadRef, asset.url);
+  await openUrlInPreview({
+    threadRef: input.threadRef,
+    url: asset.url,
+    openPreview: input.openPreview,
+  });
 }

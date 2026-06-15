@@ -1,4 +1,4 @@
-import type { EnvironmentApi, PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
+import type { PreviewOpenInput, PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { openPreviewSession } from "./openPreviewSession";
@@ -23,12 +23,12 @@ const snapshot: PreviewSessionSnapshot = {
 
 describe("openPreviewSession", () => {
   it("applies the RPC response without waiting for a preview event", async () => {
-    const open = vi.fn(async () => snapshot);
+    const open = vi.fn(async (_input: PreviewOpenInput) => snapshot);
     const applyServerSnapshot = vi.fn();
     const rememberUrl = vi.fn();
 
     await openPreviewSession({
-      previewApi: { open } as Pick<EnvironmentApi["preview"], "open">,
+      openPreview: ({ input }) => open(input),
       threadRef,
       url: "t3.chat",
       applyServerSnapshot,

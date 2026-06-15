@@ -1,7 +1,13 @@
 import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
+import { fileURLToPath } from "node:url";
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      "~": fileURLToPath(new URL("./apps/web/src", import.meta.url)),
+    },
+  },
   test: {
     environment: "node",
     exclude: [
@@ -102,6 +108,7 @@ export default defineConfig({
           ],
         },
       ],
+      "t3code/no-global-process-runtime": "error",
       "t3code/no-inline-schema-compile": "warn",
       "t3code/no-manual-effect-runtime-in-tests": "error",
     },

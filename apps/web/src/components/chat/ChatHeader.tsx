@@ -12,10 +12,12 @@ import { type DraftId } from "~/composerDraftStore";
 import { PanelBottomIcon, PanelRightIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
+import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { shortcutLabelForCommand } from "../../keybindings";
+import { cn } from "~/lib/utils";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;

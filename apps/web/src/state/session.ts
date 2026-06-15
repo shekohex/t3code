@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import { Atom } from "effect/unstable/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironmentQuery } from "./query";
 
 export const environmentSession = createEnvironmentSessionAtoms(connectionAtomRuntime);
@@ -22,5 +23,11 @@ export function usePreparedConnection(environmentId: EnvironmentId | null) {
     environmentId === null
       ? EMPTY_PREPARED_CONNECTION_ATOM
       : environmentSession.preparedConnectionValueAtom(environmentId),
+  );
+}
+
+export function readPreparedConnection(environmentId: EnvironmentId) {
+  return Option.getOrNull(
+    appAtomRegistry.get(environmentSession.preparedConnectionValueAtom(environmentId)),
   );
 }

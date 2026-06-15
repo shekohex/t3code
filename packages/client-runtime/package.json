@@ -43,6 +43,10 @@
       "types": "./src/state/auth.ts",
       "default": "./src/state/auth.ts"
     },
+    "./state/assets": {
+      "types": "./src/state/assets.ts",
+      "default": "./src/state/assets.ts"
+    },
     "./state/cloud": {
       "types": "./src/state/cloud.ts",
       "default": "./src/state/cloud.ts"
@@ -74,6 +78,10 @@
     "./state/presentation": {
       "types": "./src/state/presentation.ts",
       "default": "./src/state/presentation.ts"
+    },
+    "./state/preview": {
+      "types": "./src/state/preview.ts",
+      "default": "./src/state/preview.ts"
     },
     "./state/projects": {
       "types": "./src/state/projects.ts",
