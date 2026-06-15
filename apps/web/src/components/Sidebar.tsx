@@ -3078,29 +3078,27 @@ export default function Sidebar() {
     dragInProgressRef.current = false;
   }, []);
 
-  const animatedProjectLists = useMemo(() => new WeakSet<HTMLElement>(), []);
-  const attachProjectListAutoAnimateRef = useCallback(
-    (node: HTMLElement | null) => {
-      if (!node || animatedProjectLists.has(node)) {
-        return;
-      }
-      autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
-      animatedProjectLists.add(node);
-    },
-    [animatedProjectLists],
-  );
+  const animatedProjectListsRef = useRef<WeakSet<HTMLElement> | null>(null);
+  const attachProjectListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
+    const animatedProjectLists =
+      animatedProjectListsRef.current ?? (animatedProjectListsRef.current = new WeakSet());
+    if (!node || animatedProjectLists.has(node)) {
+      return;
+    }
+    autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
+    animatedProjectLists.add(node);
+  }, []);
 
-  const animatedThreadLists = useMemo(() => new WeakSet<HTMLElement>(), []);
-  const attachThreadListAutoAnimateRef = useCallback(
-    (node: HTMLElement | null) => {
-      if (!node || animatedThreadLists.has(node)) {
-        return;
-      }
-      autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
-      animatedThreadLists.add(node);
-    },
-    [animatedThreadLists],
-  );
+  const animatedThreadListsRef = useRef<WeakSet<HTMLElement> | null>(null);
+  const attachThreadListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
+    const animatedThreadLists =
+      animatedThreadListsRef.current ?? (animatedThreadListsRef.current = new WeakSet());
+    if (!node || animatedThreadLists.has(node)) {
+      return;
+    }
+    autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
+    animatedThreadLists.add(node);
+  }, []);
 
   const visibleThreads = useMemo(
     () => sidebarThreads.filter((thread) => thread.archivedAt === null),
