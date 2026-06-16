@@ -39,6 +39,16 @@ const configuredHostedAppUrl = (() => {
 })();
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
 
+// Clerk UI exposes Web3 wallet screens through lazy chunks, but Web3 wallet
+// providers are not enabled on any T3 Code Clerk instance. Keep those
+// unreachable integrations external instead of installing the Solana wallet
+// dependency graph solely to satisfy build-time resolution.
+const unusedClerkWeb3WalletDependencies = [
+  "@solana/wallet-adapter-base",
+  "@solana/wallet-adapter-react",
+  "@solana/wallet-standard",
+];
+
 const buildSourcemap: boolean | "hidden" =
   sourcemapEnv === "0" || sourcemapEnv === "false"
     ? false
@@ -149,6 +159,7 @@ export default defineConfig(() => {
     },
     resolve: {
       tsconfigPaths: true,
+      dedupe: ["react", "react-dom"],
     },
     server: {
       host,
@@ -184,6 +195,9 @@ export default defineConfig(() => {
       outDir: "dist",
       emptyOutDir: true,
       sourcemap: buildSourcemap,
+      rolldownOptions: {
+        external: unusedClerkWeb3WalletDependencies,
+      },
     },
     test: {
       projects: [defineProject(unitTestProject), defineProject(browserTestProject)],

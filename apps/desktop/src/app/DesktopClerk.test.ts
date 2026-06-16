@@ -1,4 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
 const { createClerkBridgeMock, storageAdapter, storageMock } = vi.hoisted(() => ({
@@ -20,8 +22,42 @@ vi.mock("@clerk/electron/storage", () => ({
 }));
 
 import { createDesktopClerkBridge } from "./DesktopClerk.ts";
+import * as DesktopClerk from "./DesktopClerk.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 describe("DesktopClerk", () => {
+  it.effect("acquires and releases the SDK bridge with the layer", () => {
+    const cleanup = vi.fn();
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockReturnValue({ cleanup });
+    const environment = DesktopEnvironment.DesktopEnvironment.of({
+      stateDir: "/tmp/t3-state",
+      isDevelopment: true,
+    } as unknown as DesktopEnvironment.DesktopEnvironmentShape);
+
+    return Effect.gen(function* () {
+      yield* Effect.scoped(
+        Layer.build(
+          DesktopClerk.layer.pipe(
+            Layer.provide(Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment)),
+          ),
+        ),
+      );
+
+      assert.deepEqual(createClerkBridgeMock.mock.calls, [
+        [
+          {
+            storage: storageAdapter,
+            renderer: { scheme: "t3code-dev", host: "app" },
+          },
+        ],
+      ]);
+      assert.equal(cleanup.mock.calls.length, 1);
+      storageMock.mockClear();
+      createClerkBridgeMock.mockClear();
+    });
+  });
+
   it.each([
     { isDevelopment: true, scheme: "t3code-dev" },
     { isDevelopment: false, scheme: "t3code" },

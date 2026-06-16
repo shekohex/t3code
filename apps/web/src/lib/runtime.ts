@@ -1,7 +1,6 @@
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { FetchHttpClient } from "effect/unstable/http";
 
 import { remoteHttpClientLayer } from "@t3tools/client-runtime";
 import { httpHeaderRedactionLayer } from "@t3tools/shared/httpObservability";
@@ -10,7 +9,7 @@ import {
   PrimaryEnvironmentHttpClient,
   primaryEnvironmentHttpClientLive,
 } from "../environments/primary/httpClient";
-import { primaryEnvironmentRequestInit } from "../environments/primary/requestInit";
+import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 
 import { browserCryptoLayer } from "../cloud/dpop";
 import { webManagedRelayClientLayer } from "../cloud/managedRelayLayer";
@@ -27,17 +26,20 @@ const webRelayTracingLayer = makeRelayClientTracingLayer(resolveRelayTracingConf
   runtime: "browser",
   client: typeof window !== "undefined" && window.desktopBridge ? "desktop" : "web",
 }).pipe(Layer.provide(webHttpClientLayer));
+const primaryEnvironmentClientLayer = primaryEnvironmentHttpClientLive.pipe(
+  Layer.provide(Layer.merge(primaryEnvironmentHttpLayer, httpHeaderRedactionLayer)),
+);
 
 export const remoteHttpRuntime = ManagedRuntime.make(webHttpClientLayer);
 
-const primaryHttpRuntime = ManagedRuntime.make(
-  primaryEnvironmentHttpClientLive.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        remoteHttpClientLayer((input, init) => globalThis.fetch(input, init)),
-        Layer.succeed(FetchHttpClient.RequestInit, primaryEnvironmentRequestInit),
-        httpHeaderRedactionLayer,
-      ),
+export const webRuntime = ManagedRuntime.make(
+  Layer.mergeAll(
+    webHttpClientLayer,
+    primaryEnvironmentClientLayer,
+    browserCryptoLayer,
+    webManagedRelayClientLayer(configuredRelayUrl()).pipe(
+      Layer.provide(Layer.mergeAll(webHttpClientLayer, browserCryptoLayer)),
+      Layer.provideMerge(webRelayTracingLayer),
     ),
   ),
 );
@@ -46,8 +48,7 @@ export type PrimaryHttpEffectRunner = <A, E>(
   effect: Effect.Effect<A, E, PrimaryEnvironmentHttpClient>,
 ) => Promise<A>;
 
-const livePrimaryHttpRunner: PrimaryHttpEffectRunner = (effect) =>
-  primaryHttpRuntime.runPromise(effect);
+const livePrimaryHttpRunner: PrimaryHttpEffectRunner = (effect) => webRuntime.runPromise(effect);
 
 let primaryHttpRunner = livePrimaryHttpRunner;
 
@@ -57,14 +58,3 @@ export const runPrimaryHttp = <A, E>(effect: Effect.Effect<A, E, PrimaryEnvironm
 export function __setPrimaryHttpRunnerForTests(runner?: PrimaryHttpEffectRunner): void {
   primaryHttpRunner = runner ?? livePrimaryHttpRunner;
 }
-
-export const webRuntime = ManagedRuntime.make(
-  Layer.mergeAll(
-    webHttpClientLayer,
-    browserCryptoLayer,
-    webManagedRelayClientLayer(configuredRelayUrl()).pipe(
-      Layer.provide(Layer.mergeAll(webHttpClientLayer, browserCryptoLayer)),
-      Layer.provideMerge(webRelayTracingLayer),
-    ),
-  ),
-);

@@ -32,6 +32,7 @@ import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
 import * as DesktopAssets from "./app/DesktopAssets.ts";
 import * as DesktopBackendConfiguration from "./backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./backend/DesktopBackendManager.ts";
+import * as DesktopLocalEnvironmentAuth from "./backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./app/DesktopLifecycle.ts";
 import * as DesktopObservability from "./app/DesktopObservability.ts";
@@ -146,19 +147,36 @@ const desktopBackendLayer = DesktopBackendManager.layer.pipe(
   Layer.provideMerge(desktopWindowLayer),
 );
 
+const desktopLocalEnvironmentAuthLayer = DesktopLocalEnvironmentAuth.layer.pipe(
+  Layer.provideMerge(desktopBackendLayer),
+);
+
 const desktopApplicationLayer = Layer.mergeAll(
   DesktopLifecycle.layer,
   DesktopApplicationMenu.layer,
-  DesktopClerk.layer,
   DesktopShellEnvironment.layer,
   desktopSshLayer,
-).pipe(Layer.provideMerge(DesktopUpdates.layer), Layer.provideMerge(desktopBackendLayer));
+).pipe(
+  Layer.provideMerge(DesktopUpdates.layer),
+  Layer.provideMerge(desktopLocalEnvironmentAuthLayer),
+);
 
-const desktopRuntimeLayer = desktopApplicationLayer.pipe(
+const desktopClerkLayer = DesktopClerk.layer.pipe(
+  Layer.provideMerge(desktopEnvironmentLayer),
   Layer.provideMerge(NodeServices.layer),
-  Layer.provideMerge(NodeHttpClient.layerUndici),
-  Layer.provideMerge(NetService.layer),
-  Layer.provideMerge(electronLayer),
+  Layer.provideMerge(ElectronApp.layer),
+);
+
+const desktopRuntimeLayer = desktopClerkLayer.pipe(
+  Layer.flatMap((clerkContext) =>
+    desktopApplicationLayer.pipe(
+      Layer.provideMerge(Layer.succeedContext(clerkContext)),
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(NodeHttpClient.layerUndici),
+      Layer.provideMerge(NetService.layer),
+      Layer.provideMerge(electronLayer),
+    ),
+  ),
 );
 
 DesktopApp.program.pipe(Effect.provide(desktopRuntimeLayer), NodeRuntime.runMain);

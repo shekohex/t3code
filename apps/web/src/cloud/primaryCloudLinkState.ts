@@ -6,19 +6,18 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { HttpClient } from "effect/unstable/http";
 import { useCallback } from "react";
 
-import { usePrimaryEnvironmentId } from "../environments/primary";
+import { PrimaryEnvironmentHttpClient, usePrimaryEnvironmentId } from "../environments/primary";
 import { webRuntime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readPrimaryCloudLinkState } from "./linkEnvironment";
 
 const primaryCloudLinkAtomRuntime = Atom.runtime(
   Layer.effect(
-    HttpClient.HttpClient,
+    PrimaryEnvironmentHttpClient,
     webRuntime.contextEffect.pipe(
-      Effect.map((context) => Context.get(context, HttpClient.HttpClient)),
+      Effect.map((context) => Context.get(context, PrimaryEnvironmentHttpClient)),
     ),
   ),
 );

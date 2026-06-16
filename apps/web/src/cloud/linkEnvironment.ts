@@ -38,11 +38,10 @@ import {
   type SavedEnvironmentRecord,
 } from "../environments/runtime";
 import {
+  PrimaryEnvironmentHttpClient,
   readPrimaryEnvironmentDescriptor,
   readPrimaryEnvironmentTarget,
-  resolvePrimaryEnvironmentHttpUrl,
 } from "../environments/primary";
-import { withPrimaryEnvironmentRequestInit } from "../environments/primary/requestInit";
 import { resolveCloudPublicConfig } from "./publicConfig";
 import {
   finishRelayClientInstall,
@@ -453,34 +452,30 @@ export function connectManagedCloudEnvironment(input: {
 export function readPrimaryCloudLinkState(): Effect.Effect<
   CloudLinkState | null,
   CloudEnvironmentLinkError,
-  HttpClient.HttpClient
+  PrimaryEnvironmentHttpClient
 > {
   return Effect.gen(function* () {
     if (!readPrimaryCloudLinkTarget()) {
       return null;
     }
-    const client = yield* makeEnvironmentHttpApiClient(resolvePrimaryEnvironmentHttpUrl("/"));
+    const client = yield* PrimaryEnvironmentHttpClient;
     return yield* client.connect
       .linkState({ headers: {} })
-      .pipe(
-        withPrimaryEnvironmentRequestInit,
-        Effect.mapError(environmentApiError("Could not read environment cloud link state.")),
-      );
+      .pipe(Effect.mapError(environmentApiError("Could not read environment cloud link state.")));
   });
 }
 
 export function updatePrimaryCloudPreferences(input: {
   readonly publishAgentActivity: boolean;
-}): Effect.Effect<CloudLinkState, CloudEnvironmentLinkError, HttpClient.HttpClient> {
+}): Effect.Effect<CloudLinkState, CloudEnvironmentLinkError, PrimaryEnvironmentHttpClient> {
   return Effect.gen(function* () {
-    const client = yield* makeEnvironmentHttpApiClient(resolvePrimaryEnvironmentHttpUrl("/"));
+    const client = yield* PrimaryEnvironmentHttpClient;
     return yield* client.connect
       .preferences({
         headers: {},
         payload: input,
       })
       .pipe(
-        withPrimaryEnvironmentRequestInit,
         Effect.mapError(environmentApiError("Could not update environment cloud preferences.")),
       );
   });
@@ -488,7 +483,11 @@ export function updatePrimaryCloudPreferences(input: {
 
 export function unlinkPrimaryEnvironmentFromCloud(input: {
   readonly clerkToken: string | null;
-}): Effect.Effect<void, CloudEnvironmentLinkError, HttpClient.HttpClient | ManagedRelayClient> {
+}): Effect.Effect<
+  void,
+  CloudEnvironmentLinkError,
+  PrimaryEnvironmentHttpClient | ManagedRelayClient
+> {
   return Effect.gen(function* () {
     const target = readPrimaryCloudLinkTarget();
     if (!target) {
@@ -496,13 +495,10 @@ export function unlinkPrimaryEnvironmentFromCloud(input: {
         message: "Local environment is not ready yet.",
       });
     }
-    const client = yield* makeEnvironmentHttpApiClient(resolvePrimaryEnvironmentHttpUrl("/"));
+    const client = yield* PrimaryEnvironmentHttpClient;
     yield* client.connect
       .unlink({ headers: {} })
-      .pipe(
-        withPrimaryEnvironmentRequestInit,
-        Effect.mapError(environmentApiError("Could not unlink the environment from cloud.")),
-      );
+      .pipe(Effect.mapError(environmentApiError("Could not unlink the environment from cloud.")));
 
     const configuredRelayUrl = relayUrl();
     if (configuredRelayUrl && input.clerkToken) {
@@ -631,7 +627,11 @@ export function linkEnvironmentToCloud(input: {
 
 export function linkPrimaryEnvironmentToCloud(input: {
   readonly clerkToken: string;
-}): Effect.Effect<void, CloudEnvironmentLinkError, HttpClient.HttpClient | ManagedRelayClient> {
+}): Effect.Effect<
+  void,
+  CloudEnvironmentLinkError,
+  PrimaryEnvironmentHttpClient | ManagedRelayClient
+> {
   return Effect.gen(function* () {
     const configuredRelayUrl = relayUrl();
     if (!configuredRelayUrl) {
@@ -646,7 +646,7 @@ export function linkPrimaryEnvironmentToCloud(input: {
         message: "Local environment is not ready yet.",
       });
     }
-    const environmentClient = yield* makeEnvironmentHttpApiClient(target.httpBaseUrl);
+    const environmentClient = yield* PrimaryEnvironmentHttpClient;
     yield* ensureRelayClientAvailable(getPrimaryEnvironmentConnection().client);
 
     const challenge = yield* relayClient
@@ -679,10 +679,7 @@ export function linkPrimaryEnvironmentToCloud(input: {
           origin: endpointOrigin(target.httpBaseUrl),
         },
       })
-      .pipe(
-        withPrimaryEnvironmentRequestInit,
-        Effect.mapError(environmentApiError("Could not obtain environment link proof.")),
-      );
+      .pipe(Effect.mapError(environmentApiError("Could not obtain environment link proof.")));
     const link = yield* relayClient
       .linkEnvironment({
         clerkToken: input.clerkToken,
@@ -716,9 +713,6 @@ export function linkPrimaryEnvironmentToCloud(input: {
           endpointRuntime: link.endpointRuntime,
         },
       })
-      .pipe(
-        withPrimaryEnvironmentRequestInit,
-        Effect.mapError(environmentApiError("Could not configure environment relay access.")),
-      );
+      .pipe(Effect.mapError(environmentApiError("Could not configure environment relay access.")));
   });
 }
