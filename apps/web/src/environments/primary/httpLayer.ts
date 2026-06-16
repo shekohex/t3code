@@ -31,24 +31,28 @@ function withPrimaryBearerToken(client: HttpClient.HttpClient): HttpClient.HttpC
   );
 }
 
-export const primaryEnvironmentHttpLayer = Layer.unwrap(
-  Effect.sync(() => {
-    const baseLayer = remoteHttpClientLayer(globalThis.fetch);
-    if (isSameOriginBrowserPrimary()) {
+export function makePrimaryEnvironmentHttpLayer() {
+  return Layer.unwrap(
+    Effect.sync(() => {
+      const baseLayer = remoteHttpClientLayer(globalThis.fetch);
+      if (isSameOriginBrowserPrimary()) {
+        return Layer.merge(
+          baseLayer,
+          Layer.succeed(FetchHttpClient.RequestInit, { credentials: "include" }),
+        );
+      }
+
+      const bearerClientLayer = Layer.effect(
+        HttpClient.HttpClient,
+        Effect.map(HttpClient.HttpClient, withPrimaryBearerToken),
+      ).pipe(Layer.provide(baseLayer));
+
       return Layer.merge(
-        baseLayer,
-        Layer.succeed(FetchHttpClient.RequestInit, { credentials: "include" }),
+        bearerClientLayer,
+        Layer.succeed(FetchHttpClient.RequestInit, { credentials: "omit" }),
       );
-    }
+    }),
+  );
+}
 
-    const bearerClientLayer = Layer.effect(
-      HttpClient.HttpClient,
-      Effect.map(HttpClient.HttpClient, withPrimaryBearerToken),
-    ).pipe(Layer.provide(baseLayer));
-
-    return Layer.merge(
-      bearerClientLayer,
-      Layer.succeed(FetchHttpClient.RequestInit, { credentials: "omit" }),
-    );
-  }),
-);
+export const primaryEnvironmentHttpLayer = makePrimaryEnvironmentHttpLayer();

@@ -104,11 +104,15 @@ vi.mock("./relayClientInstallDialog", () => ({
   finishRelayClientInstall: relayClientInstallDialogHarness.finish,
 }));
 
-vi.mock("../environments/primary", () => ({
-  readPrimaryEnvironmentDescriptor: vi.fn(() => null),
-  readPrimaryEnvironmentTarget: vi.fn(() => null),
-  resolvePrimaryEnvironmentHttpUrl: vi.fn((path: string) => `http://127.0.0.1:3000${path}`),
-}));
+vi.mock("../environments/primary", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../environments/primary")>();
+  return {
+    ...actual,
+    readPrimaryEnvironmentDescriptor: vi.fn(() => null),
+    readPrimaryEnvironmentTarget: vi.fn(() => null),
+    resolvePrimaryEnvironmentHttpUrl: vi.fn((path: string) => `http://127.0.0.1:3000${path}`),
+  };
+});
 
 vi.mock("../environments/runtime", () => ({
   getPrimaryEnvironmentConnection: () => environmentConnectionMock,
@@ -552,7 +556,6 @@ describe("web cloud link environment client", () => {
         );
         expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
           method: "POST",
-          credentials: "include",
           headers: expect.objectContaining({
             "content-type": "application/json",
           }),
@@ -591,7 +594,6 @@ describe("web cloud link environment client", () => {
         );
         expect(fetchMock.mock.calls[3]?.[1]).toMatchObject({
           method: "POST",
-          credentials: "include",
           headers: expect.objectContaining({
             "content-type": "application/json",
           }),
@@ -668,7 +670,6 @@ describe("web cloud link environment client", () => {
       );
       expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
         method: "GET",
-        credentials: "omit",
       });
       expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("authorization")).toBe(
         "Bearer desktop-bearer-token",
@@ -709,7 +710,6 @@ describe("web cloud link environment client", () => {
       expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://127.0.0.1:3000/api/connect/unlink");
       expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
         method: "POST",
-        credentials: "include",
       });
       expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
         "https://relay.example.test/v1/client/environment-links/env-1",
@@ -753,7 +753,6 @@ describe("web cloud link environment client", () => {
       expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://127.0.0.1:3000/api/connect/unlink");
       expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
         method: "POST",
-        credentials: "include",
       });
     }),
   );

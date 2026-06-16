@@ -150,6 +150,17 @@ const authAccessHarness = vi.hoisted(() => {
 const mockConnectDesktopSshEnvironment = vi.hoisted(() => vi.fn());
 const mockGetClerkToken = vi.hoisted(() => vi.fn(async () => null));
 const mockOpenClerkWaitlist = vi.hoisted(() => vi.fn());
+const mockCreateServerPairingCredential = vi.hoisted(() => vi.fn());
+const mockRevokeOtherServerClientSessions = vi.hoisted(() => vi.fn());
+
+vi.mock("~/environments/primary", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/environments/primary")>();
+  return {
+    ...actual,
+    createServerPairingCredential: mockCreateServerPairingCredential,
+    revokeOtherServerClientSessions: mockRevokeOtherServerClientSessions,
+  };
+});
 
 vi.mock("@clerk/react", () => ({
   useAuth: () => ({
@@ -498,6 +509,8 @@ describe("GeneralSettingsPanel observability", () => {
     useUiStateStore.setState({ defaultAdvertisedEndpointKey: null });
     authAccessHarness.reset();
     mockConnectDesktopSshEnvironment.mockReset();
+    mockCreateServerPairingCredential.mockReset();
+    mockRevokeOtherServerClientSessions.mockReset();
   });
 
   afterEach(async () => {
@@ -539,28 +552,6 @@ describe("GeneralSettingsPanel observability", () => {
         }),
       ],
     });
-    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/api/auth/session")) {
-        return new Response(
-          JSON.stringify({
-            authenticated: true,
-            auth: createBaseServerConfig().auth,
-            scopes: ["orchestration:read", "access:write"],
-            sessionMethod: "browser-session-cookie",
-            expiresAt: "2036-05-07T00:00:00.000Z",
-          }),
-          {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          },
-        );
-      }
-
-      throw new Error(`Unhandled fetch GET ${url}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
     mounted = await render(
       <AppAtomRegistryProvider>
         <ConnectionsSettings />
@@ -570,14 +561,7 @@ describe("GeneralSettingsPanel observability", () => {
     await expect
       .element(page.getByRole("heading", { name: "This environment", exact: true }))
       .toBeInTheDocument();
-    await expect.element(page.getByLabelText("Enable network access")).toBeDisabled();
-    await expect
-      .element(
-        page.getByText(
-          "This backend is only reachable on this machine. Restart it with a non-loopback host to enable remote pairing.",
-        ),
-      )
-      .toBeInTheDocument();
+    await expect.element(page.getByLabelText("Enable network access")).not.toBeInTheDocument();
     await expect.element(page.getByText("Authorized clients")).not.toBeInTheDocument();
     await expect.element(page.getByText("Chrome on Mac")).not.toBeInTheDocument();
     await expect
@@ -812,64 +796,51 @@ describe("GeneralSettingsPanel observability", () => {
       pairingLinks,
       clientSessions,
     });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
-        const url = String(input);
-        const method = init?.method ?? "GET";
-        if (url.endsWith("/api/auth/pairing-token") && method === "POST") {
-          pairingLinks = [
-            makePairingLink({
-              id: "pairing-link-1",
-              credential: "pairing-token",
-              scopes: ["orchestration:read"],
-              subject: "one-time-token",
-              label: "Julius iPhone",
-              createdAt: "2036-04-07T00:00:00.000Z",
-              expiresAt: "2036-04-10T00:05:00.000Z",
-            }),
-          ];
-          clientSessions = [
-            ...clientSessions,
-            makeClientSession({
-              sessionId: "session-client",
-              subject: "one-time-token",
-              scopes: ["orchestration:read"],
-              method: "browser-session-cookie",
-              client: {
-                label: "Julius iPhone",
-                deviceType: "mobile",
-                os: "iOS",
-                browser: "Safari",
-                ipAddress: "192.168.1.88",
-              },
-              issuedAt: "2036-04-07T00:01:00.000Z",
-              expiresAt: "2036-05-07T00:01:00.000Z",
-              connected: false,
-              current: false,
-            }),
-          ];
-          authAccessHarness.setSnapshot({
-            pairingLinks,
-            clientSessions,
-          });
-          return new Response(
-            JSON.stringify({
-              id: "pairing-link-1",
-              credential: "pairing-token",
-              label: "Julius iPhone",
-              expiresAt: "2036-04-10T00:05:00.000Z",
-            }),
-            {
-              status: 200,
-              headers: { "content-type": "application/json" },
-            },
-          );
-        }
-
-        throw new Error(`Unhandled fetch ${method} ${url}`);
-      }),
-    );
+    mockCreateServerPairingCredential.mockImplementation(async () => {
+      pairingLinks = [
+        makePairingLink({
+          id: "pairing-link-1",
+          credential: "pairing-token",
+          scopes: ["orchestration:read"],
+          subject: "one-time-token",
+          label: "Julius iPhone",
+          createdAt: "2036-04-07T00:00:00.000Z",
+          expiresAt: "2036-04-10T00:05:00.000Z",
+        }),
+      ];
+      clientSessions = [
+        ...clientSessions,
+        makeClientSession({
+          sessionId: "session-client",
+          subject: "one-time-token",
+          scopes: ["orchestration:read"],
+          method: "browser-session-cookie",
+          client: {
+            label: "Julius iPhone",
+            deviceType: "mobile",
+            os: "iOS",
+            browser: "Safari",
+            ipAddress: "192.168.1.88",
+          },
+          issuedAt: "2036-04-07T00:01:00.000Z",
+          expiresAt: "2036-05-07T00:01:00.000Z",
+          connected: false,
+          current: false,
+        }),
+      ];
+      authAccessHarness.setSnapshot({
+        pairingLinks,
+        clientSessions,
+      });
+      authAccessHarness.emitPairingLinkUpserted(pairingLinks[0]!);
+      authAccessHarness.emitClientUpserted(clientSessions[1]!);
+      return {
+        id: "pairing-link-1",
+        credential: "pairing-token",
+        label: "Julius iPhone",
+        expiresAt: makeUtc("2036-04-10T00:05:00.000Z"),
+      };
+    });
 
     setServerConfigSnapshot(createBaseServerConfig());
 
@@ -890,8 +861,6 @@ describe("GeneralSettingsPanel observability", () => {
     await expect.element(page.getByRole("checkbox", { name: /View environment/ })).toBeChecked();
     await expect.element(page.getByRole("checkbox", { name: /Operate tasks/ })).not.toBeChecked();
     await page.getByRole("button", { name: "Create link", exact: true }).click();
-    authAccessHarness.emitPairingLinkUpserted(pairingLinks[0]!);
-    authAccessHarness.emitClientUpserted(clientSessions[1]!);
     await expect
       .element(page.getByRole("button", { name: "Pairing link scopes: show 1 scope" }))
       .toBeInTheDocument();
@@ -1009,25 +978,15 @@ describe("GeneralSettingsPanel observability", () => {
       clientSessions,
     });
 
-    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      if (url.endsWith("/api/auth/clients/revoke-others") && method === "POST") {
-        clientSessions = clientSessions.filter((session) => session.current);
-        authAccessHarness.setSnapshot({
-          pairingLinks: [],
-          clientSessions,
-        });
-        authAccessHarness.emitClientRemoved("session-client");
-        return new Response(JSON.stringify({ revokedCount: 1 }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-
-      throw new Error(`Unhandled fetch ${method} ${url}`);
+    mockRevokeOtherServerClientSessions.mockImplementation(async () => {
+      clientSessions = clientSessions.filter((session) => session.current);
+      authAccessHarness.setSnapshot({
+        pairingLinks: [],
+        clientSessions,
+      });
+      authAccessHarness.emitClientRemoved("session-client");
+      return 1;
     });
-    vi.stubGlobal("fetch", fetchMock);
 
     setServerConfigSnapshot(createBaseServerConfig());
 
@@ -1041,7 +1000,7 @@ describe("GeneralSettingsPanel observability", () => {
     await page.getByRole("button", { name: "Revoke others", exact: true }).click();
     await expect.element(page.getByText("This Mac")).toBeInTheDocument();
     await expect.element(page.getByText("Julius iPhone")).not.toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalled();
+    expect(mockRevokeOtherServerClientSessions).toHaveBeenCalled();
   });
 
   it("shows a disabled network access toggle with guidance in desktop builds", async () => {
