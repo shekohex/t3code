@@ -138,6 +138,26 @@ describe("ChatMarkdown", () => {
     }
   });
 
+  it("catches up to the latest markdown while streaming", async () => {
+    const screen = await render(
+      <ChatMarkdown text="[initial.ts](src/initial.ts)" cwd="/repo/project" isStreaming />,
+    );
+
+    try {
+      await expect.element(page.getByRole("link", { name: "initial.ts" })).toBeInTheDocument();
+
+      await screen.rerender(
+        <ChatMarkdown text="[updated.ts](src/updated.ts#L12)" cwd="/repo/project" isStreaming />,
+      );
+
+      await vi.waitFor(async () => {
+        await expect.element(page.getByRole("link", { name: "updated.ts · L12" })).toBeVisible();
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("disambiguates duplicate file basenames inline", async () => {
     const firstPath = "/Users/yashsingh/p/t3code/apps/web/src/components/chat/MessagesTimeline.tsx";
     const secondPath = "/Users/yashsingh/p/t3code/apps/web/src/components/MessagesTimeline.tsx";
