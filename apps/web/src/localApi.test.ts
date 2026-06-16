@@ -273,6 +273,8 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
     },
     onUpdateState: () => () => undefined,
     ...overrides,
+    getLocalEnvironmentBearerToken:
+      overrides.getLocalEnvironmentBearerToken ?? (async () => "desktop-bearer-token"),
   };
 }
 

@@ -34,6 +34,8 @@ export {
 
 export { refreshPrimarySessionState, usePrimarySessionState } from "./sessionState";
 
+export { PrimaryEnvironmentHttpClient } from "./httpClient";
+
 export {
   readPrimaryEnvironmentTarget,
   resolvePrimaryEnvironmentHttpUrl,

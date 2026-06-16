@@ -1,3 +1,4 @@
+import type { DesktopBridge } from "@t3tools/contracts";
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayWebClientId } from "@t3tools/contracts/relay";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
@@ -14,6 +15,11 @@ import {
 
 import type { SavedEnvironmentRecord } from "../environments/runtime";
 import {
+  PrimaryEnvironmentHttpClient,
+  primaryEnvironmentHttpClientLive,
+} from "../environments/primary/httpClient";
+import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
+import {
   connectManagedCloudEnvironment,
   linkEnvironmentToCloud,
   linkPrimaryEnvironmentToCloud,
@@ -27,6 +33,7 @@ import {
   readPrimaryEnvironmentTarget,
   resolvePrimaryEnvironmentHttpUrl,
 } from "../environments/primary";
+import { __resetDesktopPrimaryAuthForTests } from "../environments/primary/desktopAuth";
 
 const getSavedEnvironmentSecretMock = vi.fn();
 const relayClientInstallDialogHarness = vi.hoisted(() => ({
@@ -59,8 +66,12 @@ const testDpopSignerLayer = Layer.succeed(
 
 function cloudClientLayer() {
   const httpClientLayer = remoteHttpClientLayer(globalThis.fetch);
+  const primaryHttpClientLayer = primaryEnvironmentHttpClientLive.pipe(
+    Layer.provide(primaryEnvironmentHttpLayer),
+  );
   return Layer.mergeAll(
     httpClientLayer,
+    primaryHttpClientLayer,
     managedRelayClientLayer({
       relayUrl: "https://relay.example.test",
       clientId: RelayWebClientId,
@@ -69,7 +80,14 @@ function cloudClientLayer() {
 }
 
 const withCloudServices = <A, E>(
-  effect: Effect.Effect<A, E, HttpClient.HttpClient | ManagedRelayClient | ManagedRelayDpopSigner>,
+  effect: Effect.Effect<
+    A,
+    E,
+    | HttpClient.HttpClient
+    | ManagedRelayClient
+    | ManagedRelayDpopSigner
+    | PrimaryEnvironmentHttpClient
+  >,
 ) => effect.pipe(Effect.provide(cloudClientLayer()));
 
 vi.mock("../localApi", () => ({
@@ -132,9 +150,8 @@ function requestBodyText(body: BodyInit | null | undefined): string {
 
 describe("web cloud link environment client", () => {
   afterEach(() => {
-    if ("window" in globalThis) {
-      Reflect.deleteProperty(window, "desktopBridge");
-    }
+    __resetDesktopPrimaryAuthForTests();
+    Reflect.deleteProperty(globalThis, "window");
     vi.unstubAllGlobals();
   });
 
@@ -152,6 +169,15 @@ describe("web cloud link environment client", () => {
     vi.mocked(resolvePrimaryEnvironmentHttpUrl).mockImplementation(
       (path: string) => `http://127.0.0.1:3000${path}`,
     );
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: {
+          href: "http://127.0.0.1:3000/settings",
+          origin: "http://127.0.0.1:3000",
+        },
+      },
+    });
   });
 
   it("normalizes configured relay base URLs before building relay requests", () => {
@@ -579,7 +605,7 @@ describe("web cloud link environment client", () => {
       }),
   );
 
-  it.effect("reads the primary local cloud link state with the owner cookie session", () =>
+  it.effect("reads desktop primary cloud link state with the desktop bearer token", () =>
     Effect.gen(function* () {
       vi.mocked(readPrimaryEnvironmentDescriptor).mockReturnValue({
         environmentId: EnvironmentId.make("env-1"),
@@ -605,6 +631,21 @@ describe("web cloud link environment client", () => {
         }),
       );
       vi.stubGlobal("fetch", fetchMock);
+      Object.defineProperty(globalThis, "window", {
+        configurable: true,
+        value: {
+          location: { origin: "t3code://app" },
+          desktopBridge: {
+            getLocalEnvironmentBootstrap: () => ({
+              label: "Local environment",
+              httpBaseUrl: "http://127.0.0.1:3000",
+              wsBaseUrl: "ws://127.0.0.1:3000",
+              bootstrapToken: "desktop-bootstrap-token",
+            }),
+            getLocalEnvironmentBearerToken: vi.fn().mockResolvedValue("desktop-bearer-token"),
+          } as unknown as DesktopBridge,
+        },
+      });
 
       const state = yield* withCloudServices(readPrimaryCloudLinkState());
       expect(state).toEqual({
@@ -619,8 +660,11 @@ describe("web cloud link environment client", () => {
       );
       expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
         method: "GET",
-        credentials: "include",
+        credentials: "omit",
       });
+      expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("authorization")).toBe(
+        "Bearer desktop-bearer-token",
+      );
     }),
   );
 

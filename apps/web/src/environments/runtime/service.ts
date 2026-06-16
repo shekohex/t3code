@@ -29,6 +29,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
   createKnownEnvironment,
+  getKnownEnvironmentHttpBaseUrl,
   getKnownEnvironmentWsBaseUrl,
   scopedThreadKey,
   scopeProjectRef,
@@ -44,6 +45,7 @@ import { ensureLocalApi } from "~/localApi";
 import { collectActiveTerminalUiThreadKeys } from "~/lib/terminalUiStateCleanup";
 import { deriveOrchestrationBatchEffects } from "~/orchestrationEventEffects";
 import { getPrimaryKnownEnvironment } from "../primary";
+import { readDesktopPrimaryBearerToken } from "../primary/desktopAuth";
 import { webRuntime } from "../../lib/runtime";
 import { connectManagedCloudEnvironment } from "../../cloud/linkEnvironment";
 import { readManagedRelayClerkToken } from "../../cloud/managedAuth";
@@ -1162,11 +1164,30 @@ function createPrimaryEnvironmentClient(
   const connectionLabel = knownEnvironment?.label ?? null;
 
   return createWsRpcClient(
-    new WsTransport(wsBaseUrl, {
-      getConnectionLabel: () => connectionLabel,
-      getVersionMismatchHint: () =>
-        resolveServerConfigVersionMismatch(getServerConfig())?.hint ?? null,
-    }),
+    new WsTransport(
+      async () => {
+        const bearerToken = await readDesktopPrimaryBearerToken();
+        if (!bearerToken) {
+          return wsBaseUrl;
+        }
+        const httpBaseUrl = getKnownEnvironmentHttpBaseUrl(knownEnvironment);
+        if (!httpBaseUrl) {
+          throw new Error("Unable to resolve HTTP URL for the primary environment.");
+        }
+        return await webRuntime.runPromise(
+          resolveRemoteWebSocketConnectionUrl({
+            wsBaseUrl,
+            httpBaseUrl,
+            bearerToken,
+          }),
+        );
+      },
+      {
+        getConnectionLabel: () => connectionLabel,
+        getVersionMismatchHint: () =>
+          resolveServerConfigVersionMismatch(getServerConfig())?.hint ?? null,
+      },
+    ),
   );
 }
 
