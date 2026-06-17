@@ -11,7 +11,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
-import * as ElectronSafeStorage from "../electron/ElectronSafeStorageService.ts";
+import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 interface CloudAuthTokenDocument {

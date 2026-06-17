@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import * as ElectronSafeStorage from "../electron/ElectronSafeStorageService.ts";
+import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopCloudAuthTokenStore from "./DesktopCloudAuthTokenStore.ts";

@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 import * as Ref from "effect/Ref";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import * as ElectronSafeStorage from "../electron/ElectronSafeStorageService.ts";
+import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 
 type PersistedSavedEnvironmentDesktopSsh = NonNullable<
   PersistedSavedEnvironmentRecord["desktopSsh"]

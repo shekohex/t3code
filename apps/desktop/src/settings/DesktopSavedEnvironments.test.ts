@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import * as ElectronSafeStorage from "../electron/ElectronSafeStorageService.ts";
+import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "./DesktopSavedEnvironments.ts";
 
 const textDecoder = new TextDecoder();
