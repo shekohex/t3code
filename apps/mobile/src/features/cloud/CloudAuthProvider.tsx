@@ -59,6 +59,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     if (!isLoaded) {
+      deactivateCloudRelayAccount();
       return;
     }
 

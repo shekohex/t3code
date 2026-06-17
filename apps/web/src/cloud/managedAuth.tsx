@@ -49,6 +49,7 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
 
   useEffect(() => {
     if (!isLoaded) {
+      deactivateManagedRelayAuthentication();
       return;
     }
 
