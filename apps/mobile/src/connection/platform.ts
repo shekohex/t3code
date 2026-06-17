@@ -12,7 +12,7 @@ import {
   ConnectionWakeups,
   Connectivity,
 } from "@t3tools/client-runtime/connection";
-import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
+import { managedRelayAccountChanges, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import { AuthStandardClientScopes } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -81,15 +81,8 @@ const wakeupsLayer = Layer.succeed(
           (subscription) => Effect.sync(() => subscription.remove()),
         ).pipe(Effect.asVoid),
       ),
-      Stream.callback<"credentials-changed">((queue) =>
-        Effect.acquireRelease(
-          Effect.sync(() =>
-            appAtomRegistry.subscribe(managedRelaySessionAtom, () => {
-              Queue.offerUnsafe(queue, "credentials-changed");
-            }),
-          ),
-          (unsubscribe) => Effect.sync(unsubscribe),
-        ).pipe(Effect.asVoid),
+      managedRelayAccountChanges(appAtomRegistry).pipe(
+        Stream.map(() => "credentials-changed" as const),
       ),
     ),
   }),

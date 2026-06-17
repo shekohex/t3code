@@ -19,7 +19,7 @@ import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useUiStateStore } from "../uiStateStore";
 import { useSettings } from "./useSettings";
 
-function useNewThreadState() {
+export function useNewThreadHandler() {
   const projects = useProjects();
   const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
   const router = useRouter();
@@ -137,14 +137,6 @@ function useNewThreadState() {
   );
 }
 
-export function useNewThreadHandler() {
-  const handleNewThread = useNewThreadState();
-
-  return {
-    handleNewThread,
-  };
-}
-
 export function useHandleNewThread() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const routeTarget = useParams({
@@ -169,7 +161,7 @@ export function useHandleNewThread() {
       getId: getProjectOrderKey,
     });
   }, [projectOrder, projects]);
-  const handleNewThread = useNewThreadState();
+  const handleNewThread = useNewThreadHandler();
 
   return {
     activeDraftThread,

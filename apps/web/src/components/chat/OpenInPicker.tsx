@@ -1,5 +1,4 @@
 import { EditorId, type EnvironmentId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { useAtomSet } from "@effect/atom-react";
 import { memo, useCallback, useEffect, useMemo } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
@@ -34,6 +33,7 @@ import {
 } from "../JetBrainsIcons";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { shellEnvironment } from "~/state/shell";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
   const baseOptions: ReadonlyArray<{ label: string; Icon: Icon; value: EditorId }> = [
@@ -166,9 +166,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   compact?: boolean;
   enableShortcut?: boolean;
 }) {
-  const openInEditorMutation = useAtomSet(shellEnvironment.openInEditor, {
-    mode: "promise",
-  });
+  const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
   const options = useMemo(
     () => resolveOptions(navigator.platform, availableEditors),
@@ -181,7 +179,7 @@ export const OpenInPicker = memo(function OpenInPicker({
       if (!openInCwd) return;
       const editor = editorId ?? preferredEditor;
       if (!editor) return;
-      void openInEditorMutation({
+      const result = openInEditorMutation({
         environmentId,
         input: {
           cwd: openInCwd,
@@ -189,6 +187,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         },
       });
       setPreferredEditor(editor);
+      return result;
     },
     [environmentId, openInCwd, openInEditorMutation, preferredEditor, setPreferredEditor],
   );

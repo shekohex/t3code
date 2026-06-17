@@ -1,4 +1,3 @@
-import { useAtomSet } from "@effect/atom-react";
 import { DEFAULT_TERMINAL_ID, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { SymbolView } from "expo-symbols";
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
@@ -6,6 +5,7 @@ import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { terminalEnvironment } from "../../state/terminal";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useAttachedTerminalSession } from "../../state/use-terminal-session";
 import { TerminalSurface } from "./NativeTerminalSurface";
 import { hasNativeTerminalSurface } from "./nativeTerminalModule";
@@ -30,8 +30,8 @@ const DEFAULT_TERMINAL_ROWS = 24;
 export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
   props: ThreadTerminalPanelProps,
 ) {
-  const writeTerminal = useAtomSet(terminalEnvironment.write, { mode: "promise" });
-  const resizeTerminal = useAtomSet(terminalEnvironment.resize, { mode: "promise" });
+  const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
+  const resizeTerminal = useAtomCommand(terminalEnvironment.resize, "terminal resize");
   const nativeTerminalAvailable = hasNativeTerminalSurface();
   const terminalId = DEFAULT_TERMINAL_ID;
   const lastGridSizeRef = useRef<TerminalGridSize>({

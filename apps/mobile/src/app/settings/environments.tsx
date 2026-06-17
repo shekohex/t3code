@@ -142,16 +142,12 @@ function ConfiguredCloudEnvironmentRows(props: {
     props.connectedCloudEnvironments.length > 0 || availableCloudEnvironments.length > 0;
 
   const handleConnectCloudEnvironment = useCallback(
-    (entry: RelayEnvironmentView) => {
-      void controller.connectRelayEnvironment(entry.environment);
-    },
+    (entry: RelayEnvironmentView) => controller.connectRelayEnvironment(entry.environment),
     [controller],
   );
 
   const handleDisconnectCloudEnvironment = useCallback(
-    (environmentId: EnvironmentId) => {
-      void controller.removeEnvironment(environmentId);
-    },
+    (environmentId: EnvironmentId) => controller.removeEnvironment(environmentId),
     [controller],
   );
 

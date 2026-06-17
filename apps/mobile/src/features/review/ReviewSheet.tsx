@@ -16,8 +16,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
-import { useEnvironmentConnectionActions } from "../../state/environments";
+import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
@@ -119,7 +120,7 @@ export function ReviewSheet() {
     threadId: ThreadId;
   }>();
   const environment = useEnvironmentPresentation(environmentId);
-  const environmentActions = useEnvironmentConnectionActions();
+  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const { draftMessage } = useThreadDraftForThread({ environmentId, threadId });
   const reviewCache = useReviewCacheForThread({ environmentId, threadId });
@@ -208,8 +209,8 @@ export function ReviewSheet() {
     hasAnyCachedDiff,
   });
   const handleRetryEnvironment = useCallback(() => {
-    void environmentActions.retryNow(environmentId);
-  }, [environmentActions, environmentId]);
+    void retryEnvironment(environmentId);
+  }, [environmentId, retryEnvironment]);
 
   const listHeader = useMemo(() => {
     const children: ReactElement[] = [];

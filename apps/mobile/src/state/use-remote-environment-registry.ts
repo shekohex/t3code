@@ -2,8 +2,9 @@ import { useAtomValue } from "@effect/atom-react";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { ServerConfig } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import { Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 import { Alert } from "react-native";
 
@@ -162,25 +163,24 @@ export function useRemoteConnections() {
 
   const onConnectPress = useCallback(
     async (pairingUrl?: string) => {
-      try {
-        const nextPairingUrl = pairingUrl ?? connectionPairingUrl;
-        setPendingConnectionError(null);
-        await controller.connectPairingUrl(nextPairingUrl);
-        appAtomRegistry.set(connectionPairingUrlAtom, "");
-      } catch (error) {
+      const nextPairingUrl = pairingUrl ?? connectionPairingUrl;
+      setPendingConnectionError(null);
+      const result = await controller.connectPairingUrl(nextPairingUrl);
+      if (AsyncResult.isFailure(result)) {
+        const error = Cause.squash(result.cause);
         const message =
           error instanceof Error ? error.message : "Failed to pair with the environment.";
         setPendingConnectionError(message);
-        throw error;
+      } else {
+        appAtomRegistry.set(connectionPairingUrlAtom, "");
       }
+      return result;
     },
     [connectionPairingUrl, controller],
   );
 
   const onReconnectEnvironment = useCallback(
-    (environmentId: EnvironmentId) => {
-      void controller.retryEnvironment(environmentId);
-    },
+    (environmentId: EnvironmentId) => controller.retryEnvironment(environmentId),
     [controller],
   );
   const onUpdateEnvironment = useCallback(

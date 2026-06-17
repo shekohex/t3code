@@ -7,15 +7,16 @@ import {
   type GitStackedAction,
   WS_METHODS,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Atom, type AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { runStream } from "../rpc/client.ts";
-import { runStreamInEnvironment } from "./runtime.ts";
+import { runStreamInEnvironment, type AtomCommandResult } from "./runtime.ts";
 
 export type VcsActionOperation =
   | "refresh_status"
@@ -421,34 +422,41 @@ export function createVcsActionManager<R, E>(
       const key = getVcsActionTargetKey(target);
       return runStackedActionFamily(key ?? unavailableTargetKey);
     },
-    track: async <A>(
+    track: async <A, E>(
       registry: AtomRegistry.AtomRegistry,
       target: VcsActionTarget,
       input: BeginVcsActionInput,
-      action: () => Promise<A>,
-    ): Promise<A> => {
+      action: () => Promise<AtomCommandResult<A, E>>,
+    ): Promise<AtomCommandResult<A, E | VcsActionUnavailableError>> => {
       const key = getVcsActionTargetKey(target);
       if (key === null) {
-        throw new VcsActionUnavailableError({
-          message: "Source control action is unavailable.",
-        });
+        return AsyncResult.failure<never, VcsActionUnavailableError>(
+          Cause.fail(
+            new VcsActionUnavailableError({
+              message: "Source control action is unavailable.",
+            }),
+          ),
+        );
       }
       const stateAtom = vcsActionStateAtom(key);
       const next = beginVcsActionState(input);
       registry.set(stateAtom, next);
-      try {
-        const result = await action();
-        if (registry.get(stateAtom).actionId === next.actionId) {
-          registry.set(stateAtom, EMPTY_VCS_ACTION_STATE);
-        }
+      const result = await action();
+      const current = registry.get(stateAtom);
+      if (current.actionId !== next.actionId) {
         return result;
-      } catch (error) {
-        const current = registry.get(stateAtom);
-        if (current.actionId === next.actionId) {
-          registry.set(stateAtom, failVcsActionState(input.operation, next.actionId, error));
-        }
-        throw error;
       }
+      if (AsyncResult.isSuccess(result) || Cause.hasInterruptsOnly(result.cause)) {
+        registry.set(stateAtom, EMPTY_VCS_ACTION_STATE);
+      } else {
+        if (registry.get(stateAtom).actionId === next.actionId) {
+          registry.set(
+            stateAtom,
+            failVcsActionState(input.operation, next.actionId, Cause.squash(result.cause)),
+          );
+        }
+      }
+      return result;
     },
     resetError: (
       registry: AtomRegistry.AtomRegistry,

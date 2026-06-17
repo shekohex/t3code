@@ -89,11 +89,11 @@ export interface ThreadComposerProps {
   readonly onPickDraftImages: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
-  readonly onStopThread: () => Promise<void>;
+  readonly onStopThread: () => void;
   readonly onSendMessage: () => Promise<void>;
-  readonly onUpdateModelSelection: (modelSelection: ModelSelection) => Promise<void>;
-  readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => Promise<void>;
-  readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => Promise<void>;
+  readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
+  readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
+  readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
   readonly onReconnectEnvironment: () => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
 }
@@ -466,7 +466,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         );
         setComposerSelection({ start: result.cursor, end: result.cursor });
         onChangeDraftMessage(result.text);
-        void onUpdateInteractionMode(item.command);
+        onUpdateInteractionMode(item.command);
         return;
       }
 
@@ -594,14 +594,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     const modelKey = event.slice("model:".length);
     const option = modelOptions.find((o) => o.key === modelKey);
     if (option) {
-      void props.onUpdateModelSelection(option.selection);
+      props.onUpdateModelSelection(option.selection);
     }
   }
 
   function handleOptionsMenuAction(event: string) {
     const providerOptions = applyProviderOptionMenuEvent(providerOptionDescriptors, event);
     if (providerOptions) {
-      void props.onUpdateModelSelection({
+      props.onUpdateModelSelection({
         ...currentModelSelection,
         options: providerOptions,
       });
@@ -609,12 +609,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
     if (event.startsWith("options:runtime:")) {
       const runtimeMode = event.slice("options:runtime:".length) as RuntimeMode;
-      void props.onUpdateRuntimeMode(runtimeMode);
+      props.onUpdateRuntimeMode(runtimeMode);
       return;
     }
     if (event.startsWith("options:interaction:")) {
       const interactionMode = event.slice("options:interaction:".length) as ProviderInteractionMode;
-      void props.onUpdateInteractionMode(interactionMode);
+      props.onUpdateInteractionMode(interactionMode);
     }
   }
 
@@ -760,11 +760,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           ) : null}
           {!isExpanded ? (
             showStopAction ? (
-              <ControlPill
-                icon="stop.fill"
-                variant="danger"
-                onPress={() => void props.onStopThread()}
-              />
+              <ControlPill icon="stop.fill" variant="danger" onPress={props.onStopThread} />
             ) : (
               <ControlPill
                 icon="arrow.up"
@@ -814,7 +810,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 <ComposerToolbarButton
                   icon="stop.fill"
                   variant="danger"
-                  onPress={() => void props.onStopThread()}
+                  onPress={props.onStopThread}
                   showChevron={false}
                 />
               ) : null}

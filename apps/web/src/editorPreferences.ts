@@ -1,10 +1,24 @@
 import { EDITORS, EditorId, type EnvironmentId } from "@t3tools/contracts";
-import { useAtomSet } from "@effect/atom-react";
+import {
+  mapAtomCommandResult,
+  type AtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
+import * as Cause from "effect/Cause";
+import * as Data from "effect/Data";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
 import { useCallback, useMemo } from "react";
 import { shellEnvironment } from "./state/shell";
+import { useAtomCommand } from "./state/use-atom-command";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
+
+export class PreferredEditorUnavailableError extends Data.TaggedError(
+  "PreferredEditorUnavailableError",
+)<{
+  readonly message: string;
+}> {}
 
 export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
   const [lastEditor, setLastEditor] = useLocalStorage(LAST_EDITOR_KEY, null, EditorId);
@@ -32,25 +46,44 @@ export function useOpenInPreferredEditor(
   environmentId: EnvironmentId | null,
   availableEditors: readonly EditorId[],
 ) {
-  const openInEditor = useAtomSet(shellEnvironment.openInEditor, { mode: "promise" });
+  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
+    reportFailure: false,
+  });
+  type OpenInEditorError = AtomCommandFailure<Awaited<ReturnType<typeof openInEditor>>>;
 
   return useCallback(
-    async (targetPath: string): Promise<EditorId> => {
+    async (
+      targetPath: string,
+    ): Promise<
+      AtomCommandResult<EditorId, OpenInEditorError | PreferredEditorUnavailableError>
+    > => {
       if (environmentId === null) {
-        throw new Error("No environment is selected.");
+        return AsyncResult.failure(
+          Cause.fail(
+            new PreferredEditorUnavailableError({
+              message: "No environment is selected.",
+            }),
+          ),
+        );
       }
       const editor = resolveAndPersistPreferredEditor(availableEditors);
       if (!editor) {
-        throw new Error("No available editors found.");
+        return AsyncResult.failure(
+          Cause.fail(
+            new PreferredEditorUnavailableError({
+              message: "No available editors found.",
+            }),
+          ),
+        );
       }
-      await openInEditor({
+      const result = await openInEditor({
         environmentId,
         input: {
           cwd: targetPath,
           editor,
         },
       });
-      return editor;
+      return mapAtomCommandResult(result, () => editor);
     },
     [availableEditors, environmentId, openInEditor],
   );

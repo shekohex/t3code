@@ -16,7 +16,7 @@ import {
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
-import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
+import { managedRelayAccountChanges, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import { EnvironmentRpcRequestObserver } from "@t3tools/client-runtime/rpc";
 import {
   AuthStandardClientScopes,
@@ -93,15 +93,8 @@ const wakeupsLayer = Layer.succeed(
             }),
         ).pipe(Effect.asVoid),
       ),
-      Stream.callback<"credentials-changed">((queue) =>
-        Effect.acquireRelease(
-          Effect.sync(() =>
-            appAtomRegistry.subscribe(managedRelaySessionAtom, () => {
-              Queue.offerUnsafe(queue, "credentials-changed");
-            }),
-          ),
-          (unsubscribe) => Effect.sync(unsubscribe),
-        ).pipe(Effect.asVoid),
+      managedRelayAccountChanges(appAtomRegistry).pipe(
+        Stream.map(() => "credentials-changed" as const),
       ),
     ),
   }),

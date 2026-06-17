@@ -27,7 +27,7 @@ export function availableCloudEnvironmentPresentation(input: {
     const connectionError = input.status.error ?? "Relay is offline.";
     return {
       connectionError,
-      connectionErrorTraceId: null,
+      connectionErrorTraceId: input.status.traceId ?? null,
       connectionState: "error",
       statusText: connectionError,
     };

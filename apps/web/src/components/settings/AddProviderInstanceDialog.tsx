@@ -115,7 +115,7 @@ interface AddProviderInstanceDialogProps {
 
 export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderInstanceDialogProps) {
   const settings = useSettings();
-  const { updateSettings } = useUpdateSettings();
+  const updateSettings = useUpdateSettings();
 
   const [wizardStep, setWizardStep] = useState(0);
   const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);

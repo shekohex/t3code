@@ -1,10 +1,9 @@
-import { useAtomSet } from "@effect/atom-react";
 import { useCallback } from "react";
 
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { mapAtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
-  DEFAULT_PROVIDER_INTERACTION_MODE,
-  DEFAULT_RUNTIME_MODE,
   CommandId,
   MessageId,
   ThreadId,
@@ -13,12 +12,14 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import { threadEnvironment } from "../../state/threads";
-import { useThreadShells } from "../../state/entities";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { uuidv4 } from "../../lib/uuid";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 
 function deriveThreadTitleFromPrompt(value: string): string {
@@ -31,11 +32,10 @@ function deriveThreadTitleFromPrompt(value: string): string {
   return compact.length <= 72 ? compact : `${compact.slice(0, 69).trimEnd()}...`;
 }
 
-export function useProjectActions() {
-  const startTurn = useAtomSet(threadEnvironment.startTurn, { mode: "promise" });
-  const threads = useThreadShells();
+export function useCreateProjectThread() {
+  const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
 
-  const onCreateThreadWithOptions = useCallback(
+  return useCallback(
     async (input: {
       readonly project: EnvironmentProject;
       readonly modelSelection: ModelSelection;
@@ -53,14 +53,18 @@ export function useProjectActions() {
       const nextTitle = deriveThreadTitleFromPrompt(input.initialMessageText);
 
       if (initialMessageText.length === 0) {
-        return null;
+        const error = new Error("Enter a task before starting the thread.");
+        setPendingConnectionError(error.message);
+        return AsyncResult.failure(Cause.fail(error));
       }
       if (input.envMode === "worktree" && !input.branch) {
-        return null;
+        const error = new Error("Select a base branch before creating a worktree.");
+        setPendingConnectionError(error.message);
+        return AsyncResult.failure(Cause.fail(error));
       }
 
       const isWorktree = input.envMode === "worktree";
-      await startTurn({
+      const result = await startTurn({
         environmentId: input.project.environmentId,
         input: {
           commandId: CommandId.make(metadata.commandId),
@@ -100,46 +104,19 @@ export function useProjectActions() {
           createdAt: metadata.createdAt,
         },
       });
+      if (AsyncResult.isFailure(result)) {
+        const error = Cause.squash(result.cause);
+        setPendingConnectionError(
+          error instanceof Error ? error.message : "The task could not be started.",
+        );
+        return AsyncResult.failure(result.cause);
+      }
+      setPendingConnectionError(null);
 
-      return {
-        environmentId: input.project.environmentId,
-        threadId,
-      };
+      return mapAtomCommandResult(result, () =>
+        scopeThreadRef(input.project.environmentId, threadId),
+      );
     },
     [startTurn],
   );
-
-  const onCreateThread = useCallback(
-    async (project: EnvironmentProject) => {
-      const latestProjectThread =
-        threads.find(
-          (thread) =>
-            thread.environmentId === project.environmentId && thread.projectId === project.id,
-        ) ?? null;
-      const modelSelection =
-        project.defaultModelSelection ?? latestProjectThread?.modelSelection ?? null;
-      if (!modelSelection) {
-        setPendingConnectionError("This project does not have a default model configured yet.");
-        return null;
-      }
-
-      return await onCreateThreadWithOptions({
-        project,
-        modelSelection,
-        envMode: "local",
-        branch: null,
-        worktreePath: null,
-        runtimeMode: DEFAULT_RUNTIME_MODE,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        initialMessageText: "",
-        initialAttachments: [],
-      });
-    },
-    [onCreateThreadWithOptions, threads],
-  );
-
-  return {
-    onCreateThread,
-    onCreateThreadWithOptions,
-  };
 }

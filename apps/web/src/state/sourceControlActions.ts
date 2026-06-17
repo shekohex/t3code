@@ -1,23 +1,31 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import type { VcsActionOperation } from "@t3tools/client-runtime/state/vcs";
+import { useAtomValue } from "@effect/atom-react";
+import type {
+  AtomCommandFailure,
+  AtomCommandResult,
+  AtomCommandSuccess,
+} from "@t3tools/client-runtime/state/runtime";
+import {
+  VcsActionUnavailableError,
+  type VcsActionOperation,
+} from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
   GitActionProgressEvent,
   GitResolvePullRequestResult,
-  GitRunStackedActionResult,
   GitStackedAction,
   SourceControlCloneProtocol,
-  SourceControlPublishRepositoryResult,
   SourceControlRepositoryVisibility,
   ThreadId,
-  VcsPullResult,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { gitEnvironment } from "./git";
 import { useEnvironmentQuery } from "./query";
 import { sourceControlEnvironment } from "./sourceControl";
+import { useAtomCommand } from "./use-atom-command";
 import { vcsActionManager, vcsEnvironment } from "./vcs";
 
 export type SourceControlActionKind =
@@ -32,10 +40,17 @@ export interface SourceControlActionScope {
   readonly cwd: string | null;
 }
 
-interface SourceControlActionState<TArgs extends ReadonlyArray<unknown>, TResult> {
+interface SourceControlActionState<
+  TArgs extends ReadonlyArray<unknown>,
+  R extends AtomCommandResult<unknown, unknown>,
+> {
   readonly isPending: boolean;
   readonly error: unknown;
-  readonly run: (...args: TArgs) => Promise<TResult>;
+  readonly run: (
+    ...args: TArgs
+  ) => Promise<
+    AtomCommandResult<AtomCommandSuccess<R>, AtomCommandFailure<R> | VcsActionUnavailableError>
+  >;
   readonly resetError: () => void;
 }
 
@@ -49,14 +64,17 @@ const ACTION_OPERATION = {
   preparePullRequestThread: "prepare_pull_request_thread",
 } as const satisfies Record<SourceControlActionKind, VcsActionOperation>;
 
-function useAction<TArgs extends ReadonlyArray<unknown>, TResult>(input: {
+function useAction<
+  TArgs extends ReadonlyArray<unknown>,
+  R extends AtomCommandResult<unknown, unknown>,
+>(input: {
   readonly kind: SourceControlActionKind;
   readonly label: string;
   readonly scope: SourceControlActionScope;
-  readonly action: (...args: TArgs) => Promise<TResult>;
+  readonly action: (...args: TArgs) => Promise<R>;
   readonly onSuccess?: () => void;
   readonly managedExternally?: boolean;
-}): SourceControlActionState<TArgs, TResult> {
+}): SourceControlActionState<TArgs, R> {
   const operation = ACTION_OPERATION[input.kind];
   const state = useAtomValue(vcsActionManager.stateAtom(input.scope));
   const ownsState = state.operation === operation;
@@ -66,11 +84,15 @@ function useAction<TArgs extends ReadonlyArray<unknown>, TResult>(input: {
   }, [input.scope, operation]);
 
   const run = useCallback(
-    async (...args: TArgs): Promise<TResult> => {
-      const execute = async () => {
+    async (...args: TArgs) => {
+      const execute = async (): Promise<
+        AtomCommandResult<AtomCommandSuccess<R>, AtomCommandFailure<R>>
+      > => {
         const result = await input.action(...args);
-        input.onSuccess?.();
-        return result;
+        if (AsyncResult.isSuccess(result)) {
+          input.onSuccess?.();
+        }
+        return result as AtomCommandResult<AtomCommandSuccess<R>, AtomCommandFailure<R>>;
       };
       return input.managedExternally === true
         ? execute()
@@ -95,14 +117,20 @@ function useAction<TArgs extends ReadonlyArray<unknown>, TResult>(input: {
   };
 }
 
-function requireScope(scope: SourceControlActionScope, unavailableMessage: string) {
+function resolveScope(scope: SourceControlActionScope) {
   if (scope.environmentId === null || scope.cwd === null) {
-    throw new Error(unavailableMessage);
+    return null;
   }
   return {
     environmentId: scope.environmentId,
     cwd: scope.cwd,
   };
+}
+
+function unavailableResult(message: string) {
+  return AsyncResult.failure<never, VcsActionUnavailableError>(
+    Cause.fail(new VcsActionUnavailableError({ message })),
+  );
 }
 
 export function useSourceControlActionRunning(
@@ -118,9 +146,12 @@ export function useSourceControlActionRunning(
 }
 
 export function useVcsInitAction(scope: SourceControlActionScope) {
-  const init = useAtomSet(vcsEnvironment.init, { mode: "promise" });
+  const init = useAtomCommand(vcsEnvironment.init, { reportFailure: false });
   const action = useCallback(async () => {
-    const target = requireScope(scope, "Git init is unavailable.");
+    const target = resolveScope(scope);
+    if (target === null) {
+      return unavailableResult("Git init is unavailable.");
+    }
     return init({
       environmentId: target.environmentId,
       input: { cwd: target.cwd },
@@ -130,7 +161,7 @@ export function useVcsInitAction(scope: SourceControlActionScope) {
 }
 
 export function useVcsPullAction(scope: SourceControlActionScope) {
-  const pull = useAtomSet(vcsEnvironment.pull, { mode: "promise" });
+  const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
   const status = useEnvironmentQuery(
     scope.environmentId !== null && scope.cwd !== null
       ? vcsEnvironment.status({
@@ -139,8 +170,11 @@ export function useVcsPullAction(scope: SourceControlActionScope) {
         })
       : null,
   );
-  const action = useCallback(async (): Promise<VcsPullResult> => {
-    const target = requireScope(scope, "Git pull is unavailable.");
+  const action = useCallback(async () => {
+    const target = resolveScope(scope);
+    if (target === null) {
+      return unavailableResult("Git pull is unavailable.");
+    }
     return pull({
       environmentId: target.environmentId,
       input: { cwd: target.cwd },
@@ -156,8 +190,8 @@ export function useVcsPullAction(scope: SourceControlActionScope) {
 }
 
 export function useGitStackedAction(scope: SourceControlActionScope) {
-  const runStackedAction = useAtomSet(vcsActionManager.runStackedAction(scope), {
-    mode: "promise",
+  const runStackedAction = useAtomCommand(vcsActionManager.runStackedAction(scope), {
+    reportFailure: false,
   });
   const status = useEnvironmentQuery(
     scope.environmentId !== null && scope.cwd !== null
@@ -176,8 +210,10 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
       featureBranch?: boolean;
       filePaths?: string[];
       onProgress?: (event: GitActionProgressEvent) => void;
-    }): Promise<GitRunStackedActionResult> => {
-      requireScope(scope, "Git action is unavailable.");
+    }) => {
+      if (resolveScope(scope) === null) {
+        return unavailableResult("Git action is unavailable.");
+      }
       return runStackedAction({
         actionId: input.actionId,
         action: input.action,
@@ -201,8 +237,8 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
 }
 
 export function useSourceControlPublishRepositoryAction(scope: SourceControlActionScope) {
-  const publishRepository = useAtomSet(sourceControlEnvironment.publishRepository, {
-    mode: "promise",
+  const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
+    reportFailure: false,
   });
   const status = useEnvironmentQuery(
     scope.environmentId !== null && scope.cwd !== null
@@ -219,8 +255,11 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
       visibility: SourceControlRepositoryVisibility;
       remoteName: string;
       protocol: SourceControlCloneProtocol;
-    }): Promise<SourceControlPublishRepositoryResult> => {
-      const target = requireScope(scope, "Repository publishing is unavailable.");
+    }) => {
+      const target = resolveScope(scope);
+      if (target === null) {
+        return unavailableResult("Repository publishing is unavailable.");
+      }
       return publishRepository({
         environmentId: target.environmentId,
         input: {
@@ -241,12 +280,15 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
 }
 
 export function usePreparePullRequestThreadAction(scope: SourceControlActionScope) {
-  const preparePullRequestThread = useAtomSet(gitEnvironment.preparePullRequestThread, {
-    mode: "promise",
+  const preparePullRequestThread = useAtomCommand(gitEnvironment.preparePullRequestThread, {
+    reportFailure: false,
   });
   const action = useCallback(
     async (input: { reference: string; mode: "local" | "worktree"; threadId?: ThreadId }) => {
-      const target = requireScope(scope, "Pull request thread preparation is unavailable.");
+      const target = resolveScope(scope);
+      if (target === null) {
+        return unavailableResult("Pull request thread preparation is unavailable.");
+      }
       return preparePullRequestThread({
         environmentId: target.environmentId,
         input: {

@@ -5,17 +5,17 @@ import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import { isPreviewSupportedInRuntime, usePreviewStateStore } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
-interface OpenTerminalLinkInPreviewInput {
+interface OpenTerminalLinkInPreviewInput<E> {
   readonly url: string;
   readonly position: { x: number; y: number };
   readonly threadRef: ScopedThreadRef;
-  readonly openPreview: OpenPreviewMutation;
+  readonly openPreview: OpenPreviewMutation<E>;
   readonly localApi: LocalApi;
   readonly fallbackToBrowser: () => void;
 }
 
-export async function openTerminalLinkInPreview(
-  input: OpenTerminalLinkInPreviewInput,
+export async function openTerminalLinkInPreview<E>(
+  input: OpenTerminalLinkInPreviewInput<E>,
 ): Promise<void> {
   const supportsPreview =
     isPreviewableUrl(input.url) &&
@@ -42,16 +42,16 @@ export async function openTerminalLinkInPreview(
   }
 
   if (choice === "open-in-preview") {
-    try {
-      const snapshot = await input.openPreview({
-        environmentId: input.threadRef.environmentId,
-        input: { threadId: input.threadRef.threadId, url: input.url },
-      });
-      usePreviewStateStore.getState().applyServerSnapshot(input.threadRef, snapshot);
-      useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
-    } catch {
+    const result = await input.openPreview({
+      environmentId: input.threadRef.environmentId,
+      input: { threadId: input.threadRef.threadId, url: input.url },
+    });
+    if (result._tag === "Failure") {
       input.fallbackToBrowser();
+      return;
     }
+    usePreviewStateStore.getState().applyServerSnapshot(input.threadRef, result.value);
+    useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
     return;
   }
 

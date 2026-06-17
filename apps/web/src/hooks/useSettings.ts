@@ -10,19 +10,19 @@
  * store.
  */
 import { useCallback, useMemo, useSyncExternalStore } from "react";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
 import {
   type ClientSettingsPatch,
   type ClientSettings,
   DEFAULT_CLIENT_SETTINGS,
-  DEFAULT_UNIFIED_SETTINGS,
   UnifiedSettings,
 } from "@t3tools/contracts/settings";
 import { ensureLocalApi } from "~/localApi";
 import * as Struct from "effect/Struct";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { usePrimaryEnvironment } from "~/state/environments";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -201,9 +201,10 @@ export function useSettings<T = UnifiedSettings>(selector?: (s: UnifiedSettings)
  * persisted via RPC. Client keys go through client persistence.
  */
 export function useUpdateSettings() {
-  const persistServerSettings = useAtomSet(serverEnvironment.updateSettings, {
-    mode: "promise",
-  });
+  const persistServerSettings = useAtomCommand(
+    serverEnvironment.updateSettings,
+    "server settings update",
+  );
   const primaryEnvironment = usePrimaryEnvironment();
   const updateSettings = useCallback(
     (patch: Partial<UnifiedSettings>) => {
@@ -228,14 +229,7 @@ export function useUpdateSettings() {
     [persistServerSettings, primaryEnvironment],
   );
 
-  const resetSettings = useCallback(() => {
-    updateSettings(DEFAULT_UNIFIED_SETTINGS);
-  }, [updateSettings]);
-
-  return {
-    updateSettings,
-    resetSettings,
-  };
+  return updateSettings;
 }
 
 export function __resetClientSettingsPersistenceForTests(): void {

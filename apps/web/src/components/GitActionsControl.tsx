@@ -1,4 +1,8 @@
 import { type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type {
   GitActionProgressEvent,
   GitRunStackedActionResult,
@@ -76,8 +80,8 @@ import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { sourceControlEnvironment } from "~/state/sourceControl";
 import { threadEnvironment } from "~/state/threads";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { vcsEnvironment } from "~/state/vcs";
-import { useAtomSet } from "@effect/atom-react";
 import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -475,23 +479,28 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 
     setPublishError(null);
 
-    void publishRepositoryAction
-      .run({
+    void (async () => {
+      const result = await publishRepositoryAction.run({
         provider: publishProvider,
         repository: publishRepository.trim(),
         visibility: publishVisibility,
         remoteName: publishRemoteName.trim() || "origin",
         protocol: publishProtocol,
-      })
-      .then((result) => {
-        flushSync(() => {
-          setPublishResult(result);
-          setPublishWizardStep(2);
-        });
-      })
-      .catch((err: unknown) => {
-        setPublishError(err instanceof Error ? err.message : "An error occurred.");
       });
+
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          setPublishError(error instanceof Error ? error.message : "An error occurred.");
+        }
+        return;
+      }
+
+      flushSync(() => {
+        setPublishResult(result.value);
+        setPublishWizardStep(2);
+      });
+    })();
   }, [
     canSubmitPublishRepository,
     props.environmentId,
@@ -957,9 +966,10 @@ export default function GitActionsControl({
   activeThreadRef,
   draftId,
 }: GitActionsControlProps) {
-  const updateThreadMetadata = useAtomSet(threadEnvironment.updateMetadata, {
-    mode: "promise",
-  });
+  const updateThreadMetadata = useAtomCommand(
+    threadEnvironment.updateMetadata,
+    "thread branch metadata update",
+  );
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
   const serverConfig = useEnvironmentQuery(
     activeEnvironmentId === null
@@ -1030,7 +1040,7 @@ export default function GitActionsControl({
             branch,
             worktreePath,
           },
-        }).catch(() => undefined);
+        });
 
         return;
       }
@@ -1364,7 +1374,7 @@ export default function GitActionsControl({
             // elapsed description visible until the final success state renders.
             return;
           case "action_failed":
-            // Let the rejected mutation publish the error toast to avoid a
+            // Let the settled mutation publish the error toast to avoid a
             // transient intermediate state before the final failure message.
             return;
         }
@@ -1372,7 +1382,7 @@ export default function GitActionsControl({
         updateActiveProgressToast();
       };
 
-      const promise = runImmediateGitAction.run({
+      const result = await runImmediateGitAction.run({
         actionId,
         action,
         ...(commitMessage ? { commitMessage } : {}),
@@ -1381,78 +1391,84 @@ export default function GitActionsControl({
         onProgress: applyProgressEvent,
       });
 
-      try {
-        const result = await promise;
-        activeGitActionProgressRef.current = null;
-        syncThreadBranchAfterGitAction(result);
-        const closeResultToast = () => {
+      activeGitActionProgressRef.current = null;
+      if (result._tag === "Failure") {
+        if (isAtomCommandInterrupted(result)) {
           toastManager.close(resolvedProgressToastId);
-        };
-
-        const toastCta = result.toast.cta;
-        let toastActionProps: {
-          children: string;
-          onClick: () => void;
-        } | null = null;
-        if (toastCta.kind === "run_action") {
-          toastActionProps = {
-            children: toastCta.label,
-            onClick: () => {
-              closeResultToast();
-              void runGitActionWithToast({
-                action: toastCta.action.kind,
-              });
-            },
-          };
-        } else if (toastCta.kind === "open_pr") {
-          toastActionProps = {
-            children: toastCta.label,
-            onClick: () => {
-              const api = readLocalApi();
-              if (!api) return;
-              closeResultToast();
-              void api.shell.openExternal(toastCta.url);
-            },
-          };
+          return;
         }
 
-        const successToastData = {
-          ...scopedToastData,
-          dismissAfterVisibleMs: 10_000,
-        };
-
-        if (toastActionProps) {
-          toastManager.update(
-            resolvedProgressToastId,
-            stackedThreadToast({
-              type: "success",
-              title: result.toast.title,
-              description: result.toast.description,
-              timeout: 0,
-              actionProps: toastActionProps,
-              data: successToastData,
-            }),
-          );
-        } else {
-          toastManager.update(resolvedProgressToastId, {
-            type: "success",
-            title: result.toast.title,
-            description: result.toast.description,
-            timeout: 0,
-            data: successToastData,
-          });
-        }
-      } catch (err) {
-        activeGitActionProgressRef.current = null;
+        const error = squashAtomCommandFailure(result);
         toastManager.update(
           resolvedProgressToastId,
           stackedThreadToast({
             type: "error",
             title: "Action failed",
-            description: err instanceof Error ? err.message : "An error occurred.",
+            description: error instanceof Error ? error.message : "An error occurred.",
             ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
           }),
         );
+        return;
+      }
+
+      const actionResult = result.value;
+      syncThreadBranchAfterGitAction(actionResult);
+      const closeResultToast = () => {
+        toastManager.close(resolvedProgressToastId);
+      };
+
+      const toastCta = actionResult.toast.cta;
+      let toastActionProps: {
+        children: string;
+        onClick: () => void;
+      } | null = null;
+      if (toastCta.kind === "run_action") {
+        toastActionProps = {
+          children: toastCta.label,
+          onClick: () => {
+            closeResultToast();
+            void runGitActionWithToast({
+              action: toastCta.action.kind,
+            });
+          },
+        };
+      } else if (toastCta.kind === "open_pr") {
+        toastActionProps = {
+          children: toastCta.label,
+          onClick: () => {
+            const api = readLocalApi();
+            if (!api) return;
+            closeResultToast();
+            void api.shell.openExternal(toastCta.url);
+          },
+        };
+      }
+
+      const successToastData = {
+        ...scopedToastData,
+        dismissAfterVisibleMs: 10_000,
+      };
+
+      if (toastActionProps) {
+        toastManager.update(
+          resolvedProgressToastId,
+          stackedThreadToast({
+            type: "success",
+            title: actionResult.toast.title,
+            description: actionResult.toast.description,
+            timeout: 0,
+            actionProps: toastActionProps,
+            data: successToastData,
+          }),
+        );
+      } else {
+        toastManager.update(resolvedProgressToastId, {
+          type: "success",
+          title: actionResult.toast.title,
+          description: actionResult.toast.description,
+          timeout: 0,
+          data: successToastData,
+        });
       }
     },
   );
@@ -1512,27 +1528,43 @@ export default function GitActionsControl({
       return;
     }
     if (quickAction.kind === "run_pull") {
-      const promise = pullAction.run();
-      void toastManager.promise<Awaited<ReturnType<typeof pullAction.run>>, ThreadToastData>(
-        promise,
-        {
-          loading: { title: "Pulling...", data: threadToastData },
-          success: (result) => ({
-            title: result.status === "pulled" ? "Pulled" : "Already up to date",
-            description:
-              result.status === "pulled"
-                ? `Updated ${result.refName} from ${result.upstreamRef ?? "upstream"}`
-                : `${result.refName} is already synchronized.`,
-            data: threadToastData,
-          }),
-          error: (err) => ({
-            title: "Pull failed",
-            description: err instanceof Error ? err.message : "An error occurred.",
-            data: threadToastData,
-          }),
-        },
-      );
-      void promise.catch(() => undefined);
+      const toastId = toastManager.add({
+        type: "loading",
+        title: "Pulling...",
+        timeout: 0,
+        data: threadToastData,
+      });
+      void (async () => {
+        const result = await pullAction.run();
+        if (result._tag === "Failure") {
+          if (isAtomCommandInterrupted(result)) {
+            toastManager.close(toastId);
+            return;
+          }
+          const error = squashAtomCommandFailure(result);
+          toastManager.update(
+            toastId,
+            stackedThreadToast({
+              type: "error",
+              title: "Pull failed",
+              description: error instanceof Error ? error.message : "An error occurred.",
+              ...(threadToastData !== undefined ? { data: threadToastData } : {}),
+            }),
+          );
+          return;
+        }
+
+        const pullResult = result.value;
+        toastManager.update(toastId, {
+          type: "success",
+          title: pullResult.status === "pulled" ? "Pulled" : "Already up to date",
+          description:
+            pullResult.status === "pulled"
+              ? `Updated ${pullResult.refName} from ${pullResult.upstreamRef ?? "upstream"}`
+              : `${pullResult.refName} is already synchronized.`,
+          data: threadToastData,
+        });
+      })();
       return;
     }
     if (quickAction.kind === "show_hint") {
@@ -1593,7 +1625,12 @@ export default function GitActionsControl({
         return;
       }
       const target = resolvePathLinkTarget(filePath, gitCwd);
-      void openInPreferredEditor(target).catch((error) => {
+      void (async () => {
+        const result = await openInPreferredEditor(target);
+        if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+          return;
+        }
+        const error = squashAtomCommandFailure(result);
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -1602,7 +1639,7 @@ export default function GitActionsControl({
             ...(threadToastData !== undefined ? { data: threadToastData } : {}),
           }),
         );
-      });
+      })();
     },
     [gitCwd, openInPreferredEditor, threadToastData],
   );
@@ -1619,7 +1656,21 @@ export default function GitActionsControl({
           size="xs"
           disabled={initAction.isPending}
           onClick={() => {
-            void initAction.run();
+            void (async () => {
+              const result = await initAction.run();
+              if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+                return;
+              }
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Git initialization failed",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                  ...(threadToastData !== undefined ? { data: threadToastData } : {}),
+                }),
+              );
+            })();
           }}
         >
           <GitBranchPlusIcon className="size-3.5" aria-hidden />

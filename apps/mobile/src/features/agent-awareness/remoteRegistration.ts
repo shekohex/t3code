@@ -10,6 +10,11 @@ import {
 } from "@t3tools/contracts/relay";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import { ManagedRelayClient } from "@t3tools/client-runtime/relay";
+import {
+  isAtomCommandInterrupted,
+  settleAsyncResult,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { runtime } from "../../lib/runtime";
@@ -33,7 +38,7 @@ let relayTokenProviderIdentity: string | null = null;
 let deviceRegistrationGeneration = 0;
 let activeDeviceRegistration: {
   readonly input: DeviceRegistrationInput;
-  readonly operation: Promise<void>;
+  operation: Promise<void>;
 } | null = null;
 let pendingDeviceRegistration: {
   readonly input: DeviceRegistrationInput;
@@ -272,9 +277,12 @@ function runRegistrationInBackground(
   operation: Effect.Effect<unknown, unknown, ManagedRelayClient>,
   context: string,
 ): void {
-  void runtime.runPromise(operation).catch((error: unknown) => {
-    logRegistrationError(context, error);
-  });
+  void (async () => {
+    const result = await settleAsyncResult(() => runtime.runPromiseExit(operation));
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      logRegistrationError(context, squashAtomCommandFailure(result));
+    }
+  })();
 }
 
 function mergeDeviceRegistrationInput(
@@ -314,19 +322,24 @@ function startPendingDeviceRegistration(): void {
     hasObservedPushToken: next.input.observedPushToken !== undefined,
     hasPushToStartToken: next.input.pushToStartToken !== undefined,
   });
-  const operation = runtime
-    .runPromise(registerDevice(next.input, generation))
-    .catch((error: unknown) => {
-      logRegistrationError(next.context, error);
-    })
-    .finally(() => {
-      logRegistrationDebug("device registration finished", { generation });
-      if (activeDeviceRegistration?.operation === operation) {
-        activeDeviceRegistration = null;
-      }
-      startPendingDeviceRegistration();
-    });
-  activeDeviceRegistration = { input: next.input, operation };
+  const registration = {
+    input: next.input,
+    operation: Promise.resolve(),
+  };
+  activeDeviceRegistration = registration;
+  registration.operation = (async () => {
+    const result = await settleAsyncResult(() =>
+      runtime.runPromiseExit(registerDevice(next.input, generation)),
+    );
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      logRegistrationError(next.context, squashAtomCommandFailure(result));
+    }
+    logRegistrationDebug("device registration finished", { generation });
+    if (activeDeviceRegistration === registration) {
+      activeDeviceRegistration = null;
+    }
+    startPendingDeviceRegistration();
+  })();
 }
 
 function enqueueDeviceRegistration(input: DeviceRegistrationInput, context: string): void {

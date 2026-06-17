@@ -292,7 +292,7 @@ function DiscoveryItemRow({
 
 function GitFetchIntervalSettings() {
   const automaticGitFetchInterval = useSettings((settings) => settings.automaticGitFetchInterval);
-  const { updateSettings } = useUpdateSettings();
+  const updateSettings = useUpdateSettings();
   const automaticGitFetchIntervalSeconds = durationToSeconds(automaticGitFetchInterval);
   const defaultAutomaticGitFetchIntervalSeconds = durationToSeconds(
     DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,

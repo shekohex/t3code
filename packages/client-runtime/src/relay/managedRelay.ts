@@ -191,6 +191,13 @@ function relayRequestError(message: string) {
     });
 }
 
+function isRejectedDpopAccessToken(error: ManagedRelayClientError): boolean {
+  return (
+    error.relayError?._tag === "RelayAuthInvalidError" &&
+    error.relayError.reason === "invalid_bearer"
+  );
+}
+
 function timeoutRelayRequest(message: string) {
   return <A, E, R>(
     request: Effect.Effect<A, E, R>,
@@ -470,14 +477,80 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
         return { accessToken: token.accessToken, proof, thumbprint };
       });
 
-      const authorizeMobileRegistration = (input: {
-        readonly clerkToken: string;
-        readonly target: DpopProofTarget;
-      }) =>
-        authorize({
-          ...input,
-          scopes: [RelayMobileRegistrationScope],
-        });
+      const invalidateAccessToken = Effect.fn("clientRuntime.managedRelay.invalidateAccessToken")(
+        function* (accessToken: string) {
+          return yield* SynchronizedRef.modifyEffect(cachedTokens, (tokens) => {
+            const nextTokens = tokens.filter((token) => token.accessToken !== accessToken);
+            if (nextTokens.length === tokens.length) {
+              return Effect.succeed([false, tokens] as const);
+            }
+            return (
+              options.accessTokenStore ? options.accessTokenStore.save(nextTokens) : Effect.void
+            ).pipe(Effect.as([true, nextTokens] as const));
+          });
+        },
+      );
+
+      const runDpopRequest = <A>(
+        input: {
+          readonly clerkToken: string;
+          readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
+          readonly target: DpopProofTarget;
+        },
+        request: (
+          authorization: ManagedRelayAuthorization,
+        ) => Effect.Effect<A, ManagedRelayClientError>,
+      ): Effect.Effect<A, ManagedRelayClientError> => {
+        const attempt = (
+          refreshRejectedToken: boolean,
+        ): Effect.Effect<A, ManagedRelayClientError> =>
+          authorize(input).pipe(
+            Effect.flatMap((authorization) =>
+              request(authorization).pipe(
+                Effect.catch((error) => {
+                  if (!isRejectedDpopAccessToken(error)) {
+                    return Effect.fail(error);
+                  }
+                  return invalidateAccessToken(authorization.accessToken).pipe(
+                    Effect.tap((invalidated) =>
+                      Effect.annotateCurrentSpan({
+                        "relay.token_cache.invalidated": invalidated,
+                        "relay.token_cache.invalidation_reason": "invalid_bearer",
+                        "relay.token_cache.retry_after_invalidation": refreshRejectedToken,
+                      }),
+                    ),
+                    Effect.tap((invalidated) =>
+                      invalidated && refreshRejectedToken
+                        ? Effect.logWarning(
+                            "Relay rejected a cached DPoP access token; refreshing it once.",
+                          )
+                        : Effect.void,
+                    ),
+                    Effect.andThen(refreshRejectedToken ? attempt(false) : Effect.fail(error)),
+                  );
+                }),
+              ),
+            ),
+          );
+        return attempt(true);
+      };
+
+      const mobileRegistrationRequest = <A>(
+        input: {
+          readonly clerkToken: string;
+          readonly target: DpopProofTarget;
+        },
+        request: (
+          authorization: ManagedRelayAuthorization,
+        ) => Effect.Effect<A, ManagedRelayClientError>,
+      ) =>
+        runDpopRequest(
+          {
+            ...input,
+            scopes: [RelayMobileRegistrationScope],
+          },
+          request,
+        );
 
       return ManagedRelayClient.of({
         relayUrl,
@@ -561,20 +634,23 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
             yield* Effect.annotateCurrentSpan({
               "environment.id": input.environmentId,
             });
-            const authorization = yield* authorize({
-              clerkToken: input.clerkToken,
-              scopes: input.scopes,
-              target: dpopProofTargets.getEnvironmentStatus(input.environmentId),
-            });
-            return yield* client.dpopClient
-              .getEnvironmentStatus({
-                headers: dpopHeaders(authorization),
-                params: { environmentId: input.environmentId },
-              })
-              .pipe(
-                Effect.mapError(relayRequestError("Could not get relay environment status.")),
-                timeoutRelayRequest("Relay environment status request timed out."),
-              );
+            return yield* runDpopRequest(
+              {
+                clerkToken: input.clerkToken,
+                scopes: input.scopes,
+                target: dpopProofTargets.getEnvironmentStatus(input.environmentId),
+              },
+              (authorization) =>
+                client.dpopClient
+                  .getEnvironmentStatus({
+                    headers: dpopHeaders(authorization),
+                    params: { environmentId: input.environmentId },
+                  })
+                  .pipe(
+                    Effect.mapError(relayRequestError("Could not get relay environment status.")),
+                    timeoutRelayRequest("Relay environment status request timed out."),
+                  ),
+            );
           },
           Effect.withSpan("clientRuntime.managedRelay.getEnvironmentStatus"),
           withRelayClientTracing,
@@ -584,82 +660,95 @@ export function managedRelayClientLayer(options: ManagedRelayClientLayerOptions)
             yield* Effect.annotateCurrentSpan({
               "environment.id": input.environmentId,
             });
-            const authorization = yield* authorize({
-              clerkToken: input.clerkToken,
-              scopes: input.scopes,
-              target: dpopProofTargets.connectEnvironment(input.environmentId),
-            });
-            const payload: RelayEnvironmentConnectRequest = {
-              ...(input.deviceId ? { deviceId: input.deviceId } : {}),
-              clientKeyThumbprint: authorization.thumbprint,
-            };
-            return yield* client.dpopClient
-              .connectEnvironment({
-                headers: dpopHeaders(authorization),
-                params: { environmentId: input.environmentId },
-                payload,
-              })
-              .pipe(
-                Effect.mapError(relayRequestError("Could not connect relay environment.")),
-                timeoutRelayRequest("Relay environment connection timed out."),
-              );
+            return yield* runDpopRequest(
+              {
+                clerkToken: input.clerkToken,
+                scopes: input.scopes,
+                target: dpopProofTargets.connectEnvironment(input.environmentId),
+              },
+              (authorization) => {
+                const payload: RelayEnvironmentConnectRequest = {
+                  ...(input.deviceId ? { deviceId: input.deviceId } : {}),
+                  clientKeyThumbprint: authorization.thumbprint,
+                };
+                return client.dpopClient
+                  .connectEnvironment({
+                    headers: dpopHeaders(authorization),
+                    params: { environmentId: input.environmentId },
+                    payload,
+                  })
+                  .pipe(
+                    Effect.mapError(relayRequestError("Could not connect relay environment.")),
+                    timeoutRelayRequest("Relay environment connection timed out."),
+                  );
+              },
+            );
           },
           Effect.withSpan("clientRuntime.managedRelay.connectEnvironment"),
           withRelayClientTracing,
         ),
         registerDevice: Effect.fnUntraced(
           function* (input) {
-            const authorization = yield* authorizeMobileRegistration({
-              clerkToken: input.clerkToken,
-              target: dpopProofTargets.registerDevice(),
-            });
-            return yield* client.mobile
-              .registerDevice({
-                headers: dpopHeaders(authorization),
-                payload: input.payload,
-              })
-              .pipe(
-                Effect.mapError(relayRequestError("Could not register relay mobile device.")),
-                timeoutRelayRequest("Relay mobile device registration timed out."),
-              );
+            return yield* mobileRegistrationRequest(
+              {
+                clerkToken: input.clerkToken,
+                target: dpopProofTargets.registerDevice(),
+              },
+              (authorization) =>
+                client.mobile
+                  .registerDevice({
+                    headers: dpopHeaders(authorization),
+                    payload: input.payload,
+                  })
+                  .pipe(
+                    Effect.mapError(relayRequestError("Could not register relay mobile device.")),
+                    timeoutRelayRequest("Relay mobile device registration timed out."),
+                  ),
+            );
           },
           Effect.withSpan("clientRuntime.managedRelay.registerDevice"),
           withRelayClientTracing,
         ),
         unregisterDevice: Effect.fnUntraced(
           function* (input) {
-            const authorization = yield* authorizeMobileRegistration({
-              clerkToken: input.clerkToken,
-              target: dpopProofTargets.unregisterDevice(input.deviceId),
-            });
-            return yield* client.mobile
-              .unregisterDevice({
-                headers: dpopHeaders(authorization),
-                params: { deviceId: input.deviceId },
-              })
-              .pipe(
-                Effect.mapError(relayRequestError("Could not unregister relay mobile device.")),
-                timeoutRelayRequest("Relay mobile device unregistration timed out."),
-              );
+            return yield* mobileRegistrationRequest(
+              {
+                clerkToken: input.clerkToken,
+                target: dpopProofTargets.unregisterDevice(input.deviceId),
+              },
+              (authorization) =>
+                client.mobile
+                  .unregisterDevice({
+                    headers: dpopHeaders(authorization),
+                    params: { deviceId: input.deviceId },
+                  })
+                  .pipe(
+                    Effect.mapError(relayRequestError("Could not unregister relay mobile device.")),
+                    timeoutRelayRequest("Relay mobile device unregistration timed out."),
+                  ),
+            );
           },
           Effect.withSpan("clientRuntime.managedRelay.unregisterDevice"),
           withRelayClientTracing,
         ),
         registerLiveActivity: Effect.fnUntraced(
           function* (input) {
-            const authorization = yield* authorizeMobileRegistration({
-              clerkToken: input.clerkToken,
-              target: dpopProofTargets.registerLiveActivity(),
-            });
-            return yield* client.mobile
-              .registerLiveActivity({
-                headers: dpopHeaders(authorization),
-                payload: input.payload,
-              })
-              .pipe(
-                Effect.mapError(relayRequestError("Could not register relay live activity.")),
-                timeoutRelayRequest("Relay Live Activity registration timed out."),
-              );
+            return yield* mobileRegistrationRequest(
+              {
+                clerkToken: input.clerkToken,
+                target: dpopProofTargets.registerLiveActivity(),
+              },
+              (authorization) =>
+                client.mobile
+                  .registerLiveActivity({
+                    headers: dpopHeaders(authorization),
+                    payload: input.payload,
+                  })
+                  .pipe(
+                    Effect.mapError(relayRequestError("Could not register relay live activity.")),
+                    timeoutRelayRequest("Relay Live Activity registration timed out."),
+                  ),
+            );
           },
           Effect.withSpan("clientRuntime.managedRelay.registerLiveActivity"),
           withRelayClientTracing,

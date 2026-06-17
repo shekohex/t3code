@@ -187,7 +187,13 @@ const mockUpdateProvider = vi.hoisted(() =>
 );
 const directAtomMocks = vi.hoisted(() => ({
   authAccessQuery: Symbol("auth-access-query"),
+  connectPairingAction: Symbol("connect-pairing-action"),
+  connectSshEnvironmentAction: Symbol("connect-ssh-environment-action"),
+  environmentRegisterAction: Symbol("environment-register-action"),
+  environmentRemoveAction: Symbol("environment-remove-action"),
+  environmentRetryAction: Symbol("environment-retry-action"),
   openInEditorAction: Symbol("open-in-editor-action"),
+  refreshRelayEnvironmentsAction: Symbol("refresh-relay-environments-action"),
   removeKeybindingAction: Symbol("remove-keybinding-action"),
   refreshProvidersAction: Symbol("refresh-providers-action"),
   signalProcessAction: Symbol("signal-process-action"),
@@ -215,6 +221,24 @@ vi.mock("@effect/atom-react", async (importOriginal) => {
     useAtomSet: (atom: unknown, options: unknown) => {
       if (atom === directAtomMocks.refreshProvidersAction) {
         return mockRefreshProviders;
+      }
+      if (atom === directAtomMocks.connectPairingAction) {
+        return mockConnectPairingEnvironment;
+      }
+      if (atom === directAtomMocks.connectSshEnvironmentAction) {
+        return mockConnectDesktopSshEnvironment;
+      }
+      if (atom === directAtomMocks.environmentRegisterAction) {
+        return mockConnectRelayEnvironment;
+      }
+      if (atom === directAtomMocks.environmentRemoveAction) {
+        return mockRemoveEnvironment;
+      }
+      if (atom === directAtomMocks.environmentRetryAction) {
+        return mockRetryEnvironment;
+      }
+      if (atom === directAtomMocks.refreshRelayEnvironmentsAction) {
+        return mockRefreshRelayEnvironments;
       }
       if (atom === directAtomMocks.updateProviderAction) {
         return mockUpdateProvider;
@@ -264,6 +288,25 @@ vi.mock("../../cloud/linkEnvironmentAtoms", async () => {
     unlinkPrimaryEnvironment: Atom.fn(() => Effect.void),
   };
 });
+
+vi.mock("../../connection/catalog", () => ({
+  environmentCatalog: {
+    register: directAtomMocks.environmentRegisterAction,
+    remove: directAtomMocks.environmentRemoveAction,
+    retryNow: directAtomMocks.environmentRetryAction,
+  },
+}));
+
+vi.mock("../../connection/onboarding", () => ({
+  connectPairing: directAtomMocks.connectPairingAction,
+  connectSshEnvironment: directAtomMocks.connectSshEnvironmentAction,
+}));
+
+vi.mock("../../state/relay", () => ({
+  relayEnvironmentDiscovery: {
+    refresh: directAtomMocks.refreshRelayEnvironmentsAction,
+  },
+}));
 
 vi.mock("../../lib/archivedThreadsState", () => ({
   refreshArchivedThreadsForEnvironment: vi.fn(),
@@ -644,14 +687,6 @@ vi.mock("../../state/environments", async () => {
       refreshing: false,
       offline: false,
       error: EffectOption.none(),
-    }),
-    useEnvironmentActions: () => ({
-      connectPairing: mockConnectPairingEnvironment,
-      connectSshEnvironment: mockConnectDesktopSshEnvironment,
-      connectRelayEnvironment: mockConnectRelayEnvironment,
-      removeEnvironment: mockRemoveEnvironment,
-      retryEnvironment: mockRetryEnvironment,
-      refreshRelayEnvironments: mockRefreshRelayEnvironments,
     }),
     useEnvironmentHttpBaseUrl: () => "http://localhost:3000",
   };

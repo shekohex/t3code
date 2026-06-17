@@ -40,10 +40,19 @@ import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/proje
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
+import {
+  isAtomCommandInterrupted,
+  mapAtomCommandResult,
+  settlePromise,
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -154,6 +163,7 @@ import {
 } from "../lib/elementContext";
 import { appendPreviewAnnotationPrompt } from "../lib/previewAnnotation";
 import { appendReviewCommentsToPrompt, type ReviewCommentContext } from "../reviewCommentContext";
+import { environmentCatalog } from "../connection/catalog";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { projectEnvironment } from "../state/projects";
@@ -167,7 +177,6 @@ import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import {
-  useEnvironmentActions,
   useEnvironmentHttpBaseUrl,
   useEnvironments,
   usePrimaryEnvironment,
@@ -217,7 +226,8 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { RightPanelSheet } from "./RightPanelSheet";
-import { usePreviewActions } from "../state/preview";
+import { previewEnvironment } from "../state/preview";
+import { useAtomCommand } from "../state/use-atom-command";
 import { Button } from "./ui/button";
 import {
   buildVersionMismatchDismissalKey,
@@ -468,10 +478,10 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   keybindings,
   onAddTerminalContext,
 }: PersistentThreadTerminalDrawerProps) {
-  const openTerminal = useAtomSet(terminalEnvironment.open, { mode: "promise" });
-  const writeTerminal = useAtomSet(terminalEnvironment.write, { mode: "promise" });
-  const clearTerminal = useAtomSet(terminalEnvironment.clear, { mode: "promise" });
-  const closeTerminalMutation = useAtomSet(terminalEnvironment.close, { mode: "promise" });
+  const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
+  const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
+  const clearTerminal = useAtomCommand(terminalEnvironment.clear, "terminal clear");
+  const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
   const serverThread = useThreadDetail(threadRef);
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
   const projectRef = serverThread
@@ -622,22 +632,16 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     const terminalId = nextTerminalId(serverOrderedTerminalIds);
     storeSplitTerminal(threadRef, terminalId);
     bumpFocusRequestId();
-    void (async () => {
-      try {
-        await openTerminal({
-          environmentId: threadRef.environmentId,
-          input: {
-            threadId,
-            terminalId,
-            cwd,
-            ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
-            env: runtimeEnv,
-          },
-        });
-      } catch {
-        // Opening failed; the tab is already in the store — user can retry or close it.
-      }
-    })();
+    void openTerminal({
+      environmentId: threadRef.environmentId,
+      input: {
+        threadId,
+        terminalId,
+        cwd,
+        ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
+        env: runtimeEnv,
+      },
+    });
   }, [
     bumpFocusRequestId,
     cwd,
@@ -665,7 +669,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
         env: runtimeEnv,
       },
-    }).catch(() => undefined);
+    });
   }, [
     bumpFocusRequestId,
     cwd,
@@ -685,22 +689,16 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     const terminalId = nextTerminalId(serverOrderedTerminalIds);
     storeNewTerminal(threadRef, terminalId);
     bumpFocusRequestId();
-    void (async () => {
-      try {
-        await openTerminal({
-          environmentId: threadRef.environmentId,
-          input: {
-            threadId,
-            terminalId,
-            cwd,
-            ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
-            env: runtimeEnv,
-          },
-        });
-      } catch {
-        // Opening failed; the tab is already in the store — user can retry or close it.
-      }
-    })();
+    void openTerminal({
+      environmentId: threadRef.environmentId,
+      input: {
+        threadId,
+        terminalId,
+        cwd,
+        ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
+        env: runtimeEnv,
+      },
+    });
   }, [
     bumpFocusRequestId,
     cwd,
@@ -728,16 +726,16 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         writeTerminal({
           environmentId: threadRef.environmentId,
           input: { threadId, terminalId, data: "exit\n" },
-        }).catch(() => undefined);
+        });
 
       void (async () => {
         if (isFinalTerminal) {
           await clearTerminal({
             environmentId: threadRef.environmentId,
             input: { threadId, terminalId },
-          }).catch(() => undefined);
+          });
         }
-        await closeTerminalMutation({
+        const closeResult = await closeTerminalMutation({
           environmentId: threadRef.environmentId,
           input: {
             threadId,
@@ -745,7 +743,10 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
             deleteHistory: true,
           },
         });
-      })().catch(() => fallbackExitWrite());
+        if (closeResult._tag === "Failure" && !isAtomCommandInterrupted(closeResult)) {
+          await fallbackExitWrite();
+        }
+      })();
 
       storeCloseTerminal(threadRef, terminalId);
       bumpFocusRequestId();
@@ -994,41 +995,44 @@ function ChatViewContent(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
-  const updateProject = useAtomSet(projectEnvironment.update, { mode: "promise" });
-  const upsertKeybinding = useAtomSet(serverEnvironment.upsertKeybinding, { mode: "promise" });
-  const openTerminal = useAtomSet(terminalEnvironment.open, { mode: "promise" });
-  const writeTerminal = useAtomSet(terminalEnvironment.write, { mode: "promise" });
-  const clearTerminal = useAtomSet(terminalEnvironment.clear, { mode: "promise" });
-  const closeTerminalMutation = useAtomSet(terminalEnvironment.close, { mode: "promise" });
-  const createThread = useAtomSet(threadEnvironment.create, { mode: "promise" });
-  const deleteThread = useAtomSet(threadEnvironment.delete, { mode: "promise" });
-  const updateThreadMetadata = useAtomSet(threadEnvironment.updateMetadata, {
-    mode: "promise",
+  const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
+  const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
+    reportFailure: false,
   });
-  const setThreadRuntimeMode = useAtomSet(threadEnvironment.setRuntimeMode, {
-    mode: "promise",
+  const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
+  const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
+  const clearTerminal = useAtomCommand(terminalEnvironment.clear, "terminal clear");
+  const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
+  const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
+  const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
   });
-  const setThreadInteractionMode = useAtomSet(threadEnvironment.setInteractionMode, {
-    mode: "promise",
+  const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
+    reportFailure: false,
   });
-  const startThreadTurn = useAtomSet(threadEnvironment.startTurn, { mode: "promise" });
-  const interruptThreadTurn = useAtomSet(threadEnvironment.interruptTurn, {
-    mode: "promise",
+  const setThreadInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
+    reportFailure: false,
   });
-  const respondToThreadApproval = useAtomSet(threadEnvironment.respondToApproval, {
-    mode: "promise",
+  const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
+    reportFailure: false,
   });
-  const respondToThreadUserInput = useAtomSet(threadEnvironment.respondToUserInput, {
-    mode: "promise",
+  const respondToThreadApproval = useAtomCommand(threadEnvironment.respondToApproval, {
+    reportFailure: false,
   });
-  const revertThreadCheckpoint = useAtomSet(threadEnvironment.revertCheckpoint, {
-    mode: "promise",
+  const respondToThreadUserInput = useAtomCommand(threadEnvironment.respondToUserInput, {
+    reportFailure: false,
   });
-  const { open: openPreview, close: closePreview } = usePreviewActions();
+  const revertThreadCheckpoint = useAtomCommand(threadEnvironment.revertCheckpoint, {
+    reportFailure: false,
+  });
+  const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
+  const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
-  const { retryEnvironment } = useEnvironmentActions();
+  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const environmentById = useMemo(
     () => new Map(environments.map((environment) => [environment.environmentId, environment])),
     [environments],
@@ -1444,9 +1448,9 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeEnvironment, activeEnvironmentUnavailable, activeEnvironmentUnavailableLabel]);
   const handleReconnectActiveEnvironment = useCallback(
     async (environmentId: EnvironmentId) => {
-      try {
-        await retryEnvironment(environmentId);
-      } catch (error) {
+      const result = await retryEnvironment(environmentId);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -2311,27 +2315,19 @@ function ChatViewContent(props: ChatViewProps) {
         storeSplitTerminal(activeThreadRef, terminalId);
       }
       setTerminalFocusRequestId((value) => value + 1);
-      void (async () => {
-        try {
-          await openTerminal({
-            environmentId,
-            input: {
-              threadId: activeThreadId,
-              terminalId,
-              cwd: cwdForOpen,
-              ...(activeThreadWorktreePath != null
-                ? { worktreePath: activeThreadWorktreePath }
-                : {}),
-              env: projectScriptRuntimeEnv({
-                project: { cwd: activeProject.workspaceRoot },
-                worktreePath: activeThreadWorktreePath,
-              }),
-            },
-          });
-        } catch {
-          // Opening failed; the tab is already in the store — user can retry or close it.
-        }
-      })();
+      void openTerminal({
+        environmentId,
+        input: {
+          threadId: activeThreadId,
+          terminalId,
+          cwd: cwdForOpen,
+          ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
+          env: projectScriptRuntimeEnv({
+            project: { cwd: activeProject.workspaceRoot },
+            worktreePath: activeThreadWorktreePath,
+          }),
+        },
+      });
     },
     [
       activeProject,
@@ -2358,25 +2354,19 @@ function ChatViewContent(props: ChatViewProps) {
     const terminalId = nextTerminalId(activeKnownTerminalIds);
     storeNewTerminal(activeThreadRef, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
-    void (async () => {
-      try {
-        await openTerminal({
-          environmentId,
-          input: {
-            threadId: activeThreadId,
-            terminalId,
-            cwd: cwdForOpen,
-            ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
-            env: projectScriptRuntimeEnv({
-              project: { cwd: activeProject.workspaceRoot },
-              worktreePath: activeThreadWorktreePath,
-            }),
-          },
-        });
-      } catch {
-        // Opening failed; the tab is already in the store — user can retry or close it.
-      }
-    })();
+    void openTerminal({
+      environmentId,
+      input: {
+        threadId: activeThreadId,
+        terminalId,
+        cwd: cwdForOpen,
+        ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
+        env: projectScriptRuntimeEnv({
+          project: { cwd: activeProject.workspaceRoot },
+          worktreePath: activeThreadWorktreePath,
+        }),
+      },
+    });
   }, [
     activeProject,
     activeKnownTerminalIds,
@@ -2396,15 +2386,15 @@ function ChatViewContent(props: ChatViewProps) {
         writeTerminal({
           environmentId,
           input: { threadId: activeThreadId, terminalId, data: "exit\n" },
-        }).catch(() => undefined);
+        });
       void (async () => {
         if (isFinalTerminal) {
           await clearTerminal({
             environmentId,
             input: { threadId: activeThreadId, terminalId },
-          }).catch(() => undefined);
+          });
         }
-        await closeTerminalMutation({
+        const closeResult = await closeTerminalMutation({
           environmentId,
           input: {
             threadId: activeThreadId,
@@ -2412,7 +2402,10 @@ function ChatViewContent(props: ChatViewProps) {
             deleteHistory: true,
           },
         });
-      })().catch(() => fallbackExitWrite());
+        if (closeResult._tag === "Failure" && !isAtomCommandInterrupted(closeResult)) {
+          await fallbackExitWrite();
+        }
+      })();
       storeCloseTerminal(activeThreadRef, terminalId);
       setTerminalFocusRequestId((value) => value + 1);
     },
@@ -2498,17 +2491,28 @@ function ChatViewContent(props: ChatViewProps) {
         storeSetActiveTerminal(activeThreadRef, targetTerminalId);
       }
 
-      try {
-        await openTerminal({ environmentId, input: openTerminalInput });
-        await writeTerminal({
-          environmentId,
-          input: {
-            threadId: activeThreadId,
-            terminalId: targetTerminalId,
-            data: `${script.command}\r`,
-          },
-        });
-      } catch (error) {
+      const openResult = await openTerminal({ environmentId, input: openTerminalInput });
+      if (openResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(openResult)) {
+          const error = squashAtomCommandFailure(openResult);
+          setThreadError(
+            activeThreadId,
+            error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+          );
+        }
+        return;
+      }
+
+      const writeResult = await writeTerminal({
+        environmentId,
+        input: {
+          threadId: activeThreadId,
+          terminalId: targetTerminalId,
+          data: `${script.command}\r`,
+        },
+      });
+      if (writeResult._tag === "Failure" && !isAtomCommandInterrupted(writeResult)) {
+        const error = squashAtomCommandFailure(writeResult);
         setThreadError(
           activeThreadId,
           error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
@@ -2543,14 +2547,20 @@ function ChatViewContent(props: ChatViewProps) {
       nextScripts: ReadonlyArray<ProjectScript>;
       keybinding?: string | null;
       keybindingCommand: KeybindingCommand;
-    }) => {
-      await updateProject({
-        environmentId,
-        input: {
-          projectId: input.projectId,
-          scripts: input.nextScripts,
-        },
-      });
+    }): Promise<AtomCommandResult<void, unknown>> => {
+      const updateResult = mapAtomCommandResult(
+        await updateProject({
+          environmentId,
+          input: {
+            projectId: input.projectId,
+            scripts: input.nextScripts,
+          },
+        }),
+        () => undefined,
+      );
+      if (updateResult._tag === "Failure") {
+        return updateResult;
+      }
 
       const keybindingRule = decodeProjectScriptKeybindingRule({
         keybinding: input.keybinding,
@@ -2558,17 +2568,23 @@ function ChatViewContent(props: ChatViewProps) {
       });
 
       if (isElectron && keybindingRule) {
-        await upsertKeybinding({
-          environmentId,
-          input: keybindingRule,
-        });
+        return mapAtomCommandResult(
+          await upsertKeybinding({
+            environmentId,
+            input: keybindingRule,
+          }),
+          () => undefined,
+        );
       }
+      return updateResult;
     },
     [environmentId, updateProject, upsertKeybinding],
   );
   const saveProjectScript = useCallback(
-    async (input: NewProjectScriptInput) => {
-      if (!activeProject) return;
+    async (input: NewProjectScriptInput): Promise<AtomCommandResult<void, unknown>> => {
+      if (!activeProject) {
+        return AsyncResult.success(undefined);
+      }
       const nextId = nextProjectScriptId(
         input.name,
         activeProject.scripts.map((script) => script.id),
@@ -2589,7 +2605,7 @@ function ChatViewContent(props: ChatViewProps) {
           ]
         : [...activeProject.scripts, nextScript];
 
-      await persistProjectScripts({
+      return persistProjectScripts({
         projectId: activeProject.id,
         projectCwd: activeProject.workspaceRoot,
         previousScripts: activeProject.scripts,
@@ -2601,11 +2617,16 @@ function ChatViewContent(props: ChatViewProps) {
     [activeProject, persistProjectScripts],
   );
   const updateProjectScript = useCallback(
-    async (scriptId: string, input: NewProjectScriptInput) => {
-      if (!activeProject) return;
+    async (
+      scriptId: string,
+      input: NewProjectScriptInput,
+    ): Promise<AtomCommandResult<void, unknown>> => {
+      if (!activeProject) {
+        return AsyncResult.success(undefined);
+      }
       const existingScript = activeProject.scripts.find((script) => script.id === scriptId);
       if (!existingScript) {
-        throw new Error("Script not found.");
+        return AsyncResult.failure(Cause.fail(new Error("Script not found.")));
       }
 
       const updatedScript: ProjectScript = {
@@ -2623,7 +2644,7 @@ function ChatViewContent(props: ChatViewProps) {
             : script,
       );
 
-      await persistProjectScripts({
+      return persistProjectScripts({
         projectId: activeProject.id,
         projectCwd: activeProject.workspaceRoot,
         previousScripts: activeProject.scripts,
@@ -2635,26 +2656,29 @@ function ChatViewContent(props: ChatViewProps) {
     [activeProject, persistProjectScripts],
   );
   const deleteProjectScript = useCallback(
-    async (scriptId: string) => {
-      if (!activeProject) return;
+    async (scriptId: string): Promise<AtomCommandResult<void, unknown>> => {
+      if (!activeProject) {
+        return AsyncResult.success(undefined);
+      }
       const nextScripts = activeProject.scripts.filter((script) => script.id !== scriptId);
 
       const deletedName = activeProject.scripts.find((s) => s.id === scriptId)?.name;
 
-      try {
-        await persistProjectScripts({
-          projectId: activeProject.id,
-          projectCwd: activeProject.workspaceRoot,
-          previousScripts: activeProject.scripts,
-          nextScripts,
-          keybinding: null,
-          keybindingCommand: commandForProjectScript(scriptId),
-        });
+      const result = await persistProjectScripts({
+        projectId: activeProject.id,
+        projectCwd: activeProject.workspaceRoot,
+        previousScripts: activeProject.scripts,
+        nextScripts,
+        keybinding: null,
+        keybindingCommand: commandForProjectScript(scriptId),
+      });
+      if (result._tag === "Success") {
         toastManager.add({
           type: "success",
           title: `Deleted action "${deletedName ?? "Unknown"}"`,
         });
-      } catch (error) {
+      } else if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -2663,6 +2687,7 @@ function ChatViewContent(props: ChatViewProps) {
           }),
         );
       }
+      return result;
     },
     [activeProject, persistProjectScripts],
   );
@@ -2733,15 +2758,17 @@ function ChatViewContent(props: ChatViewProps) {
       useRightPanelStore.getState().openBrowser(activeThreadRef, activeTabId);
       return;
     }
-    void openPreview({
-      environmentId: activeThreadRef.environmentId,
-      input: { threadId: activeThreadRef.threadId },
-    })
-      .then((snapshot) => {
-        usePreviewStateStore.getState().applyServerSnapshot(activeThreadRef, snapshot);
-        useRightPanelStore.getState().openBrowser(activeThreadRef, snapshot.tabId);
-      })
-      .catch(() => undefined);
+    void (async () => {
+      const result = await openPreview({
+        environmentId: activeThreadRef.environmentId,
+        input: { threadId: activeThreadRef.threadId },
+      });
+      if (result._tag === "Failure") {
+        return;
+      }
+      usePreviewStateStore.getState().applyServerSnapshot(activeThreadRef, result.value);
+      useRightPanelStore.getState().openBrowser(activeThreadRef, result.value.tabId);
+    })();
   }, [activePreviewState.activeTabId, activeThreadRef, openPreview]);
   const addDiffSurface = useCallback(() => {
     if (!activeThreadRef || !isServerThread || !isGitRepo) return;
@@ -2821,7 +2848,7 @@ function ChatViewContent(props: ChatViewProps) {
           worktreePath: activeThreadWorktreePath,
         }),
       },
-    }).catch(() => undefined);
+    });
   }, [
     activeKnownTerminalIds,
     activeProject,
@@ -2861,7 +2888,7 @@ function ChatViewContent(props: ChatViewProps) {
             worktreePath: activeThreadWorktreePath,
           }),
         },
-      }).catch(() => undefined);
+      });
     },
     [
       activeKnownTerminalIds,
@@ -2894,7 +2921,7 @@ function ChatViewContent(props: ChatViewProps) {
       void closeTerminalMutation({
         environmentId: activeThreadRef.environmentId,
         input: { threadId: activeThreadRef.threadId, terminalId, deleteHistory: true },
-      }).catch(() => undefined);
+      });
       useRightPanelStore
         .getState()
         .closeTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
@@ -2976,14 +3003,14 @@ function ChatViewContent(props: ChatViewProps) {
           void closePreview({
             environmentId: activeThreadRef.environmentId,
             input: { threadId: activeThreadRef.threadId, tabId: surface.resourceId },
-          }).catch(() => undefined);
+          });
         }
         if (surface.kind === "terminal") {
           for (const terminalId of surface.terminalIds) {
             void closeTerminalMutation({
               environmentId: activeThreadRef.environmentId,
               input: { threadId: activeThreadRef.threadId, terminalId, deleteHistory: true },
-            }).catch(() => undefined);
+            });
           }
         }
       }
@@ -3108,11 +3135,12 @@ function ChatViewContent(props: ChatViewProps) {
       modelSelection?: ModelSelection;
       runtimeMode: RuntimeMode;
       interactionMode: ProviderInteractionMode;
-    }) => {
+    }): Promise<AtomCommandResult<void, unknown>> => {
       if (!serverThread) {
-        return;
+        return AsyncResult.success(undefined);
       }
 
+      let result: AtomCommandResult<void, unknown> = AsyncResult.success(undefined);
       if (
         input.modelSelection !== undefined &&
         (input.modelSelection.model !== serverThread.modelSelection.model ||
@@ -3120,36 +3148,52 @@ function ChatViewContent(props: ChatViewProps) {
           JSON.stringify(input.modelSelection.options ?? null) !==
             JSON.stringify(serverThread.modelSelection.options ?? null))
       ) {
-        await updateThreadMetadata({
-          environmentId,
-          input: {
-            threadId: input.threadId,
-            modelSelection: input.modelSelection,
-          },
-        });
+        result = mapAtomCommandResult(
+          await updateThreadMetadata({
+            environmentId,
+            input: {
+              threadId: input.threadId,
+              modelSelection: input.modelSelection,
+            },
+          }),
+          () => undefined,
+        );
+        if (result._tag === "Failure") {
+          return result;
+        }
       }
 
       if (input.runtimeMode !== serverThread.runtimeMode) {
-        await setThreadRuntimeMode({
-          environmentId,
-          input: {
-            threadId: input.threadId,
-            runtimeMode: input.runtimeMode,
-            createdAt: input.createdAt,
-          },
-        });
+        result = mapAtomCommandResult(
+          await setThreadRuntimeMode({
+            environmentId,
+            input: {
+              threadId: input.threadId,
+              runtimeMode: input.runtimeMode,
+              createdAt: input.createdAt,
+            },
+          }),
+          () => undefined,
+        );
+        if (result._tag === "Failure") {
+          return result;
+        }
       }
 
       if (input.interactionMode !== serverThread.interactionMode) {
-        await setThreadInteractionMode({
-          environmentId,
-          input: {
-            threadId: input.threadId,
-            interactionMode: input.interactionMode,
-            createdAt: input.createdAt,
-          },
-        });
+        result = mapAtomCommandResult(
+          await setThreadInteractionMode({
+            environmentId,
+            input: {
+              threadId: input.threadId,
+              interactionMode: input.interactionMode,
+              createdAt: input.createdAt,
+            },
+          }),
+          () => undefined,
+        );
       }
+      return result;
     },
     [
       environmentId,
@@ -3546,18 +3590,18 @@ function ChatViewContent(props: ChatViewProps) {
 
       setIsRevertingCheckpoint(true);
       setThreadError(activeThread.id, null);
-      try {
-        await revertThreadCheckpoint({
-          environmentId,
-          input: {
-            threadId: activeThread.id,
-            turnCount,
-          },
-        });
-      } catch (err) {
+      const result = await revertThreadCheckpoint({
+        environmentId,
+        input: {
+          threadId: activeThread.id,
+          turnCount,
+        },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         setThreadError(
           activeThread.id,
-          err instanceof Error ? err.message : "Failed to revert thread state.",
+          error instanceof Error ? error.message : "Failed to revert thread state.",
         );
       }
       setIsRevertingCheckpoint(false);
@@ -3767,56 +3811,67 @@ function ChatViewContent(props: ChatViewProps) {
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
 
-    let turnStartSucceeded = false;
-    await (async () => {
-      let firstComposerImageName: string | null = null;
-      if (composerImagesSnapshot.length > 0) {
-        const firstComposerImage = composerImagesSnapshot[0];
-        if (firstComposerImage) {
-          firstComposerImageName = firstComposerImage.name;
-        }
+    let firstComposerImageName: string | null = null;
+    if (composerImagesSnapshot.length > 0) {
+      const firstComposerImage = composerImagesSnapshot[0];
+      if (firstComposerImage) {
+        firstComposerImageName = firstComposerImage.name;
       }
-      let titleSeed = trimmed;
-      if (!titleSeed) {
-        if (firstComposerImageName) {
-          titleSeed = `Image: ${firstComposerImageName}`;
-        } else if (composerTerminalContextsSnapshot.length > 0) {
-          titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
-        } else if (composerElementContextsSnapshot.length > 0) {
-          titleSeed = formatElementContextLabel(composerElementContextsSnapshot[0]!);
-        } else {
-          titleSeed = "New thread";
-        }
+    }
+    let titleSeed = trimmed;
+    if (!titleSeed) {
+      if (firstComposerImageName) {
+        titleSeed = `Image: ${firstComposerImageName}`;
+      } else if (composerTerminalContextsSnapshot.length > 0) {
+        titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
+      } else if (composerElementContextsSnapshot.length > 0) {
+        titleSeed = formatElementContextLabel(composerElementContextsSnapshot[0]!);
+      } else {
+        titleSeed = "New thread";
       }
-      const title = truncate(titleSeed);
-      const threadCreateModelSelection = createModelSelection(
-        ctxSelectedModelSelection.instanceId,
-        ctxSelectedModel || activeProject.defaultModelSelection?.model || DEFAULT_MODEL,
-        ctxSelectedModelSelection.options,
-      );
+    }
+    const title = truncate(titleSeed);
+    const threadCreateModelSelection = createModelSelection(
+      ctxSelectedModelSelection.instanceId,
+      ctxSelectedModel || activeProject.defaultModelSelection?.model || DEFAULT_MODEL,
+      ctxSelectedModelSelection.options,
+    );
 
-      // Auto-title from first message
-      if (isFirstMessage && isServerThread) {
-        await updateThreadMetadata({
-          environmentId,
-          input: {
-            threadId: threadIdForSend,
-            title,
-          },
-        });
-      }
-
-      if (isServerThread) {
-        await persistThreadSettingsForNextTurn({
+    let failure: AtomCommandResult<unknown, unknown> | null = null;
+    // Auto-title from first message
+    if (isFirstMessage && isServerThread) {
+      const titleResult = await updateThreadMetadata({
+        environmentId,
+        input: {
           threadId: threadIdForSend,
-          createdAt: messageCreatedAt,
-          ...(ctxSelectedModel ? { modelSelection: ctxSelectedModelSelection } : {}),
-          runtimeMode,
-          interactionMode,
-        });
+          title,
+        },
+      });
+      if (titleResult._tag === "Failure") {
+        failure = titleResult;
       }
+    }
 
-      const turnAttachments = await turnAttachmentsPromise;
+    if (failure === null && isServerThread) {
+      const settingsResult = await persistThreadSettingsForNextTurn({
+        threadId: threadIdForSend,
+        createdAt: messageCreatedAt,
+        ...(ctxSelectedModel ? { modelSelection: ctxSelectedModelSelection } : {}),
+        runtimeMode,
+        interactionMode,
+      });
+      if (settingsResult._tag === "Failure") {
+        failure = settingsResult;
+      }
+    }
+
+    const turnAttachmentsResult = await settlePromise(() => turnAttachmentsPromise);
+    if (failure === null && turnAttachmentsResult._tag === "Failure") {
+      failure = turnAttachmentsResult;
+    }
+
+    let turnStartSucceeded = false;
+    if (failure === null && turnAttachmentsResult._tag === "Success") {
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
           ? {
@@ -3847,7 +3902,7 @@ function ChatViewContent(props: ChatViewProps) {
             }
           : undefined;
       beginLocalDispatch({ preparingWorktree: false });
-      await startThreadTurn({
+      const startResult = await startThreadTurn({
         environmentId,
         input: {
           threadId: threadIdForSend,
@@ -3855,7 +3910,7 @@ function ChatViewContent(props: ChatViewProps) {
             messageId: messageIdForSend,
             role: "user",
             text: outgoingMessageText,
-            attachments: turnAttachments,
+            attachments: turnAttachmentsResult.value,
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: title,
@@ -3865,10 +3920,15 @@ function ChatViewContent(props: ChatViewProps) {
           createdAt: messageCreatedAt,
         },
       });
-      turnStartSucceeded = true;
-    })().catch(async (err: unknown) => {
+      if (startResult._tag === "Failure") {
+        failure = startResult;
+      } else {
+        turnStartSucceeded = true;
+      }
+    }
+
+    if (failure !== null) {
       if (
-        !turnStartSucceeded &&
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
         composerTerminalContextsRef.current.length === 0 &&
@@ -3903,11 +3963,14 @@ function ChatViewContent(props: ChatViewProps) {
           detectTrigger: true,
         });
       }
-      setThreadError(
-        threadIdForSend,
-        err instanceof Error ? err.message : "Failed to send message.",
-      );
-    });
+      if (!isAtomCommandInterrupted(failure)) {
+        const error = squashAtomCommandFailure(failure);
+        setThreadError(
+          threadIdForSend,
+          error instanceof Error ? error.message : "Failed to send message.",
+        );
+      }
+    }
     sendInFlightRef.current = false;
     if (!turnStartSucceeded) {
       resetLocalDispatch();
@@ -3916,12 +3979,19 @@ function ChatViewContent(props: ChatViewProps) {
 
   const onInterrupt = async () => {
     if (!activeThread) return;
-    await interruptThreadTurn({
+    const result = await interruptThreadTurn({
       environmentId,
       input: {
         threadId: activeThread.id,
       },
     });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      setThreadError(
+        activeThread.id,
+        error instanceof Error ? error.message : "Failed to interrupt the current turn.",
+      );
+    }
   };
 
   const onRespondToApproval = useCallback(
@@ -3931,20 +4001,23 @@ function ChatViewContent(props: ChatViewProps) {
       setRespondingRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
-      await respondToThreadApproval({
+      const result = await respondToThreadApproval({
         environmentId,
         input: {
           threadId: activeThreadId,
           requestId,
           decision,
         },
-      }).catch((err: unknown) => {
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         setThreadError(
           activeThreadId,
-          err instanceof Error ? err.message : "Failed to submit approval decision.",
+          error instanceof Error ? error.message : "Failed to submit approval decision.",
         );
-      });
+      }
       setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
+      return result;
     },
     [activeThreadId, environmentId, respondToThreadApproval, setThreadError],
   );
@@ -3956,20 +4029,23 @@ function ChatViewContent(props: ChatViewProps) {
       setRespondingUserInputRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
-      await respondToThreadUserInput({
+      const result = await respondToThreadUserInput({
         environmentId,
         input: {
           threadId: activeThreadId,
           requestId,
           answers,
         },
-      }).catch((err: unknown) => {
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         setThreadError(
           activeThreadId,
-          err instanceof Error ? err.message : "Failed to submit user input.",
+          error instanceof Error ? error.message : "Failed to submit user input.",
         );
-      });
+      }
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
+      return result;
     },
     [activeThreadId, environmentId, respondToThreadUserInput, setThreadError],
   );
@@ -4149,15 +4225,17 @@ function ChatViewContent(props: ChatViewProps) {
         },
       ]);
 
-      try {
-        await persistThreadSettingsForNextTurn({
-          threadId: threadIdForSend,
-          createdAt: messageCreatedAt,
-          modelSelection: ctxSelectedModelSelection,
-          runtimeMode,
-          interactionMode: nextInteractionMode,
-        });
+      const settingsResult = await persistThreadSettingsForNextTurn({
+        threadId: threadIdForSend,
+        createdAt: messageCreatedAt,
+        modelSelection: ctxSelectedModelSelection,
+        runtimeMode,
+        interactionMode: nextInteractionMode,
+      });
+      let failure: AtomCommandResult<unknown, unknown> | null =
+        settingsResult._tag === "Failure" ? settingsResult : null;
 
+      if (failure === null) {
         // Keep the mode toggle and plan-follow-up banner in sync immediately
         // while the same-thread implementation turn is starting.
         setComposerDraftInteractionMode(
@@ -4165,7 +4243,7 @@ function ChatViewContent(props: ChatViewProps) {
           nextInteractionMode,
         );
 
-        await startThreadTurn({
+        const startResult = await startThreadTurn({
           environmentId,
           input: {
             threadId: threadIdForSend,
@@ -4190,6 +4268,10 @@ function ChatViewContent(props: ChatViewProps) {
             createdAt: messageCreatedAt,
           },
         });
+        failure = startResult._tag === "Failure" ? startResult : null;
+      }
+
+      if (failure === null) {
         // Optimistically open the plan sidebar when implementing (not refining).
         // "default" mode here means the agent is executing the plan, which produces
         // step-tracking activities that the sidebar will display.
@@ -4200,17 +4282,21 @@ function ChatViewContent(props: ChatViewProps) {
           }
         }
         sendInFlightRef.current = false;
-      } catch (err) {
-        setOptimisticUserMessages((existing) =>
-          existing.filter((message) => message.id !== messageIdForSend),
-        );
+        return;
+      }
+
+      setOptimisticUserMessages((existing) =>
+        existing.filter((message) => message.id !== messageIdForSend),
+      );
+      if (!isAtomCommandInterrupted(failure)) {
+        const error = squashAtomCommandFailure(failure);
         setThreadError(
           threadIdForSend,
-          err instanceof Error ? err.message : "Failed to send plan follow-up.",
+          error instanceof Error ? error.message : "Failed to send plan follow-up.",
         );
-        sendInFlightRef.current = false;
-        resetLocalDispatch();
       }
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
     },
     [
       activeThread,
@@ -4278,7 +4364,7 @@ function ChatViewContent(props: ChatViewProps) {
       resetLocalDispatch();
     };
 
-    await createThread({
+    const createResult = await createThread({
       environmentId,
       input: {
         threadId: nextThreadId,
@@ -4291,63 +4377,85 @@ function ChatViewContent(props: ChatViewProps) {
         worktreePath: activeThread.worktreePath,
         createdAt,
       },
-    })
-      .then(() => {
-        return startThreadTurn({
-          environmentId,
-          input: {
-            threadId: nextThreadId,
-            message: {
-              messageId: newMessageId(),
-              role: "user",
-              text: outgoingImplementationPrompt,
-              attachments: [],
-            },
-            modelSelection: ctxSelectedModelSelection,
-            titleSeed: nextThreadTitle,
-            runtimeMode,
-            interactionMode: "default",
-            sourceProposedPlan: {
-              threadId: activeThread.id,
-              planId: activeProposedPlan.id,
-            },
-            createdAt,
+    });
+    let failure: AtomCommandResult<unknown, unknown> | null =
+      createResult._tag === "Failure" ? createResult : null;
+
+    if (failure === null) {
+      const startResult = await startThreadTurn({
+        environmentId,
+        input: {
+          threadId: nextThreadId,
+          message: {
+            messageId: newMessageId(),
+            role: "user",
+            text: outgoingImplementationPrompt,
+            attachments: [],
           },
-        });
-      })
-      .then(() => {
-        return waitForStartedServerThread(scopeThreadRef(activeThread.environmentId, nextThreadId));
-      })
-      .then(() => {
-        // Signal that the plan sidebar should open on the new thread when enabled.
-        planSidebarOpenOnNextThreadRef.current = autoOpenPlanSidebar;
-        return navigate({
+          modelSelection: ctxSelectedModelSelection,
+          titleSeed: nextThreadTitle,
+          runtimeMode,
+          interactionMode: "default",
+          sourceProposedPlan: {
+            threadId: activeThread.id,
+            planId: activeProposedPlan.id,
+          },
+          createdAt,
+        },
+      });
+      failure = startResult._tag === "Failure" ? startResult : null;
+    }
+
+    if (failure === null) {
+      const startedResult = await settlePromise(() =>
+        waitForStartedServerThread(scopeThreadRef(activeThread.environmentId, nextThreadId)),
+      );
+      failure = startedResult._tag === "Failure" ? startedResult : null;
+    }
+
+    if (failure === null) {
+      // Signal that the plan sidebar should open on the new thread when enabled.
+      planSidebarOpenOnNextThreadRef.current = autoOpenPlanSidebar;
+      const navigateResult = await settlePromise(() =>
+        navigate({
           to: "/$environmentId/$threadId",
           params: {
             environmentId: activeThread.environmentId,
             threadId: nextThreadId,
           },
-        });
-      })
-      .catch(async (err: unknown) => {
-        await deleteThread({
-          environmentId,
-          input: {
-            threadId: nextThreadId,
-          },
-        }).catch(() => undefined);
+        }),
+      );
+      failure = navigateResult._tag === "Failure" ? navigateResult : null;
+    }
+
+    if (failure !== null) {
+      const cleanupResult = await deleteThread({
+        environmentId,
+        input: {
+          threadId: nextThreadId,
+        },
+      });
+      if (cleanupResult._tag === "Failure" && !isAtomCommandInterrupted(cleanupResult)) {
+        console.warn(
+          "Failed to clean up implementation thread after start failure.",
+          squashAtomCommandFailure(cleanupResult),
+        );
+      }
+      if (!isAtomCommandInterrupted(failure)) {
+        const error = squashAtomCommandFailure(failure);
         toastManager.add(
           stackedThreadToast({
             type: "error",
             title: "Could not start implementation thread",
             description:
-              err instanceof Error
-                ? err.message
+              error instanceof Error
+                ? error.message
                 : "An error occurred while creating the new thread.",
           }),
         );
-      })
-      .then(finish, finish);
+      }
+    }
+    finish();
   }, [
     activeProject,
     activeProposedPlan,

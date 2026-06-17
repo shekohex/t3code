@@ -1,5 +1,8 @@
 import { memo, useState, useId } from "react";
-import { useAtomSet } from "@effect/atom-react";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   buildCollapsedProposedPlanPreviewMarkdown,
@@ -28,6 +31,7 @@ import {
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { projectEnvironment } from "~/state/projects";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
@@ -46,7 +50,9 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [savePath, setSavePath] = useState("");
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
-  const writeProjectFile = useAtomSet(projectEnvironment.writeFile, { mode: "promise" });
+  const writeProjectFile = useAtomCommand(projectEnvironment.writeFile, {
+    reportFailure: false,
+  });
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     onError: (error) => {
       toastManager.add(
@@ -106,23 +112,27 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     }
 
     setIsSavingToWorkspace(true);
-    void writeProjectFile({
-      environmentId,
-      input: {
-        cwd: workspaceRoot,
-        relativePath,
-        contents: saveContents,
-      },
-    })
-      .then((result) => {
+    void (async () => {
+      const result = await writeProjectFile({
+        environmentId,
+        input: {
+          cwd: workspaceRoot,
+          relativePath,
+          contents: saveContents,
+        },
+      });
+      setIsSavingToWorkspace(false);
+      if (result._tag === "Success") {
         setIsSaveDialogOpen(false);
         toastManager.add({
           type: "success",
           title: "Plan saved to workspace",
-          description: result.relativePath,
+          description: result.value.relativePath,
         });
-      })
-      .catch((error) => {
+        return;
+      }
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -130,15 +140,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             description: error instanceof Error ? error.message : "An error occurred while saving.",
           }),
         );
-      })
-      .then(
-        () => {
-          setIsSavingToWorkspace(false);
-        },
-        () => {
-          setIsSavingToWorkspace(false);
-        },
-      );
+      }
+    })();
   };
 
   return (

@@ -8,7 +8,6 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { useAuth } from "@clerk/react";
-import { useAtomSet } from "@effect/atom-react";
 import { type ReactNode, memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AuthAccessReadScope,
@@ -30,8 +29,17 @@ import {
   type DesktopServerExposureState,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import {
+  connectionStatusText,
+  RelayConnectionRegistration,
+  RelayConnectionTarget,
+} from "@t3tools/client-runtime/connection";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
+import {
+  isAtomCommandInterrupted,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -112,14 +120,20 @@ import {
   unlinkPrimaryEnvironment as unlinkPrimaryEnvironmentAtom,
 } from "~/cloud/linkEnvironmentAtoms";
 import { authEnvironment } from "~/state/auth";
+import { environmentCatalog } from "~/connection/catalog";
+import {
+  connectPairing as connectPairingAtom,
+  connectSshEnvironment as connectSshEnvironmentAtom,
+} from "~/connection/onboarding";
 import { useEnvironmentQuery } from "~/state/query";
 import {
   type EnvironmentPresentation,
-  useEnvironmentActions,
   useEnvironments,
   usePrimaryEnvironment,
   useRelayEnvironmentDiscovery,
 } from "~/state/environments";
+import { relayEnvironmentDiscovery } from "~/state/relay";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 
@@ -1586,70 +1600,99 @@ function CloudLinkSwitch({
 
 function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: boolean }) {
   const { getToken, isSignedIn } = useAuth();
-  const { refreshRelayEnvironments } = useEnvironmentActions();
-  const linkPrimaryEnvironment = useAtomSet(linkPrimaryEnvironmentAtom, { mode: "promise" });
-  const unlinkPrimaryEnvironment = useAtomSet(unlinkPrimaryEnvironmentAtom, {
-    mode: "promise",
+  const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
+    reportFailure: false,
+  });
+  const linkPrimaryEnvironment = useAtomCommand(linkPrimaryEnvironmentAtom, {
+    reportFailure: false,
+  });
+  const unlinkPrimaryEnvironment = useAtomCommand(unlinkPrimaryEnvironmentAtom, {
+    reportFailure: false,
   });
   const primaryCloudLinkState = usePrimaryCloudLinkState();
   const [operationError, setOperationError] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
 
+  const reportUpdateFailure = (cause: unknown) => {
+    const message = cause instanceof Error ? cause.message : "Could not update T3 Cloud access.";
+    const traceId = findErrorTraceId(cause);
+    console.error("[t3-cloud] Could not update T3 Cloud", { message, traceId, cause });
+    setOperationError(traceId ? `${message} Trace ID: ${traceId}` : message);
+    toastManager.add({
+      type: "error",
+      title: "Could not update T3 Cloud",
+      description: message,
+      data: traceId
+        ? {
+            secondaryActionProps: {
+              children: "Copy trace ID",
+              onClick: () => void navigator.clipboard?.writeText(traceId),
+            },
+          }
+        : undefined,
+    });
+  };
+
   const updateLink = async (enabled: boolean) => {
     setIsUpdating(true);
     setOperationError(null);
-    try {
-      const clerkToken = await getToken(resolveRelayClerkTokenOptions());
-      if (enabled) {
-        if (!primaryCloudLinkState.target) {
-          throw new Error("Local environment is not ready yet.");
-        }
-        if (!clerkToken) {
-          throw new Error("Sign in from T3 Cloud settings before linking this environment.");
-        }
-        await linkPrimaryEnvironment({
-          target: primaryCloudLinkState.target,
-          clerkToken,
-        });
-      } else {
-        if (!primaryCloudLinkState.target) {
-          throw new Error("Local environment is not ready yet.");
-        }
-        await unlinkPrimaryEnvironment({
-          target: primaryCloudLinkState.target,
-          clerkToken: clerkToken ?? null,
-        });
-      }
-      primaryCloudLinkState.refresh();
-      await refreshRelayEnvironments();
-      toastManager.add({
-        type: "success",
-        title: enabled ? "T3 Cloud linked" : "T3 Cloud unlinked",
-        description: enabled
-          ? "This environment is available through T3 Cloud."
-          : "This environment is no longer available through T3 Cloud.",
-      });
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "Could not update T3 Cloud access.";
-      const traceId = findErrorTraceId(cause);
-      console.error("[t3-cloud] Could not update T3 Cloud", { message, traceId, cause });
-      setOperationError(traceId ? `${message} Trace ID: ${traceId}` : message);
-      toastManager.add({
-        type: "error",
-        title: "Could not update T3 Cloud",
-        description: message,
-        data: traceId
-          ? {
-              secondaryActionProps: {
-                children: "Copy trace ID",
-                onClick: () => void navigator.clipboard?.writeText(traceId),
-              },
-            }
-          : undefined,
-      });
-    } finally {
+    const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
+    if (tokenResult._tag === "Failure") {
+      reportUpdateFailure(squashAtomCommandFailure(tokenResult));
       setIsUpdating(false);
+      return;
     }
+
+    const target = primaryCloudLinkState.target;
+    if (!target) {
+      reportUpdateFailure(new Error("Local environment is not ready yet."));
+      setIsUpdating(false);
+      return;
+    }
+    if (enabled && !tokenResult.value) {
+      reportUpdateFailure(
+        new Error("Sign in from T3 Cloud settings before linking this environment."),
+      );
+      setIsUpdating(false);
+      return;
+    }
+
+    const linkResult =
+      enabled && tokenResult.value
+        ? await linkPrimaryEnvironment({
+            target,
+            clerkToken: tokenResult.value,
+          })
+        : await unlinkPrimaryEnvironment({
+            target,
+            clerkToken: tokenResult.value ?? null,
+          });
+    if (linkResult._tag === "Failure") {
+      if (!isAtomCommandInterrupted(linkResult)) {
+        reportUpdateFailure(squashAtomCommandFailure(linkResult));
+      }
+      setIsUpdating(false);
+      return;
+    }
+
+    primaryCloudLinkState.refresh();
+    const refreshResult = await refreshRelayEnvironments();
+    if (refreshResult._tag === "Failure") {
+      if (!isAtomCommandInterrupted(refreshResult)) {
+        reportUpdateFailure(squashAtomCommandFailure(refreshResult));
+      }
+      setIsUpdating(false);
+      return;
+    }
+
+    toastManager.add({
+      type: "success",
+      title: enabled ? "T3 Cloud linked" : "T3 Cloud unlinked",
+      description: enabled
+        ? "This environment is available through T3 Cloud."
+        : "This environment is no longer available through T3 Cloud.",
+    });
+    setIsUpdating(false);
   };
   const disabledReason = !isSignedIn
     ? "Sign in from T3 Cloud settings to manage this environment."
@@ -1723,48 +1766,66 @@ function ConfiguredCloudRemoteEnvironmentRows({
   readonly savedEnvironmentIds: ReadonlyArray<EnvironmentId>;
 }) {
   const environmentsState = useRelayEnvironmentDiscovery();
-  const { connectRelayEnvironment, refreshRelayEnvironments } = useEnvironmentActions();
+  const registerEnvironment = useAtomCommand(environmentCatalog.register, {
+    reportFailure: false,
+  });
+  const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
+    reportFailure: false,
+  });
+  const connectRelayEnvironment = useCallback(
+    (environment: RelayClientEnvironmentRecord) =>
+      registerEnvironment(
+        new RelayConnectionRegistration({
+          target: new RelayConnectionTarget({
+            environmentId: environment.environmentId,
+            label: environment.label,
+          }),
+        }),
+      ),
+    [registerEnvironment],
+  );
   const [connectingEnvironmentId, setConnectingEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
   const savedIds = useMemo(() => new Set(savedEnvironmentIds), [savedEnvironmentIds]);
 
   useEffect(() => {
-    void refreshRelayEnvironments().catch(() => {
-      // The discovery state carries the typed failure for presentation.
-    });
+    void refreshRelayEnvironments();
   }, [refreshRelayEnvironments]);
 
   const connectEnvironment = async (environment: RelayClientEnvironmentRecord) => {
     setConnectingEnvironmentId(environment.environmentId);
-    try {
-      await connectRelayEnvironment(environment);
+    const result = await connectRelayEnvironment(environment);
+    setConnectingEnvironmentId(null);
+    if (result._tag === "Success") {
       toastManager.add({
         type: "success",
         title: "Environment connected",
         description: `${environment.label} is available through T3 Cloud.`,
       });
-    } catch (cause) {
-      const message =
-        cause instanceof Error ? cause.message : "Could not connect the T3 Cloud environment.";
-      const traceId = findErrorTraceId(cause);
-      console.error("[t3-cloud] Could not connect environment", { message, traceId, cause });
-      toastManager.add({
-        type: "error",
-        title: "Could not connect environment",
-        description: message,
-        data: traceId
-          ? {
-              secondaryActionProps: {
-                children: "Copy trace ID",
-                onClick: () => void navigator.clipboard?.writeText(traceId),
-              },
-            }
-          : undefined,
-      });
-    } finally {
-      setConnectingEnvironmentId(null);
+      return;
     }
+    if (isAtomCommandInterrupted(result)) {
+      return;
+    }
+    const cause = squashAtomCommandFailure(result);
+    const message =
+      cause instanceof Error ? cause.message : "Could not connect the T3 Cloud environment.";
+    const traceId = findErrorTraceId(cause);
+    console.error("[t3-cloud] Could not connect environment", { message, traceId, cause });
+    toastManager.add({
+      type: "error",
+      title: "Could not connect environment",
+      description: message,
+      data: traceId
+        ? {
+            secondaryActionProps: {
+              children: "Copy trace ID",
+              onClick: () => void navigator.clipboard?.writeText(traceId),
+            },
+          }
+        : undefined,
+    });
   };
 
   const connectableEnvironments = [...environmentsState.environments.values()].filter(
@@ -1861,8 +1922,12 @@ export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
-  const { connectPairing, connectSshEnvironment, removeEnvironment, retryEnvironment } =
-    useEnvironmentActions();
+  const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
+  const connectSshEnvironment = useAtomCommand(connectSshEnvironmentAtom, {
+    reportFailure: false,
+  });
+  const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
+  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const primarySessionState = usePrimarySessionState();
   const currentSessionScopes = desktopBridge
@@ -2203,42 +2268,28 @@ export function ConnectionsSettings() {
     if (savedBackendMode === "ssh") {
       setIsAddingSavedBackend(true);
       setSavedBackendError(null);
+      let target: DesktopSshEnvironmentTarget;
       try {
-        const target = parseManualDesktopSshTarget({
+        target = parseManualDesktopSshTarget({
           host: savedBackendSshHost,
           username: savedBackendSshUsername,
           port: savedBackendSshPort,
         });
-        await connectSshEnvironment({ target, label: "" });
-        setSavedBackendHost("");
-        setSavedBackendPairingCode("");
-        setSavedBackendSshHost("");
-        setSavedBackendSshUsername("");
-        setSavedBackendSshPort("");
-
-        setAddBackendDialogOpen(false);
-        toastManager.add({
-          type: "success",
-          title: "Environment connected",
-          description: `${target.alias} is ready over an SSH-managed tunnel.`,
-        });
       } catch (error) {
-        const message = formatDesktopSshConnectionError(error);
-        setSavedBackendError(message);
-      } finally {
+        setSavedBackendError(formatDesktopSshConnectionError(error));
         setIsAddingSavedBackend(false);
+        return;
       }
-      return;
-    }
 
-    setIsAddingSavedBackend(true);
-    setSavedBackendError(null);
-    try {
-      const remotePairingInput = parseRemotePairingFields({
-        host: savedBackendHost,
-        pairingCode: savedBackendPairingCode,
-      });
-      await connectPairing(remotePairingInput);
+      const result = await connectSshEnvironment({ target, label: "" });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          setSavedBackendError(formatDesktopSshConnectionError(squashAtomCommandFailure(result)));
+        }
+        setIsAddingSavedBackend(false);
+        return;
+      }
+
       setSavedBackendHost("");
       setSavedBackendPairingCode("");
       setSavedBackendSshHost("");
@@ -2247,8 +2298,20 @@ export function ConnectionsSettings() {
       setAddBackendDialogOpen(false);
       toastManager.add({
         type: "success",
-        title: "Backend added",
-        description: "The environment is saved and will reconnect on app startup.",
+        title: "Environment connected",
+        description: `${target.alias} is ready over an SSH-managed tunnel.`,
+      });
+      setIsAddingSavedBackend(false);
+      return;
+    }
+
+    setIsAddingSavedBackend(true);
+    setSavedBackendError(null);
+    let remotePairingInput: ReturnType<typeof parseRemotePairingFields>;
+    try {
+      remotePairingInput = parseRemotePairingFields({
+        host: savedBackendHost,
+        pairingCode: savedBackendPairingCode,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to add backend.";
@@ -2260,9 +2323,40 @@ export function ConnectionsSettings() {
           description: message,
         }),
       );
-    } finally {
       setIsAddingSavedBackend(false);
+      return;
     }
+
+    const result = await connectPairing(remotePairingInput);
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        const message = error instanceof Error ? error.message : "Failed to add backend.";
+        setSavedBackendError(message);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not add backend",
+            description: message,
+          }),
+        );
+      }
+      setIsAddingSavedBackend(false);
+      return;
+    }
+
+    setSavedBackendHost("");
+    setSavedBackendPairingCode("");
+    setSavedBackendSshHost("");
+    setSavedBackendSshUsername("");
+    setSavedBackendSshPort("");
+    setAddBackendDialogOpen(false);
+    toastManager.add({
+      type: "success",
+      title: "Backend added",
+      description: "The environment is saved and will reconnect on app startup.",
+    });
+    setIsAddingSavedBackend(false);
   }, [
     connectPairing,
     connectSshEnvironment,
@@ -2277,9 +2371,9 @@ export function ConnectionsSettings() {
   const handleConnectSavedBackend = useCallback(
     async (environmentId: EnvironmentId) => {
       setSavedBackendError(null);
-      try {
-        await retryEnvironment(environmentId);
-      } catch (error) {
+      const result = await retryEnvironment(environmentId);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         const message = error instanceof Error ? error.message : "Failed to connect backend.";
         setSavedBackendError(message);
         toastManager.add(
@@ -2298,9 +2392,10 @@ export function ConnectionsSettings() {
     async (environmentId: EnvironmentId) => {
       setRemovingSavedEnvironmentId(environmentId);
       setSavedBackendError(null);
-      try {
-        await removeEnvironment(environmentId);
-      } catch (error) {
+      const result = await removeEnvironment(environmentId);
+      setRemovingSavedEnvironmentId(null);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         const message = error instanceof Error ? error.message : "Failed to remove backend.";
         setSavedBackendError(message);
         toastManager.add(
@@ -2310,8 +2405,6 @@ export function ConnectionsSettings() {
             description: message,
           }),
         );
-      } finally {
-        setRemovingSavedEnvironmentId(null);
       }
     },
     [removeEnvironment],
@@ -2348,11 +2441,12 @@ export function ConnectionsSettings() {
       } else {
         setDiscoveredSshHostsError(null);
       }
-      try {
-        await connectSshEnvironment({
-          target,
-          ...(label === undefined ? {} : { label }),
-        });
+      const result = await connectSshEnvironment({
+        target,
+        ...(label === undefined ? {} : { label }),
+      });
+      setConnectingSshHostAlias(null);
+      if (result._tag === "Success") {
         setSavedBackendSshHost("");
         setSavedBackendSshUsername("");
         setSavedBackendSshPort("");
@@ -2364,15 +2458,16 @@ export function ConnectionsSettings() {
             : "Environment connected",
           description: `${label?.trim() || target.alias} is ready over an SSH-managed tunnel.`,
         });
-      } catch (error) {
+        return;
+      }
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         const message = formatDesktopSshConnectionError(error);
         if (savedBackendMode === "ssh") {
           setSavedBackendError(message);
         } else {
           setDiscoveredSshHostsError(message);
         }
-      } finally {
-        setConnectingSshHostAlias(null);
       }
     },
     [connectSshEnvironment, savedBackendMode, savedDesktopSshEnvironmentsByAlias],

@@ -1,8 +1,4 @@
-import {
-  createManagedRelaySession,
-  managedRelaySessionAtom,
-  setManagedRelaySession,
-} from "@t3tools/client-runtime/relay";
+import { managedRelaySessionAtom, setManagedRelaySession } from "@t3tools/client-runtime/relay";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -18,12 +14,14 @@ vi.mock("@clerk/react", () => ({
 
 vi.mock("../lib/runtime", () => ({
   runtime: {
-    runPromise: vi.fn(),
+    runPromiseExit: vi.fn(),
   },
 }));
 
-vi.mock("../state/environments", () => ({
-  useEnvironmentConnectionActions: vi.fn(),
+vi.mock("../connection/catalog", () => ({
+  environmentCatalog: {
+    removeRelayEnvironments: {},
+  },
 }));
 
 afterEach(() => {
@@ -45,13 +43,10 @@ describe("managed relay authentication", () => {
   });
 
   it("replaces an existing account session atomically", () => {
-    setManagedRelaySession(
-      appAtomRegistry,
-      createManagedRelaySession({
-        accountId: "account-1",
-        readClerkToken: async () => "account-1-token",
-      }),
-    );
+    setManagedRelaySession(appAtomRegistry, {
+      accountId: "account-1",
+      readClerkToken: async () => "account-1-token",
+    });
 
     activateManagedRelayAuthentication("account-2", async () => "account-2-token");
 

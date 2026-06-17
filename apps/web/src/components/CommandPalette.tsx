@@ -2,6 +2,11 @@
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  isAtomCommandInterrupted,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
   DEFAULT_MODEL,
   type EnvironmentId,
   type FilesystemBrowseResult,
@@ -36,7 +41,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSettings } from "../hooks/useSettings";
@@ -45,6 +50,7 @@ import { filesystemEnvironment } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { sourceControlEnvironment } from "../state/sourceControl";
+import { useAtomCommand } from "../state/use-atom-command";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
 import {
@@ -390,12 +396,14 @@ function OpenCommandPaletteDialog() {
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const settings = useSettings();
-  const createProject = useAtomSet(projectEnvironment.create, { mode: "promise" });
-  const lookupRepository = useAtomSet(sourceControlEnvironment.lookupRepository, {
-    mode: "promise",
+  const createProject = useAtomCommand(projectEnvironment.create, {
+    reportFailure: false,
   });
-  const cloneRepository = useAtomSet(sourceControlEnvironment.cloneRepository, {
-    mode: "promise",
+  const lookupRepository = useAtomCommand(sourceControlEnvironment.lookupRepository, {
+    reportFailure: false,
+  });
+  const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
+    reportFailure: false,
   });
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
@@ -1041,34 +1049,62 @@ function OpenCommandPaletteDialog() {
             ),
           });
         } else {
-          await handleNewThread(scopeProjectRef(existing.environmentId, existing.id), {
-            envMode: settings.defaultThreadEnvMode,
-          }).catch(() => undefined);
+          const navigationResult = await settlePromise(() =>
+            handleNewThread(scopeProjectRef(existing.environmentId, existing.id), {
+              envMode: settings.defaultThreadEnvMode,
+            }),
+          );
+          if (navigationResult._tag === "Failure") {
+            const error = squashAtomCommandFailure(navigationResult);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to open project",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+            return;
+          }
         }
         setOpen(false);
         return;
       }
 
-      try {
-        const projectId = newProjectId();
-        await createProject({
-          environmentId: browseEnvironmentId,
-          input: {
-            projectId,
-            title: inferProjectTitleFromPath(cwd),
-            workspaceRoot: cwd,
-            createWorkspaceRootIfMissing: true,
-            defaultModelSelection: {
-              instanceId: ProviderInstanceId.make("codex"),
-              model: DEFAULT_MODEL,
-            },
+      const projectId = newProjectId();
+      const createResult = await createProject({
+        environmentId: browseEnvironmentId,
+        input: {
+          projectId,
+          title: inferProjectTitleFromPath(cwd),
+          workspaceRoot: cwd,
+          createWorkspaceRootIfMissing: true,
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: DEFAULT_MODEL,
           },
-        });
-        await handleNewThread(scopeProjectRef(browseEnvironmentId, projectId), {
+        },
+      });
+      if (createResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(createResult)) {
+          const error = squashAtomCommandFailure(createResult);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to add project",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
+
+      const navigationResult = await settlePromise(() =>
+        handleNewThread(scopeProjectRef(browseEnvironmentId, projectId), {
           envMode: settings.defaultThreadEnvMode,
-        }).catch(() => undefined);
-        setOpen(false);
-      } catch (error) {
+        }),
+      );
+      if (navigationResult._tag === "Failure") {
+        const error = squashAtomCommandFailure(navigationResult);
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -1076,7 +1112,9 @@ function OpenCommandPaletteDialog() {
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );
+        return;
       }
+      setOpen(false);
     },
     [
       browseEnvironmentId,
@@ -1126,37 +1164,39 @@ function OpenCommandPaletteDialog() {
       }
 
       setIsRemoteProjectLookingUp(true);
-      try {
-        const repository = await lookupRepository({
-          environmentId: addProjectCloneFlow.environmentId,
-          input: {
-            provider,
-            repository: rawRepository,
-          },
-        });
-        const destinationPath = getDefaultCloneParentPath(addProjectCloneFlow.environmentId);
-        setAddProjectCloneFlow({
-          step: "confirm",
-          environmentId: addProjectCloneFlow.environmentId,
-          source: addProjectCloneFlow.source,
-          repositoryInput: rawRepository,
-          repository,
-          remoteUrl: repository.sshUrl,
-        });
-        setHighlightedItemValue(null);
-        setQuery(destinationPath);
-        setBrowseGeneration((generation) => generation + 1);
-      } catch (error) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Repository lookup failed",
-            description: errorMessage(error),
-          }),
-        );
-      } finally {
-        setIsRemoteProjectLookingUp(false);
+      const lookupResult = await lookupRepository({
+        environmentId: addProjectCloneFlow.environmentId,
+        input: {
+          provider,
+          repository: rawRepository,
+        },
+      });
+      setIsRemoteProjectLookingUp(false);
+      if (lookupResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(lookupResult)) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Repository lookup failed",
+              description: errorMessage(squashAtomCommandFailure(lookupResult)),
+            }),
+          );
+        }
+        return;
       }
+      const repository = lookupResult.value;
+      const destinationPath = getDefaultCloneParentPath(addProjectCloneFlow.environmentId);
+      setAddProjectCloneFlow({
+        step: "confirm",
+        environmentId: addProjectCloneFlow.environmentId,
+        source: addProjectCloneFlow.source,
+        repositoryInput: rawRepository,
+        repository,
+        remoteUrl: repository.sshUrl,
+      });
+      setHighlightedItemValue(null);
+      setQuery(destinationPath);
+      setBrowseGeneration((generation) => generation + 1);
       return;
     }
 
@@ -1196,26 +1236,27 @@ function OpenCommandPaletteDialog() {
     }
 
     setIsRemoteProjectCloning(true);
-    try {
-      const result = await cloneRepository({
-        environmentId: addProjectCloneFlow.environmentId,
-        input: {
-          remoteUrl: addProjectCloneFlow.remoteUrl,
-          destinationPath,
-        },
-      });
-      await handleAddProject(result.cwd);
-    } catch (error) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Clone failed",
-          description: errorMessage(error),
-        }),
-      );
-    } finally {
-      setIsRemoteProjectCloning(false);
+    const cloneResult = await cloneRepository({
+      environmentId: addProjectCloneFlow.environmentId,
+      input: {
+        remoteUrl: addProjectCloneFlow.remoteUrl,
+        destinationPath,
+      },
+    });
+    setIsRemoteProjectCloning(false);
+    if (cloneResult._tag === "Failure") {
+      if (!isAtomCommandInterrupted(cloneResult)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Clone failed",
+            description: errorMessage(squashAtomCommandFailure(cloneResult)),
+          }),
+        );
+      }
+      return;
     }
+    await handleAddProject(cloneResult.value.cwd);
   }
 
   function browseTo(name: string): void {

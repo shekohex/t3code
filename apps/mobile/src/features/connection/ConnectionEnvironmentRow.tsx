@@ -1,8 +1,11 @@
 import { SymbolView } from "expo-symbols";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useState } from "react";
-import { Pressable, View } from "react-native";
+import { Alert, Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
 
@@ -29,7 +32,7 @@ export function ConnectionEnvironmentRow(props: {
   readonly onUpdate: (
     environmentId: EnvironmentId,
     updates: { readonly label: string; readonly displayUrl: string },
-  ) => Promise<void>;
+  ) => Promise<AtomCommandResult<unknown, unknown>>;
 }) {
   const [label, setLabel] = useState(props.environment.environmentLabel);
   const [url, setUrl] = useState(props.environment.displayUrl);
@@ -45,11 +48,19 @@ export function ConnectionEnvironmentRow(props: {
     props.environment.connectionState === "connecting" ||
     props.environment.connectionState === "reconnecting";
   const handleSave = useCallback(async () => {
-    await props.onUpdate(props.environment.environmentId, {
+    const result = await props.onUpdate(props.environment.environmentId, {
       label: label.trim(),
       displayUrl: url.trim(),
     });
-    props.onToggle();
+    if (AsyncResult.isSuccess(result)) {
+      props.onToggle();
+      return;
+    }
+    const error = Cause.squash(result.cause);
+    Alert.alert(
+      "Could not update environment",
+      error instanceof Error ? error.message : "The environment could not be updated.",
+    );
   }, [label, url, props]);
 
   return (

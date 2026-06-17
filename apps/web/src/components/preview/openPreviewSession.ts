@@ -4,34 +4,39 @@ import type {
   PreviewSessionSnapshot,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 
 import type { PreviewStateStoreState } from "~/previewStateStore";
 
-interface OpenPreviewSessionInput {
+interface OpenPreviewSessionInput<E> {
   openPreview: (input: {
     readonly environmentId: EnvironmentId;
     readonly input: PreviewOpenInput;
-  }) => Promise<PreviewSessionSnapshot>;
+  }) => Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
   threadRef: ScopedThreadRef;
   url: string;
   applyServerSnapshot: PreviewStateStoreState["applyServerSnapshot"];
   rememberUrl: PreviewStateStoreState["rememberUrl"];
 }
 
-export async function openPreviewSession(
-  input: OpenPreviewSessionInput,
-): Promise<PreviewSessionSnapshot> {
-  const snapshot = await input.openPreview({
+export async function openPreviewSession<E>(
+  input: OpenPreviewSessionInput<E>,
+): Promise<AtomCommandResult<PreviewSessionSnapshot, E>> {
+  const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {
       threadId: input.threadRef.threadId,
       url: input.url,
     },
   });
+  if (result._tag === "Failure") {
+    return result;
+  }
+  const snapshot = result.value;
   input.applyServerSnapshot(input.threadRef, snapshot);
   input.rememberUrl(
     input.threadRef,
     snapshot.navStatus._tag === "Idle" ? input.url : snapshot.navStatus.url,
   );
-  return snapshot;
+  return result;
 }

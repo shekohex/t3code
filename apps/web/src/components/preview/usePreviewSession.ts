@@ -5,8 +5,9 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useEffect } from "react";
 
 import { readPreviewStateRevision, usePreviewStateStore } from "~/previewStateStore";
-import { previewEnvironment, usePreviewActions } from "~/state/preview";
+import { previewEnvironment } from "~/state/preview";
 import { useEnvironmentQuery } from "~/state/query";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 import { refreshPreviewSessionState, usePreviewSessionState } from "./previewSessionState";
 
@@ -18,7 +19,7 @@ export function usePreviewSession(threadRef: ScopedThreadRef): void {
       input: {},
     }),
   );
-  const { open } = usePreviewActions();
+  const open = useAtomCommand(previewEnvironment.open);
   const applyServerSnapshot = usePreviewStateStore((state) => state.applyServerSnapshot);
   const applyServerEvent = usePreviewStateStore((state) => state.applyServerEvent);
 
@@ -50,13 +51,14 @@ export function usePreviewSession(threadRef: ScopedThreadRef): void {
     void open({
       environmentId: threadRef.environmentId,
       input: { threadId: threadRef.threadId, url: recoverableUrl },
-    })
-      .then((snapshot) => {
-        if (cancelled) return;
-        applyServerSnapshot(threadRef, snapshot);
-        refreshPreviewSessionState(threadRef);
-      })
-      .catch(() => undefined);
+    }).then((result) => {
+      if (cancelled) return;
+      if (result._tag === "Failure") {
+        return;
+      }
+      applyServerSnapshot(threadRef, result.value);
+      refreshPreviewSessionState(threadRef);
+    });
 
     return () => {
       cancelled = true;

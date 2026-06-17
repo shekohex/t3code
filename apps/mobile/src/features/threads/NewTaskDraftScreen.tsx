@@ -1,11 +1,15 @@
 import { Stack, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { InteractionManager, View, useColorScheme } from "react-native";
+import { Alert, InteractionManager, View, useColorScheme } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
 import { EnvironmentId } from "@t3tools/contracts";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
@@ -28,7 +32,7 @@ import {
 import { buildThreadRoutePath } from "../../lib/routes";
 import { useProjects } from "../../state/entities";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
-import { useProjectActions } from "./use-project-actions";
+import { useCreateProjectThread } from "./use-project-actions";
 
 function formatWorkspaceLabel(input: {
   readonly workspaceMode: string;
@@ -49,7 +53,7 @@ export function NewTaskDraftScreen(props: {
   };
 }) {
   const projects = useProjects();
-  const { onCreateThreadWithOptions } = useProjectActions();
+  const createProjectThread = useCreateProjectThread();
   const flow = useNewTaskFlow();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -372,27 +376,33 @@ export function NewTaskDraftScreen(props: {
     }
 
     flow.setSubmitting(true);
-    try {
-      const createdThread = await onCreateThreadWithOptions({
-        project: flow.selectedProject,
-        modelSelection: flow.selectedModel,
-        envMode: flow.workspaceMode,
-        branch: flow.selectedBranchName,
-        worktreePath: flow.workspaceMode === "worktree" ? null : flow.selectedWorktreePath,
-        runtimeMode: flow.runtimeMode,
-        interactionMode: flow.interactionMode,
-        initialMessageText: flow.prompt.trim(),
-        initialAttachments: flow.attachments,
-      });
+    const result = await createProjectThread({
+      project: flow.selectedProject,
+      modelSelection: flow.selectedModel,
+      envMode: flow.workspaceMode,
+      branch: flow.selectedBranchName,
+      worktreePath: flow.workspaceMode === "worktree" ? null : flow.selectedWorktreePath,
+      runtimeMode: flow.runtimeMode,
+      interactionMode: flow.interactionMode,
+      initialMessageText: flow.prompt.trim(),
+      initialAttachments: flow.attachments,
+    });
+    flow.setSubmitting(false);
 
-      if (createdThread) {
-        flow.setPrompt("");
-        flow.clearAttachments();
-        router.replace(buildThreadRoutePath(createdThread));
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        Alert.alert(
+          "Could not start task",
+          error instanceof Error ? error.message : "The task could not be started.",
+        );
       }
-    } finally {
-      flow.setSubmitting(false);
+      return;
     }
+
+    flow.setPrompt("");
+    flow.clearAttachments();
+    router.replace(buildThreadRoutePath(result.value));
   }
 
   if (!selectedProject) {

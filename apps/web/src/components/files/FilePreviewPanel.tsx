@@ -7,7 +7,10 @@ import type {
 import type { SelectedLineRange } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/editor";
 import { EditorProvider, File, Virtualizer } from "@pierre/diffs/react";
-import { useAtomSet } from "@effect/atom-react";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { ChevronRight, Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -27,8 +30,9 @@ import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
-import { usePreviewActions } from "~/state/preview";
+import { previewEnvironment } from "~/state/preview";
 import { projectEnvironment } from "~/state/projects";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 import FileBrowserPanel from "./FileBrowserPanel";
 import {
@@ -88,18 +92,17 @@ function useFileSaveCoordinator({
   EditableFileSurfaceProps,
   "environmentId" | "cwd" | "relativePath" | "onPendingChange"
 >): FileSaveCoordinator {
-  const writeFile = useAtomSet(projectEnvironment.writeFile, { mode: "promise" });
+  const writeFile = useAtomCommand(projectEnvironment.writeFile);
   const coordinator = useMemo(
     () =>
       new FileSaveCoordinator({
         debounceMs: FILE_SAVE_DEBOUNCE_MS,
         onPendingChange: (pending) => onPendingChange(relativePath, pending),
-        persist: async (nextContents) => {
-          await writeFile({
+        persist: (nextContents) =>
+          writeFile({
             environmentId,
             input: { cwd, relativePath, contents: nextContents },
-          });
-        },
+          }),
         onConfirmed: (confirmedContents) => {
           confirmProjectFileQueryData(environmentId, cwd, relativePath, confirmedContents);
         },
@@ -393,8 +396,12 @@ export default function FilePreviewPanel({
   const { resolvedTheme } = useTheme();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
-  const createAssetUrl = useAtomSet(assetEnvironment.createUrl, { mode: "promise" });
-  const { open: openPreview } = usePreviewActions();
+  const createAssetUrl = useAtomCommand(assetEnvironment.createUrl, {
+    reportFailure: false,
+  });
+  const openPreview = useAtomCommand(previewEnvironment.open, {
+    reportFailure: false,
+  });
   const file = useProjectFileQuery(environmentId, cwd, relativePath);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const [renderedMarkdownPath, setRenderedMarkdownPath] = useState<string | null>(null);
@@ -428,13 +435,18 @@ export default function FilePreviewPanel({
 
   const handleOpenInBrowser = useCallback(() => {
     if (!absolutePath || !environmentHttpBaseUrl) return;
-    void openFileInPreview({
-      threadRef,
-      filePath: absolutePath,
-      httpBaseUrl: environmentHttpBaseUrl,
-      createAssetUrl,
-      openPreview,
-    }).catch((error) => {
+    void (async () => {
+      const result = await openFileInPreview({
+        threadRef,
+        filePath: absolutePath,
+        httpBaseUrl: environmentHttpBaseUrl,
+        createAssetUrl,
+        openPreview,
+      });
+      if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+        return;
+      }
+      const error = squashAtomCommandFailure(result);
       toastManager.add(
         stackedThreadToast({
           type: "error",
@@ -442,7 +454,7 @@ export default function FilePreviewPanel({
           description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
-    });
+    })();
   }, [absolutePath, createAssetUrl, environmentHttpBaseUrl, openPreview, threadRef]);
 
   return (

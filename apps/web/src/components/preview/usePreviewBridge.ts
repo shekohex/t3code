@@ -10,7 +10,8 @@ import { useEffect, useRef } from "react";
 
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { type DesktopPreviewOverlay, usePreviewStateStore } from "~/previewStateStore";
-import { usePreviewActions } from "~/state/preview";
+import { previewEnvironment } from "~/state/preview";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 import { previewBridge } from "./previewBridge";
 
@@ -22,7 +23,7 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
   const { threadRef, tabId } = input;
   const applyDesktopState = usePreviewStateStore((state) => state.applyDesktopState);
   const clearBrowserPointer = useBrowserPointerStore((state) => state.clear);
-  const { reportStatus } = usePreviewActions();
+  const reportStatus = useAtomCommand(previewEnvironment.reportStatus, "preview status report");
   const bridge = previewBridge;
 
   // One bridge subscription does both jobs (mirror state + forward to
@@ -55,7 +56,7 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
       void reportStatus({
         environmentId: threadRef.environmentId,
         input: reported.input,
-      }).catch(() => undefined);
+      });
     });
     return unsubscribe;
   }, [applyDesktopState, bridge, clearBrowserPointer, reportStatus, tabId, threadRef]);

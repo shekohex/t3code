@@ -16,12 +16,14 @@ vi.mock("@clerk/expo/token-cache", () => ({
 
 vi.mock("../../lib/runtime", () => ({
   runtime: {
-    runPromise: vi.fn(),
+    runPromiseExit: vi.fn(),
   },
 }));
 
-vi.mock("../../state/environments", () => ({
-  useEnvironmentConnectionActions: vi.fn(),
+vi.mock("../../connection/catalog", () => ({
+  environmentCatalog: {
+    removeRelayEnvironments: {},
+  },
 }));
 
 vi.mock("./publicConfig", () => ({

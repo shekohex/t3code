@@ -7,6 +7,7 @@ import { availableCloudEnvironmentPresentation } from "./cloudEnvironmentPresent
 function relayStatus(
   status: RelayEnvironmentStatusResponse["status"],
   error?: string,
+  traceId?: string,
 ): RelayEnvironmentStatusResponse {
   return {
     environmentId: EnvironmentId.make("environment-cloud"),
@@ -18,6 +19,7 @@ function relayStatus(
     status,
     checkedAt: "2026-06-05T16:49:11.000Z",
     ...(error ? { error } : {}),
+    ...(traceId ? { traceId } : {}),
   };
 }
 
@@ -58,13 +60,13 @@ describe("available cloud environment presentation", () => {
     expect(
       availableCloudEnvironmentPresentation({
         isStatusPending: false,
-        status: relayStatus("offline", "Tunnel is unavailable."),
+        status: relayStatus("offline", "Tunnel is unavailable.", "trace-offline"),
         statusError: null,
         statusErrorTraceId: null,
       }),
     ).toEqual({
       connectionError: "Tunnel is unavailable.",
-      connectionErrorTraceId: null,
+      connectionErrorTraceId: "trace-offline",
       connectionState: "error",
       statusText: "Tunnel is unavailable.",
     });

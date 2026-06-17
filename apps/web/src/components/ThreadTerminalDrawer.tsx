@@ -1,5 +1,9 @@
 import { FitAddon } from "@xterm/addon-fit";
 import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
   Plus,
   SquareSplitHorizontal,
   SquareSplitVertical,
@@ -56,8 +60,9 @@ import { readLocalApi } from "~/localApi";
 import { useTerminalController } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
-import { usePreviewActions } from "../state/preview";
+import { previewEnvironment } from "../state/preview";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
+import { useAtomCommand } from "../state/use-atom-command";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -310,7 +315,9 @@ export function TerminalViewport({
     serverConfig.data?.availableEditors ?? [],
   );
   const openTerminalPath = useEffectEvent((target: string) => openInPreferredEditor(target));
-  const { open: openPreview } = usePreviewActions();
+  const openPreview = useAtomCommand(previewEnvironment.open, {
+    reportFailure: false,
+  });
   const hasHandledExitRef = useRef(false);
   const selectionPointerRef = useRef<{ x: number; y: number } | null>(null);
   const selectionGestureActiveRef = useRef(false);
@@ -457,9 +464,9 @@ export function TerminalViewport({
     const sendTerminalInput = async (data: string, fallbackError: string) => {
       const activeTerminal = terminalRef.current;
       if (!activeTerminal) return;
-      try {
-        await writeTerminal(data);
-      } catch (error) {
+      const result = await writeTerminal(data);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         writeSystemMessage(activeTerminal, error instanceof Error ? error.message : fallbackError);
       }
     };
@@ -568,12 +575,17 @@ export function TerminalViewport({
               }
 
               const target = resolvePathLinkTarget(match.text, cwd);
-              void openTerminalPath(target).catch((error) => {
+              void (async () => {
+                const result = await openTerminalPath(target);
+                if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+                  return;
+                }
+                const error = squashAtomCommandFailure(result);
                 writeSystemMessage(
                   latestTerminal,
                   error instanceof Error ? error.message : "Unable to open path",
                 );
-              });
+              })();
             },
           })),
         );
@@ -581,9 +593,17 @@ export function TerminalViewport({
     });
 
     const inputDisposable = terminal.onData((data) => {
-      void writeTerminal(data).catch((err) =>
-        writeSystemMessage(terminal, err instanceof Error ? err.message : "Terminal write failed"),
-      );
+      void (async () => {
+        const result = await writeTerminal(data);
+        if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+          return;
+        }
+        const error = squashAtomCommandFailure(result);
+        writeSystemMessage(
+          terminal,
+          error instanceof Error ? error.message : "Terminal write failed",
+        );
+      })();
     });
 
     const selectionDisposable = terminal.onSelectionChange(() => {
@@ -639,7 +659,7 @@ export function TerminalViewport({
       if (wasAtBottom) {
         activeTerminal.scrollToBottom();
       }
-      void resizeTerminal(activeTerminal.cols, activeTerminal.rows).catch(() => undefined);
+      void resizeTerminal(activeTerminal.cols, activeTerminal.rows);
     }, 30);
 
     return () => {
@@ -744,7 +764,7 @@ export function TerminalViewport({
       if (wasAtBottom) {
         terminal.scrollToBottom();
       }
-      void resizeTerminal(terminal.cols, terminal.rows).catch(() => undefined);
+      void resizeTerminal(terminal.cols, terminal.rows);
     });
     return () => {
       window.cancelAnimationFrame(frame);

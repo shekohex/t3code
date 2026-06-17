@@ -1,7 +1,13 @@
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import * as Option from "effect/Option";
-import { EnvironmentId, type ProjectScript } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ModelSelection,
+  type ProjectScript,
+  type ProviderInteractionMode,
+  type RuntimeMode,
+} from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Pressable, ScrollView, Text as RNText, View } from "react-native";
 import { useWorkspaceState } from "../../state/workspace";
@@ -38,12 +44,13 @@ import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import { ThreadDetailScreen } from "./ThreadDetailScreen";
 import { ThreadGitControls } from "./ThreadGitControls";
 import { ThreadNavigationDrawer } from "./ThreadNavigationDrawer";
-import { useSelectedThreadCommands } from "../../state/use-selected-thread-commands";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
+import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
@@ -71,9 +78,19 @@ export function ThreadRouteScreen() {
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
-  const commands = useSelectedThreadCommands({
-    refreshSelectedThreadGitStatus: gitActions.refreshSelectedThreadGitStatus,
-  });
+  const updateThreadMetadata = useAtomCommand(
+    threadEnvironment.updateMetadata,
+    "thread metadata update",
+  );
+  const setThreadRuntimeMode = useAtomCommand(
+    threadEnvironment.setRuntimeMode,
+    "thread runtime mode",
+  );
+  const setThreadInteractionMode = useAtomCommand(
+    threadEnvironment.setInteractionMode,
+    "thread interaction mode",
+  );
+  const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
   const router = useRouter();
   const params = useLocalSearchParams<{
     environmentId?: string | string[];
@@ -139,6 +156,69 @@ export function ThreadRouteScreen() {
   const handleOpenConnectionEditor = useCallback(() => {
     void router.push("/connections");
   }, [router]);
+  const handleUpdateThreadModelSelection = useCallback(
+    (modelSelection: ModelSelection) => {
+      if (!selectedThread) {
+        return;
+      }
+      return updateThreadMetadata({
+        environmentId: selectedThread.environmentId,
+        input: {
+          threadId: selectedThread.id,
+          modelSelection,
+        },
+      });
+    },
+    [selectedThread, updateThreadMetadata],
+  );
+  const handleUpdateThreadRuntimeMode = useCallback(
+    (runtimeMode: RuntimeMode) => {
+      if (!selectedThread) {
+        return;
+      }
+      return setThreadRuntimeMode({
+        environmentId: selectedThread.environmentId,
+        input: {
+          threadId: selectedThread.id,
+          runtimeMode,
+        },
+      });
+    },
+    [selectedThread, setThreadRuntimeMode],
+  );
+  const handleUpdateThreadInteractionMode = useCallback(
+    (interactionMode: ProviderInteractionMode) => {
+      if (!selectedThread) {
+        return;
+      }
+      return setThreadInteractionMode({
+        environmentId: selectedThread.environmentId,
+        input: {
+          threadId: selectedThread.id,
+          interactionMode,
+        },
+      });
+    },
+    [selectedThread, setThreadInteractionMode],
+  );
+  const handleStopThread = useCallback(() => {
+    if (
+      !selectedThread ||
+      (selectedThread.session?.status !== "running" &&
+        selectedThread.session?.status !== "starting")
+    ) {
+      return;
+    }
+    return interruptThreadTurn({
+      environmentId: selectedThread.environmentId,
+      input: {
+        threadId: selectedThread.id,
+        ...(selectedThread.session.activeTurnId
+          ? { turnId: selectedThread.session.activeTurnId }
+          : {}),
+      },
+    });
+  }, [interruptThreadTurn, selectedThread]);
 
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
@@ -383,12 +463,12 @@ export function ThreadRouteScreen() {
           onNativePasteImages={composer.onNativePasteImages}
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
-          onStopThread={commands.onStopThread}
+          onStopThread={handleStopThread}
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
-          onUpdateThreadModelSelection={commands.onUpdateThreadModelSelection}
-          onUpdateThreadRuntimeMode={commands.onUpdateThreadRuntimeMode}
-          onUpdateThreadInteractionMode={commands.onUpdateThreadInteractionMode}
+          onUpdateThreadModelSelection={handleUpdateThreadModelSelection}
+          onUpdateThreadRuntimeMode={handleUpdateThreadRuntimeMode}
+          onUpdateThreadInteractionMode={handleUpdateThreadInteractionMode}
           onRespondToApproval={requests.onRespondToApproval}
           onSelectUserInputOption={requests.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}

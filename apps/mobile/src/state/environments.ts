@@ -1,24 +1,14 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import {
   connectionCatalogDisplayUrl,
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
-import {
-  RelayConnectionRegistration,
-  RelayConnectionTarget,
-} from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
-import {
-  connectPairingUrl as connectPairingUrlAtom,
-  updateBearerConnection,
-} from "../connection/onboarding";
 import { environmentPresentations } from "./presentation";
 import { useEnvironmentQuery } from "./query";
-import { relayEnvironmentDiscovery } from "./relay";
 
 export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly environmentId: EnvironmentId;
@@ -63,68 +53,4 @@ export function useEnvironments() {
 
 export function useEnvironmentConnectionState(environmentId: EnvironmentId) {
   return useEnvironmentQuery(environmentCatalog.stateAtom(environmentId));
-}
-
-export function useEnvironmentConnectionActions() {
-  const register = useAtomSet(environmentCatalog.register, { mode: "promise" });
-  const remove = useAtomSet(environmentCatalog.remove, { mode: "promise" });
-  const removeRelayEnvironments = useAtomSet(environmentCatalog.removeRelayEnvironments, {
-    mode: "promise",
-  });
-  const retryNow = useAtomSet(environmentCatalog.retryNow, { mode: "promise" });
-
-  return useMemo(
-    () => ({
-      register,
-      remove,
-      removeRelayEnvironments,
-      retryNow,
-    }),
-    [register, remove, removeRelayEnvironments, retryNow],
-  );
-}
-
-export function useEnvironmentActions() {
-  const connectPairingUrl = useAtomSet(connectPairingUrlAtom, {
-    mode: "promise",
-  });
-  const updateBearer = useAtomSet(updateBearerConnection, {
-    mode: "promise",
-  });
-  const { register, remove, retryNow } = useEnvironmentConnectionActions();
-  const refreshRelayEnvironments = useAtomSet(relayEnvironmentDiscovery.refresh, {
-    mode: "promise",
-  });
-
-  const connectRelayEnvironment = useCallback(
-    (environment: RelayClientEnvironmentRecord) =>
-      register(
-        new RelayConnectionRegistration({
-          target: new RelayConnectionTarget({
-            environmentId: environment.environmentId,
-            label: environment.label,
-          }),
-        }),
-      ),
-    [register],
-  );
-
-  return useMemo(
-    () => ({
-      connectPairingUrl,
-      updateBearer,
-      connectRelayEnvironment,
-      removeEnvironment: remove,
-      retryEnvironment: retryNow,
-      refreshRelayEnvironments,
-    }),
-    [
-      connectPairingUrl,
-      connectRelayEnvironment,
-      refreshRelayEnvironments,
-      remove,
-      retryNow,
-      updateBearer,
-    ],
-  );
 }

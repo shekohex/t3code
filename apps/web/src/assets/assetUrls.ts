@@ -1,9 +1,14 @@
-import { useAtomSet } from "@effect/atom-react";
+import {
+  mapAtomCommandResult,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 import type { AssetCreateUrlResult, AssetResource, EnvironmentId } from "@t3tools/contracts";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { useEffect, useMemo, useState } from "react";
 
 import { assetEnvironment } from "~/state/assets";
 import { usePreparedConnection } from "~/state/session";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 const REFRESH_MARGIN_MS = 30_000;
 
@@ -13,28 +18,30 @@ interface CachedAssetUrl {
 }
 
 const assetUrlCache = new Map<string, CachedAssetUrl>();
-const assetUrlRequests = new Map<string, Promise<CachedAssetUrl>>();
+const assetUrlRequests = new Map<string, Promise<AtomCommandResult<CachedAssetUrl, unknown>>>();
 
 function assetCacheKey(environmentId: EnvironmentId, resource: AssetResource): string {
   return `${environmentId}:${JSON.stringify(resource)}`;
 }
 
-export async function resolveAssetUrl(input: {
+export async function resolveAssetUrl<E>(input: {
   readonly environmentId: EnvironmentId;
   readonly httpBaseUrl: string;
   readonly resource: AssetResource;
   readonly createUrl: (input: {
     readonly environmentId: EnvironmentId;
     readonly input: { readonly resource: AssetResource };
-  }) => Promise<AssetCreateUrlResult>;
-}): Promise<CachedAssetUrl> {
+  }) => Promise<AtomCommandResult<AssetCreateUrlResult, E>>;
+}): Promise<AtomCommandResult<CachedAssetUrl, E>> {
   const key = assetCacheKey(input.environmentId, input.resource);
   const cached = assetUrlCache.get(key);
   if (cached && cached.expiresAt - REFRESH_MARGIN_MS > Date.now()) {
-    return cached;
+    return AsyncResult.success(cached);
   }
 
-  const inFlight = assetUrlRequests.get(key);
+  const inFlight = assetUrlRequests.get(key) as
+    | Promise<AtomCommandResult<CachedAssetUrl, E>>
+    | undefined;
   if (inFlight) {
     return inFlight;
   }
@@ -44,23 +51,25 @@ export async function resolveAssetUrl(input: {
       environmentId: input.environmentId,
       input: { resource: input.resource },
     })
-    .then((result) => {
-      const cachedResult = {
-        url: new URL(result.relativeUrl, input.httpBaseUrl).toString(),
-        expiresAt: result.expiresAt,
-      };
-      assetUrlCache.set(key, cachedResult);
-      return cachedResult;
-    })
+    .then((result) =>
+      mapAtomCommandResult(result, (value) => {
+        const cachedResult = {
+          url: new URL(value.relativeUrl, input.httpBaseUrl).toString(),
+          expiresAt: value.expiresAt,
+        };
+        assetUrlCache.set(key, cachedResult);
+        return cachedResult;
+      }),
+    )
     .finally(() => {
       assetUrlRequests.delete(key);
     });
-  assetUrlRequests.set(key, request);
+  assetUrlRequests.set(key, request as Promise<AtomCommandResult<CachedAssetUrl, unknown>>);
   return request;
 }
 
 export function useAssetUrl(environmentId: EnvironmentId, resource: AssetResource): string | null {
-  const createUrl = useAtomSet(assetEnvironment.createUrl, { mode: "promise" });
+  const createUrl = useAtomCommand(assetEnvironment.createUrl);
   const preparedConnection = usePreparedConnection(environmentId);
   const resourceJson = JSON.stringify(resource);
   const stableResource = useMemo(() => JSON.parse(resourceJson) as AssetResource, [resourceJson]);
@@ -82,18 +91,18 @@ export function useAssetUrl(environmentId: EnvironmentId, resource: AssetResourc
         httpBaseUrl,
         resource: stableResource,
         createUrl,
-      })
-        .then((result) => {
-          if (cancelled) return;
-          setUrl(result.url);
-          refreshTimer = setTimeout(
-            load,
-            Math.max(0, result.expiresAt - Date.now() - REFRESH_MARGIN_MS),
-          );
-        })
-        .catch(() => {
-          if (!cancelled) setUrl(null);
-        });
+      }).then((result) => {
+        if (cancelled) return;
+        if (result._tag === "Failure") {
+          setUrl(null);
+          return;
+        }
+        setUrl(result.value.url);
+        refreshTimer = setTimeout(
+          load,
+          Math.max(0, result.value.expiresAt - Date.now() - REFRESH_MARGIN_MS),
+        );
+      });
     };
     load();
 

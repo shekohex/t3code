@@ -1,6 +1,7 @@
 "use client";
 
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   PreviewAutomationNavigateInput,
   PreviewAutomationOpenInput,
@@ -19,9 +20,10 @@ import {
   stopBrowserRecording,
   useBrowserRecordingStore,
 } from "~/browser/browserRecording";
-import { previewEnvironment, usePreviewActions } from "~/state/preview";
+import { previewEnvironment } from "~/state/preview";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentConnectionState } from "~/state/environments";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 import { previewBridge } from "./previewBridge";
 
@@ -143,8 +145,21 @@ export function PreviewAutomationOwner(props: {
   const connectionState = useEnvironmentConnectionState(threadRef.environmentId).data;
   const connectedGeneration =
     connectionState?.phase === "connected" ? connectionState.generation : null;
-  const { open, respondToAutomation, reportAutomationOwner, clearAutomationOwner } =
-    usePreviewActions();
+  const open = useAtomCommand(previewEnvironment.open, {
+    reportFailure: false,
+  });
+  const respondToAutomation = useAtomCommand(
+    previewEnvironment.respondToAutomation,
+    "preview automation response",
+  );
+  const reportAutomationOwner = useAtomCommand(
+    previewEnvironment.reportAutomationOwner,
+    "preview automation owner report",
+  );
+  const clearAutomationOwner = useAtomCommand(
+    previewEnvironment.clearAutomationOwner,
+    "preview automation owner clear",
+  );
   const ownerStateRef = useRef({ threadRef, visible });
   const connectedGenerationRef = useRef<number | null>(null);
   const handlerRef = useRef<(request: PreviewAutomationRequest) => Promise<unknown>>(
@@ -174,13 +189,17 @@ export function PreviewAutomationOwner(props: {
           let activeTabId =
             (input.reuseExistingTab ?? true) ? (state.snapshot?.tabId ?? null) : null;
           if (!activeTabId) {
-            const snapshot = await open({
+            const result = await open({
               environmentId: threadRef.environmentId,
               input: {
                 threadId: threadRef.threadId,
                 ...(input.url ? { url: input.url } : {}),
               },
             });
+            if (result._tag === "Failure") {
+              throw squashAtomCommandFailure(result);
+            }
+            const snapshot = result.value;
             usePreviewStateStore.getState().applyServerSnapshot(threadRef, snapshot);
             activeTabId = snapshot.tabId;
           } else if (input.url && previewBridge) {

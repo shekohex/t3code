@@ -9,6 +9,13 @@ import {
   WrapTextIcon,
 } from "lucide-react";
 import type { ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import React, {
   Children,
   Suspense,
@@ -64,13 +71,14 @@ import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
 import { assetEnvironment } from "../state/assets";
 import { usePreparedConnection } from "../state/session";
-import { usePreviewActions } from "../state/preview";
-import { useAtomSet } from "@effect/atom-react";
+import { previewEnvironment } from "../state/preview";
+import { useAtomCommand } from "../state/use-atom-command";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import {
   isBrowserPreviewFile,
   openFileInPreview,
   openUrlInPreview,
+  BrowserPreviewUnavailableError,
 } from "../browser/openFileInPreview";
 
 class CodeHighlightErrorBoundary extends React.Component<
@@ -682,8 +690,8 @@ interface MarkdownFileLinkProps {
   copyMarkdown: string;
   theme: "light" | "dark";
   threadRef?: ScopedThreadRef | undefined;
-  onOpen: (targetPath: string) => Promise<unknown>;
-  onOpenInBrowser?: (() => Promise<void>) | undefined;
+  onOpen: (targetPath: string) => Promise<AtomCommandResult<unknown, unknown>>;
+  onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   className?: string | undefined;
 }
 
@@ -965,7 +973,12 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   className,
 }: MarkdownFileLinkProps) {
   const handleOpenInEditor = useCallback(() => {
-    void onOpen(targetPath).catch((error) => {
+    void (async () => {
+      const result = await onOpen(targetPath);
+      if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+        return;
+      }
+      const error = squashAtomCommandFailure(result);
       toastManager.add(
         stackedThreadToast({
           type: "error",
@@ -973,7 +986,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
-    });
+    })();
   }, [onOpen, targetPath]);
 
   const handleOpenInFilePreview = useCallback(() => {
@@ -985,7 +998,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   }, [handleOpenInEditor, threadRef, workspaceRelativePath]);
 
   const handleOpenInBrowser = useCallback(() => {
-    void onOpenInBrowser?.().catch((error) => {
+    if (!onOpenInBrowser) {
+      return;
+    }
+    void (async () => {
+      const result = await onOpenInBrowser();
+      if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+        return;
+      }
+      const error = squashAtomCommandFailure(result);
       toastManager.add(
         stackedThreadToast({
           type: "error",
@@ -993,7 +1014,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
-    });
+    })();
   }, [onOpenInBrowser]);
 
   const handleCopy = useCallback((value: string, title: string) => {
@@ -1133,8 +1154,12 @@ function ChatMarkdown({
   lineBreaks = false,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
-  const createAssetUrl = useAtomSet(assetEnvironment.createUrl, { mode: "promise" });
-  const { open: openPreview } = usePreviewActions();
+  const createAssetUrl = useAtomCommand(assetEnvironment.createUrl, {
+    reportFailure: false,
+  });
+  const openPreview = useAtomCommand(previewEnvironment.open, {
+    reportFailure: false,
+  });
   const preparedConnection = usePreparedConnection(threadRef?.environmentId ?? null);
   const environmentId = useActiveEnvironmentId();
   const serverConfig = useEnvironmentQuery(
@@ -1180,7 +1205,17 @@ function ChatMarkdown({
   }, []);
   const openExternalLinkInPreview = useCallback(
     (url: string) => {
-      if (!threadRef) return Promise.reject(new Error("Thread context is unavailable."));
+      if (!threadRef) {
+        return Promise.resolve(
+          AsyncResult.failure<void, BrowserPreviewUnavailableError>(
+            Cause.fail(
+              new BrowserPreviewUnavailableError({
+                message: "Thread context is unavailable.",
+              }),
+            ),
+          ),
+        );
+      }
       return openUrlInPreview({ threadRef, url, openPreview });
     },
     [openPreview, threadRef],
@@ -1188,7 +1223,15 @@ function ChatMarkdown({
   const openMarkdownFileInPreview = useCallback(
     (path: string) => {
       if (!threadRef || preparedConnection._tag === "None") {
-        return Promise.reject(new Error("Environment is not connected."));
+        return Promise.resolve(
+          AsyncResult.failure<void, BrowserPreviewUnavailableError>(
+            Cause.fail(
+              new BrowserPreviewUnavailableError({
+                message: "Environment is not connected.",
+              }),
+            ),
+          ),
+        );
       }
       return openFileInPreview({
         threadRef,
@@ -1280,7 +1323,8 @@ function ChatMarkdown({
                   )
                   .then((clicked) => {
                     if (clicked === "open-in-browser") {
-                      return openExternalLinkInPreview(href);
+                      void openExternalLinkInPreview(href);
+                      return;
                     }
                     if (clicked === "open-external") return api.shell.openExternal(href);
                   })

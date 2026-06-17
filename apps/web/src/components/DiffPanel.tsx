@@ -1,6 +1,10 @@
 import { Virtualizer } from "@pierre/diffs/react";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { ScopedThreadRef, TurnId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
@@ -317,9 +321,12 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
   const openDiffFile = useCallback(
     (filePath: string) => {
       const targetPath = activeCwd ? resolvePathLinkTarget(filePath, activeCwd) : filePath;
-      void openInPreferredEditor(targetPath).catch((error) => {
-        console.warn("Failed to open diff file in editor.", error);
-      });
+      void (async () => {
+        const result = await openInPreferredEditor(targetPath);
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          console.warn("Failed to open diff file in editor.", squashAtomCommandFailure(result));
+        }
+      })();
     },
     [activeCwd, openInPreferredEditor],
   );

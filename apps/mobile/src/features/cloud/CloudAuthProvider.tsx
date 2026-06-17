@@ -1,25 +1,29 @@
 import { ClerkProvider, useAuth } from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
+import { ManagedRelayClient, setManagedRelaySession } from "@t3tools/client-runtime/relay";
 import {
-  createManagedRelaySession,
-  ManagedRelayClient,
-  setManagedRelaySession,
-} from "@t3tools/client-runtime/relay";
+  reportAtomCommandResult,
+  settleAsyncResult,
+  settlePromise,
+} from "@t3tools/client-runtime/state/runtime";
 import * as Effect from "effect/Effect";
 import { type ReactNode, useEffect, useRef } from "react";
 
-import { useEnvironmentConnectionActions } from "../../state/environments";
+import { environmentCatalog } from "../../connection/catalog";
 import { runtime } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   setAgentAwarenessRelayTokenProvider,
   unregisterAgentAwarenessDeviceForCurrentUser,
 } from "../agent-awareness/remoteRegistration";
 import { resolveCloudPublicConfig, resolveRelayClerkTokenOptions } from "./publicConfig";
 
-function resetManagedRelayTokenCache(): Promise<void> {
-  return runtime.runPromise(
-    ManagedRelayClient.pipe(Effect.flatMap((client) => client.resetTokenCache)),
+function resetManagedRelayTokenCache() {
+  return settleAsyncResult(() =>
+    runtime.runPromiseExit(
+      ManagedRelayClient.pipe(Effect.flatMap((client) => client.resetTokenCache)),
+    ),
   );
 }
 
@@ -33,24 +37,24 @@ export function activateCloudRelayAccount(
   tokenProvider: () => Promise<string | null>,
 ): void {
   setAgentAwarenessRelayTokenProvider(tokenProvider, accountId);
-  setManagedRelaySession(
-    appAtomRegistry,
-    createManagedRelaySession({
-      accountId,
-      readClerkToken: tokenProvider,
-    }),
-  );
+  setManagedRelaySession(appAtomRegistry, {
+    accountId,
+    readClerkToken: tokenProvider,
+  });
 }
 
 function CloudAuthBridge(props: { readonly children: ReactNode }) {
   const { getToken, isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
-  const { removeRelayEnvironments } = useEnvironmentConnectionActions();
+  const removeRelayEnvironments = useAtomCommand(environmentCatalog.removeRelayEnvironments, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   const previousTokenProviderRef = useRef<{
     readonly userId: string;
     readonly provider: () => Promise<string | null>;
   } | null>(null);
   const observedAccountRef = useRef<string | null | undefined>(undefined);
-  const accountTransitionRef = useRef(Promise.resolve());
+  const accountTransitionRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,19 +72,24 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
         readonly provider: () => Promise<string | null>;
       } | null,
     ) => {
-      accountTransitionRef.current = accountTransitionRef.current.then(async () => {
+      const previousTransition = accountTransitionRef.current ?? Promise.resolve();
+      accountTransitionRef.current = previousTransition.then(async () => {
         const cleanup = [
           resetManagedRelayTokenCache(),
           removeRelayEnvironments(),
           ...(previous
-            ? [runtime.runPromise(unregisterAgentAwarenessDeviceForCurrentUser(previous.provider))]
+            ? [
+                settleAsyncResult(() =>
+                  runtime.runPromiseExit(
+                    unregisterAgentAwarenessDeviceForCurrentUser(previous.provider),
+                  ),
+                ),
+              ]
             : []),
         ];
-        const results = await Promise.allSettled(cleanup);
+        const results = await Promise.all(cleanup);
         for (const result of results) {
-          if (result.status === "rejected") {
-            console.warn("[t3-cloud] cloud account cleanup failed", result.reason);
-          }
+          reportAtomCommandResult(result, { label: "cloud account cleanup" });
         }
       });
       return accountTransitionRef.current;
@@ -105,6 +114,15 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
       previousTokenProviderRef.current = { userId, provider: tokenProvider };
       activateCloudRelayAccount(userId, tokenProvider);
     };
+    const activateAfterTransition = (transition: Promise<void>) => {
+      void (async () => {
+        const result = await settlePromise(async () => {
+          await transition;
+          activateSession();
+        });
+        reportAtomCommandResult(result, { label: "cloud account activation" });
+      })();
+    };
     if (
       previousObservedAccount !== undefined &&
       previousObservedAccount !== null &&
@@ -112,9 +130,9 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
     ) {
       previousTokenProviderRef.current = null;
       deactivateCloudRelayAccount();
-      void queueAccountCleanup(previous).then(activateSession);
+      activateAfterTransition(queueAccountCleanup(previous));
     } else {
-      void accountTransitionRef.current.then(activateSession);
+      activateAfterTransition(accountTransitionRef.current ?? Promise.resolve());
     }
 
     return () => {

@@ -1,4 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
+import {
+  RelayConnectionRegistration,
+  RelayConnectionTarget,
+} from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type {
   RelayClientEnvironmentRecord,
@@ -7,8 +11,14 @@ import type {
 import * as Option from "effect/Option";
 import { useCallback, useMemo } from "react";
 
-import { useEnvironmentActions, useEnvironments } from "../../state/environments";
+import { environmentCatalog } from "../../connection/catalog";
+import {
+  connectPairingUrl as connectPairingUrlAtom,
+  updateBearerConnection,
+} from "../../connection/onboarding";
+import { useEnvironments } from "../../state/environments";
 import { relayEnvironmentDiscovery } from "../../state/relay";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { projectWorkspaceEnvironment, type WorkspaceEnvironment } from "../../state/workspaceModel";
 
 export interface RelayEnvironmentView {
@@ -21,8 +31,18 @@ export interface RelayEnvironmentView {
 
 export function useConnectionController() {
   const { environments } = useEnvironments();
-  const actions = useEnvironmentActions();
   const discovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
+  const connectPairingUrlMutation = useAtomCommand(connectPairingUrlAtom, {
+    reportFailure: false,
+  });
+  const updateBearer = useAtomCommand(updateBearerConnection, { reportFailure: false });
+  const registerEnvironment = useAtomCommand(environmentCatalog.register, "environment register");
+  const removeEnvironmentMutation = useAtomCommand(environmentCatalog.remove, "environment remove");
+  const retryEnvironmentMutation = useAtomCommand(environmentCatalog.retryNow, "environment retry");
+  const refreshRelayEnvironments = useAtomCommand(
+    relayEnvironmentDiscovery.refresh,
+    "relay environment refresh",
+  );
 
   const connectedEnvironments = useMemo<ReadonlyArray<WorkspaceEnvironment>>(
     () => environments.map(projectWorkspaceEnvironment),
@@ -49,32 +69,40 @@ export function useConnectionController() {
   );
 
   const connectPairingUrl = useCallback(
-    (pairingUrl: string) => actions.connectPairingUrl(pairingUrl),
-    [actions],
+    (pairingUrl: string) => connectPairingUrlMutation(pairingUrl),
+    [connectPairingUrlMutation],
   );
   const connectRelayEnvironment = useCallback(
-    (environment: RelayClientEnvironmentRecord) => actions.connectRelayEnvironment(environment),
-    [actions],
+    (environment: RelayClientEnvironmentRecord) =>
+      registerEnvironment(
+        new RelayConnectionRegistration({
+          target: new RelayConnectionTarget({
+            environmentId: environment.environmentId,
+            label: environment.label,
+          }),
+        }),
+      ),
+    [registerEnvironment],
   );
   const removeEnvironment = useCallback(
-    (environmentId: EnvironmentId) => actions.removeEnvironment(environmentId),
-    [actions],
+    (environmentId: EnvironmentId) => removeEnvironmentMutation(environmentId),
+    [removeEnvironmentMutation],
   );
   const retryEnvironment = useCallback(
-    (environmentId: EnvironmentId) => actions.retryEnvironment(environmentId),
-    [actions],
+    (environmentId: EnvironmentId) => retryEnvironmentMutation(environmentId),
+    [retryEnvironmentMutation],
   );
   const updateEnvironment = useCallback(
     (
       environmentId: EnvironmentId,
       updates: { readonly label: string; readonly displayUrl: string },
     ) =>
-      actions.updateBearer({
+      updateBearer({
         environmentId,
         label: updates.label,
         httpBaseUrl: updates.displayUrl,
       }),
-    [actions],
+    [updateBearer],
   );
 
   return {
@@ -92,6 +120,6 @@ export function useConnectionController() {
     removeEnvironment,
     retryEnvironment,
     updateEnvironment,
-    refreshRelayEnvironments: actions.refreshRelayEnvironments,
+    refreshRelayEnvironments,
   };
 }

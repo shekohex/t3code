@@ -1,4 +1,5 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -145,20 +146,23 @@ export function PullRequestThreadDialog({
         return;
       }
       setPreparingMode(mode);
-      try {
-        const result = await preparePullRequestThreadAction.run({
-          reference: parsedReference,
-          mode,
-          ...(mode === "worktree" ? { threadId } : {}),
-        });
-        await onPrepared({
-          branch: result.branch,
-          worktreePath: result.worktreePath,
-        });
-        onOpenChange(false);
-      } finally {
-        setPreparingMode(null);
+      const result = await preparePullRequestThreadAction.run({
+        reference: parsedReference,
+        mode,
+        ...(mode === "worktree" ? { threadId } : {}),
+      });
+      setPreparingMode(null);
+      if (result._tag === "Failure") {
+        if (isAtomCommandInterrupted(result)) {
+          preparePullRequestThreadAction.resetError();
+        }
+        return;
       }
+      await onPrepared({
+        branch: result.value.branch,
+        worktreePath: result.value.worktreePath,
+      });
+      onOpenChange(false);
     },
     [
       cwd,

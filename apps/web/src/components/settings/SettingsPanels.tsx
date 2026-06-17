@@ -2,7 +2,7 @@ import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "luci
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef, useState } from "react";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import {
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
@@ -13,6 +13,11 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  isAtomCommandInterrupted,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Arr from "effect/Array";
@@ -84,6 +89,7 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 const THEME_OPTIONS = [
   {
@@ -387,7 +393,7 @@ function AboutVersionSection() {
 export function useSettingsRestore(onRestored?: () => void) {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
-  const { updateSettings } = useUpdateSettings();
+  const updateSettings = useUpdateSettings();
 
   const isGitWritingModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
@@ -487,7 +493,7 @@ export function useSettingsRestore(onRestored?: () => void) {
 export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
-  const { updateSettings } = useUpdateSettings();
+  const updateSettings = useUpdateSettings();
   const observability = useAtomValue(primaryServerObservabilityAtom);
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const diagnosticsDescription = formatDiagnosticsDescription({
@@ -923,13 +929,15 @@ export function GeneralSettingsPanel() {
 
 export function ProviderSettingsPanel() {
   const settings = useSettings();
-  const { updateSettings } = useUpdateSettings();
+  const updateSettings = useUpdateSettings();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const primaryEnvironment = usePrimaryEnvironment();
-  const refreshServerProviders = useAtomSet(serverEnvironment.refreshProviders, {
-    mode: "promise",
+  const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
   });
-  const updateProvider = useAtomSet(serverEnvironment.updateProvider, { mode: "promise" });
+  const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
+    reportFailure: false,
+  });
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
   const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
@@ -973,17 +981,17 @@ export function ProviderSettingsPanel() {
       setIsRefreshingProviders(false);
       return;
     }
-    void refreshServerProviders({
-      environmentId: primaryEnvironment.environmentId,
-      input: {},
-    })
-      .catch((error: unknown) => {
-        console.warn("Failed to refresh providers", error);
-      })
-      .finally(() => {
-        refreshingRef.current = false;
-        setIsRefreshingProviders(false);
+    void (async () => {
+      const result = await refreshServerProviders({
+        environmentId: primaryEnvironment.environmentId,
+        input: {},
       });
+      refreshingRef.current = false;
+      setIsRefreshingProviders(false);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        console.warn("Failed to refresh providers", squashAtomCommandFailure(result));
+      }
+    })();
   }, [primaryEnvironment, refreshServerProviders]);
 
   const runProviderUpdate = useCallback(
@@ -1003,15 +1011,15 @@ export function ProviderSettingsPanel() {
         return;
       }
 
-      try {
-        await updateProvider({
-          environmentId: primaryEnvironment.environmentId,
-          input: {
-            provider: candidate.driver,
-            instanceId: candidate.instanceId,
-          },
-        });
-      } catch (error) {
+      const result = await updateProvider({
+        environmentId: primaryEnvironment.environmentId,
+        input: {
+          provider: candidate.driver,
+          instanceId: candidate.instanceId,
+        },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -1022,16 +1030,15 @@ export function ProviderSettingsPanel() {
                 : "The provider update command could not be started.",
           }),
         );
-      } finally {
-        setUpdatingProviderDrivers((previous) => {
-          if (!previous.has(candidate.driver)) {
-            return previous;
-          }
-          const next = new Set(previous);
-          next.delete(candidate.driver);
-          return next;
-        });
       }
+      setUpdatingProviderDrivers((previous) => {
+        if (!previous.has(candidate.driver)) {
+          return previous;
+        }
+        const next = new Set(previous);
+        next.delete(candidate.driver);
+        return next;
+      });
     },
     [primaryEnvironment, updateProvider],
   );
@@ -1439,10 +1446,11 @@ export function ArchivedThreadsPanel() {
       );
 
       if (clicked === "unarchive") {
-        try {
-          await unarchiveThread(threadRef);
+        const result = await unarchiveThread(threadRef);
+        if (result._tag === "Success") {
           refreshArchivedThreads();
-        } catch (error) {
+        } else if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
           toastManager.add(
             stackedThreadToast({
               type: "error",
@@ -1455,8 +1463,19 @@ export function ArchivedThreadsPanel() {
       }
 
       if (clicked === "delete") {
-        await confirmAndDeleteThread(threadRef);
-        refreshArchivedThreads();
+        const result = await confirmAndDeleteThread(threadRef);
+        if (result._tag === "Success") {
+          refreshArchivedThreads();
+        } else if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to delete thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
       }
     },
     [confirmAndDeleteThread, refreshArchivedThreads, unarchiveThread],
@@ -1500,13 +1519,28 @@ export function ArchivedThreadsPanel() {
                 key={thread.id}
                 onContextMenu={(event) => {
                   event.preventDefault();
-                  void handleArchivedThreadContextMenu(
-                    scopeThreadRef(thread.environmentId, thread.id),
-                    {
-                      x: event.clientX,
-                      y: event.clientY,
-                    },
-                  );
+                  void (async () => {
+                    const result = await settlePromise(() =>
+                      handleArchivedThreadContextMenu(
+                        scopeThreadRef(thread.environmentId, thread.id),
+                        {
+                          x: event.clientX,
+                          y: event.clientY,
+                        },
+                      ),
+                    );
+                    if (result._tag === "Failure") {
+                      const error = squashAtomCommandFailure(result);
+                      toastManager.add(
+                        stackedThreadToast({
+                          type: "error",
+                          title: "Archived thread action failed",
+                          description:
+                            error instanceof Error ? error.message : "An error occurred.",
+                        }),
+                      );
+                    }
+                  })();
                 }}
                 title={thread.title}
                 description={
@@ -1522,10 +1556,17 @@ export function ArchivedThreadsPanel() {
                     variant="outline"
                     size="sm"
                     className="h-7 shrink-0 cursor-pointer gap-1.5 px-2.5"
-                    onClick={() =>
-                      void unarchiveThread(scopeThreadRef(thread.environmentId, thread.id))
-                        .then(() => refreshArchivedThreads())
-                        .catch((error) => {
+                    onClick={() => {
+                      void (async () => {
+                        const result = await unarchiveThread(
+                          scopeThreadRef(thread.environmentId, thread.id),
+                        );
+                        if (result._tag === "Success") {
+                          refreshArchivedThreads();
+                          return;
+                        }
+                        if (!isAtomCommandInterrupted(result)) {
+                          const error = squashAtomCommandFailure(result);
                           toastManager.add(
                             stackedThreadToast({
                               type: "error",
@@ -1534,8 +1575,9 @@ export function ArchivedThreadsPanel() {
                                 error instanceof Error ? error.message : "An error occurred.",
                             }),
                           );
-                        })
-                    }
+                        }
+                      })();
+                    }}
                   >
                     <ArchiveX className="size-3.5" />
                     <span>Unarchive</span>

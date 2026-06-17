@@ -12,7 +12,8 @@ import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom, type AtomRegistry } from "effect/unstable/reactivity";
+import * as Stream from "effect/Stream";
+import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { findErrorTraceId } from "../errors/errorTrace.ts";
 import { ManagedRelayClient } from "./managedRelay.ts";
@@ -24,6 +25,17 @@ const CLERK_TOKEN_EXPIRY_SKEW_MS = 5_000;
 export interface ManagedRelaySession {
   readonly accountId: string;
   readonly readClerkToken: () => Effect.Effect<string | null, ManagedRelaySessionError>;
+}
+
+export interface ManagedRelaySessionInput {
+  readonly accountId: string;
+  readonly readClerkToken: () => Promise<string | null>;
+}
+
+interface ManagedRelaySessionControl {
+  readonly updateReadClerkToken: (
+    readClerkToken: ManagedRelaySessionInput["readClerkToken"],
+  ) => void;
 }
 
 export interface ManagedRelaySnapshotState<A> {
@@ -57,12 +69,13 @@ export const managedRelaySessionAtom = Atom.make<ManagedRelaySession | null>(nul
   Atom.withLabel("managed-relay:session"),
 );
 
-export function createManagedRelaySession(input: {
-  readonly accountId: string;
-  readonly readClerkToken: () => Promise<string | null>;
-}): ManagedRelaySession {
+const managedRelaySessionControls = new WeakMap<ManagedRelaySession, ManagedRelaySessionControl>();
+
+export function createManagedRelaySession(input: ManagedRelaySessionInput): ManagedRelaySession {
   let cachedToken: { readonly token: string; readonly expiresAtMillis: number } | null = null;
   let pendingToken: Promise<string | null> | null = null;
+  let readClerkToken = input.readClerkToken;
+  let tokenProviderGeneration = 0;
 
   const readCachedClerkToken = async (nowMillis: number): Promise<string | null> => {
     if (cachedToken && cachedToken.expiresAtMillis > nowMillis + CLERK_TOKEN_EXPIRY_SKEW_MS) {
@@ -72,7 +85,11 @@ export function createManagedRelaySession(input: {
       return await pendingToken;
     }
 
-    const operation = input.readClerkToken().then((token) => {
+    const operationGeneration = tokenProviderGeneration;
+    const operation = readClerkToken().then((token) => {
+      if (operationGeneration !== tokenProviderGeneration) {
+        return token;
+      }
       if (!token) {
         cachedToken = null;
         return null;
@@ -98,7 +115,7 @@ export function createManagedRelaySession(input: {
     }
   };
 
-  return {
+  const session: ManagedRelaySession = {
     accountId: input.accountId,
     readClerkToken: Effect.fn("clientRuntime.managedRelaySession.readClerkToken")(function* () {
       const nowMillis = yield* Clock.currentTimeMillis;
@@ -112,13 +129,47 @@ export function createManagedRelaySession(input: {
       });
     }),
   };
+  managedRelaySessionControls.set(session, {
+    updateReadClerkToken: (nextReadClerkToken) => {
+      readClerkToken = nextReadClerkToken;
+      tokenProviderGeneration += 1;
+      pendingToken = null;
+    },
+  });
+  return session;
 }
 
 export function setManagedRelaySession(
   registry: AtomRegistry.AtomRegistry,
-  session: ManagedRelaySession | null,
+  input: ManagedRelaySessionInput | null,
 ): void {
-  registry.set(managedRelaySessionAtom, session);
+  const current = registry.get(managedRelaySessionAtom);
+  if (input === null) {
+    if (current !== null) {
+      registry.set(managedRelaySessionAtom, null);
+    }
+    return;
+  }
+  if (current?.accountId === input.accountId) {
+    const control = managedRelaySessionControls.get(current);
+    if (control) {
+      // Clerk can replace its token reader during routine same-account refreshes.
+      // Keep the session stable so those refreshes do not invalidate queries or reconnect leases.
+      control.updateReadClerkToken(input.readClerkToken);
+      return;
+    }
+  }
+  registry.set(managedRelaySessionAtom, createManagedRelaySession(input));
+}
+
+export function managedRelayAccountChanges(
+  registry: AtomRegistry.AtomRegistry,
+): Stream.Stream<string | null> {
+  return AtomRegistry.toStream(registry, managedRelaySessionAtom).pipe(
+    Stream.map((session) => session?.accountId ?? null),
+    Stream.changes,
+    Stream.drop(1),
+  );
 }
 
 function readSessionClerkToken(

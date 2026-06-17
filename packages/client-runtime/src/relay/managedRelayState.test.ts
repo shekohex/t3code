@@ -8,6 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { afterEach, vi } from "vite-plus/test";
 
@@ -19,6 +20,7 @@ import {
 import {
   createManagedRelayQueryManager,
   createManagedRelaySession,
+  managedRelayAccountChanges,
   type ManagedRelayQueryEvent,
   managedRelaySessionAtom,
   readManagedRelaySnapshotState,
@@ -96,13 +98,10 @@ function createManager(
 }
 
 function setSession() {
-  setManagedRelaySession(
-    registry,
-    createManagedRelaySession({
-      accountId: "account-1",
-      readClerkToken: () => Promise.resolve("clerk-token"),
-    }),
-  );
+  setManagedRelaySession(registry, {
+    accountId: "account-1",
+    readClerkToken: () => Promise.resolve("clerk-token"),
+  });
 }
 
 function clerkToken(expiresAtSeconds: number): string {
@@ -153,6 +152,80 @@ describe("createManagedRelayQueryManager", () => {
     }),
   );
 
+  it.effect("updates the token provider without replacing a same-account session", () =>
+    Effect.gen(function* () {
+      const firstRead = vi.fn(() => Promise.resolve<string | null>(null));
+      setManagedRelaySession(registry, {
+        accountId: "account-1",
+        readClerkToken: firstRead,
+      });
+      const firstSession = registry.get(managedRelaySessionAtom);
+      expect(firstSession).not.toBeNull();
+      expect(yield* firstSession!.readClerkToken()).toBeNull();
+
+      const secondRead = vi.fn(() => Promise.resolve<string | null>("refreshed-token"));
+      setManagedRelaySession(registry, {
+        accountId: "account-1",
+        readClerkToken: secondRead,
+      });
+
+      expect(registry.get(managedRelaySessionAtom)).toBe(firstSession);
+      expect(yield* firstSession!.readClerkToken()).toBe("refreshed-token");
+      expect(firstRead).toHaveBeenCalledTimes(1);
+      expect(secondRead).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect("does not pin a refreshed session to an older pending token read", () =>
+    Effect.gen(function* () {
+      let resolveFirst!: (token: string) => void;
+      setManagedRelaySession(registry, {
+        accountId: "account-1",
+        readClerkToken: () =>
+          new Promise<string>((resolve) => {
+            resolveFirst = resolve;
+          }),
+      });
+      const session = registry.get(managedRelaySessionAtom);
+      const firstRead = yield* session!.readClerkToken().pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      setManagedRelaySession(registry, {
+        accountId: "account-1",
+        readClerkToken: () => Promise.resolve("refreshed-token"),
+      });
+
+      expect(yield* session!.readClerkToken()).toBe("refreshed-token");
+      resolveFirst("older-token");
+      expect(yield* Fiber.join(firstRead)).toBe("older-token");
+    }),
+  );
+
+  it("emits credential changes only when the managed relay account changes", async () => {
+    setManagedRelaySession(registry, {
+      accountId: "account-1",
+      readClerkToken: () => Promise.resolve("first-token"),
+    });
+    const changes = Effect.runPromise(
+      managedRelayAccountChanges(registry).pipe(Stream.take(2), Stream.runCollect),
+    );
+    await vi.waitFor(() => {
+      expect(registry.getNodes().get(managedRelaySessionAtom)?.listeners.size).toBeGreaterThan(0);
+    });
+
+    setManagedRelaySession(registry, {
+      accountId: "account-1",
+      readClerkToken: () => Promise.resolve("refreshed-token"),
+    });
+    setManagedRelaySession(registry, {
+      accountId: "account-2",
+      readClerkToken: () => Promise.resolve("second-token"),
+    });
+    setManagedRelaySession(registry, null);
+
+    expect(Array.from(await changes)).toEqual(["account-2", null]);
+  });
+
   it("shares one Clerk token read across concurrent relay list and status queries", async () => {
     const secondEnvironment = {
       ...environment,
@@ -179,13 +252,10 @@ describe("createManagedRelayQueryManager", () => {
         });
       },
     });
-    setManagedRelaySession(
-      registry,
-      createManagedRelaySession({
-        accountId: "account-1",
-        readClerkToken,
-      }),
-    );
+    setManagedRelaySession(registry, {
+      accountId: "account-1",
+      readClerkToken,
+    });
 
     const environmentsAtom = manager.environmentsAtom("account-1");
     const firstStatusAtom = manager.environmentStatusAtom({

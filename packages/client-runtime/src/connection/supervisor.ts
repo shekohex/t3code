@@ -267,6 +267,15 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
     yield* Queue.offer(signals, next);
   });
 
+  const logManagedRelayAccountChange = Effect.logInfo(
+    "Managed relay account changed; restarting the environment connection.",
+  ).pipe(
+    Effect.annotateLogs({
+      "environment.id": target.environmentId,
+      "environment.label": target.label,
+    }),
+  );
+
   const reportProgress = Effect.fn("EnvironmentSupervisor.reportProgress")(function* (
     attempt: number,
     generation: number,
@@ -375,6 +384,7 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
           break;
         case "Wakeup":
           if (next.reason === "credentials-changed" && target._tag === "RelayConnectionTarget") {
+            yield* logManagedRelayAccountChange;
             return;
           }
           break;
@@ -396,6 +406,7 @@ export const makeEnvironmentSupervisor = Effect.fn("EnvironmentSupervisor.make")
           break;
         case "Wakeup":
           if (next.reason === "credentials-changed" && target._tag === "RelayConnectionTarget") {
+            yield* logManagedRelayAccountChange;
             return;
           }
           if (next.reason === "application-active") {

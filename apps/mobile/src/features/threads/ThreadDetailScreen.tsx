@@ -74,18 +74,16 @@ export interface ThreadDetailScreenProps {
   readonly onPickDraftImages: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
-  readonly onStopThread: () => Promise<void>;
+  readonly onStopThread: () => void;
   readonly onSendMessage: () => Promise<void>;
   readonly onReconnectEnvironment: () => void;
-  readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => Promise<void>;
-  readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => Promise<void>;
-  readonly onUpdateThreadInteractionMode: (
-    interactionMode: ProviderInteractionMode,
-  ) => Promise<void>;
+  readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
+  readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
+  readonly onUpdateThreadInteractionMode: (interactionMode: ProviderInteractionMode) => void;
   readonly onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
-  ) => Promise<void>;
+  ) => Promise<unknown>;
   readonly onSelectUserInputOption: (
     requestId: ApprovalRequestId,
     questionId: string,
@@ -96,7 +94,7 @@ export interface ThreadDetailScreenProps {
     questionId: string,
     customAnswer: string,
   ) => void;
-  readonly onSubmitUserInput: () => Promise<void>;
+  readonly onSubmitUserInput: () => Promise<unknown>;
   readonly showContent?: boolean;
 }
 

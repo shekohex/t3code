@@ -1,5 +1,8 @@
 import { memo, useState, useCallback } from "react";
-import { useAtomSet } from "@effect/atom-react";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { Badge } from "./ui/badge";
@@ -28,6 +31,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { projectEnvironment } from "~/state/projects";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 function stepStatusIcon(status: string): React.ReactNode {
   if (status === "completed") {
@@ -76,7 +80,9 @@ const PlanSidebar = memo(function PlanSidebar({
 }: PlanSidebarProps) {
   const [proposedPlanExpanded, setProposedPlanExpanded] = useState(false);
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
-  const writeProjectFile = useAtomSet(projectEnvironment.writeFile, { mode: "promise" });
+  const writeProjectFile = useAtomCommand(projectEnvironment.writeFile, {
+    reportFailure: false,
+  });
   const { copyToClipboard, isCopied } = useCopyToClipboard();
 
   const planMarkdown = activeProposedPlan?.planMarkdown ?? null;
@@ -98,22 +104,26 @@ const PlanSidebar = memo(function PlanSidebar({
     if (!workspaceRoot || !planMarkdown) return;
     const filename = buildProposedPlanMarkdownFilename(planMarkdown);
     setIsSavingToWorkspace(true);
-    void writeProjectFile({
-      environmentId,
-      input: {
-        cwd: workspaceRoot,
-        relativePath: filename,
-        contents: normalizePlanMarkdownForExport(planMarkdown),
-      },
-    })
-      .then((result) => {
+    void (async () => {
+      const result = await writeProjectFile({
+        environmentId,
+        input: {
+          cwd: workspaceRoot,
+          relativePath: filename,
+          contents: normalizePlanMarkdownForExport(planMarkdown),
+        },
+      });
+      setIsSavingToWorkspace(false);
+      if (result._tag === "Success") {
         toastManager.add({
           type: "success",
           title: "Plan saved",
-          description: result.relativePath,
+          description: result.value.relativePath,
         });
-      })
-      .catch((error) => {
+        return;
+      }
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -121,11 +131,8 @@ const PlanSidebar = memo(function PlanSidebar({
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );
-      })
-      .then(
-        () => setIsSavingToWorkspace(false),
-        () => setIsSavingToWorkspace(false),
-      );
+      }
+    })();
   }, [environmentId, planMarkdown, workspaceRoot, writeProjectFile]);
 
   return (

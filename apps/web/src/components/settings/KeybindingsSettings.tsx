@@ -27,7 +27,11 @@ import {
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 
 import { isElectron } from "../../env";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
@@ -67,6 +71,7 @@ import {
 } from "./KeybindingsSettings.logic";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 function KeybindingPill({ value }: { value: string }) {
   const parts = value.split("+");
@@ -1079,11 +1084,11 @@ export function KeybindingsSettingsPanel() {
   const keybindingsConfigPath = useAtomValue(primaryServerKeybindingsConfigPathAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   const primaryEnvironment = usePrimaryEnvironment();
-  const upsertKeybinding = useAtomSet(serverEnvironment.upsertKeybinding, {
-    mode: "promise",
+  const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
+    reportFailure: false,
   });
-  const removeKeybindingMutation = useAtomSet(serverEnvironment.removeKeybinding, {
-    mode: "promise",
+  const removeKeybindingMutation = useAtomCommand(serverEnvironment.removeKeybinding, {
+    reportFailure: false,
   });
   const openInPreferredEditor = useOpenInPreferredEditor(
     primaryEnvironment?.environmentId ?? null,
@@ -1125,14 +1130,19 @@ export function KeybindingsSettingsPanel() {
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
-    void openInPreferredEditor(keybindingsConfigPath).catch((error: unknown) => {
+    void (async () => {
+      const result = await openInPreferredEditor(keybindingsConfigPath);
+      if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+        return;
+      }
+      const error = squashAtomCommandFailure(result);
       toastManager.add({
         title: "Unable to open keybindings file",
         description:
           error instanceof Error ? error.message : "The keybindings file was not opened.",
         type: "error",
       });
-    });
+    })();
   }, [keybindingsConfigPath, openInPreferredEditor]);
 
   const saveKeybinding = useCallback(
@@ -1145,23 +1155,25 @@ export function KeybindingsSettingsPanel() {
         ...(input.when?.trim() ? { when: input.when.trim() } : {}),
         ...(input.replace ? { replace: input.replace } : {}),
       };
-      void upsertKeybinding({
-        environmentId: primaryEnvironment.environmentId,
-        input: payload,
-      })
-        .then(() => {
+      void (async () => {
+        const result = await upsertKeybinding({
+          environmentId: primaryEnvironment.environmentId,
+          input: payload,
+        });
+        setSavingCommand(null);
+        if (result._tag === "Success") {
           setIsAddingBinding(false);
-        })
-        .catch((error: unknown) => {
+          return;
+        }
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
           toastManager.add({
             title: "Unable to save keybinding",
             description: error instanceof Error ? error.message : "The keybinding was not saved.",
             type: "error",
           });
-        })
-        .finally(() => {
-          setSavingCommand(null);
-        });
+        }
+      })();
     },
     [primaryEnvironment, upsertKeybinding],
   );
@@ -1170,20 +1182,21 @@ export function KeybindingsSettingsPanel() {
     (row: KeybindingRow) => {
       if (!primaryEnvironment) return;
       setSavingCommand(row.command);
-      void removeKeybindingMutation({
-        environmentId: primaryEnvironment.environmentId,
-        input: rowKeybindingTarget(row),
-      })
-        .catch((error: unknown) => {
+      void (async () => {
+        const result = await removeKeybindingMutation({
+          environmentId: primaryEnvironment.environmentId,
+          input: rowKeybindingTarget(row),
+        });
+        setSavingCommand(null);
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
           toastManager.add({
             title: "Unable to remove keybinding",
             description: error instanceof Error ? error.message : "The keybinding was not removed.",
             type: "error",
           });
-        })
-        .finally(() => {
-          setSavingCommand(null);
-        });
+        }
+      })();
     },
     [primaryEnvironment, removeKeybindingMutation],
   );

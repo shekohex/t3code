@@ -5,12 +5,26 @@ import {
   type KnownTerminalSession,
   type TerminalSessionState,
 } from "@t3tools/client-runtime/state/terminal";
+import {
+  type AtomCommandFailure,
+  type AtomCommandResult,
+  type AtomCommandSuccess,
+} from "@t3tools/client-runtime/state/runtime";
 import { ThreadId, type EnvironmentId, type TerminalAttachInput } from "@t3tools/contracts";
-import { useAtomSet } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
+import * as Data from "effect/Data";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 
 import { useEnvironmentQuery } from "./query";
 import { terminalEnvironment } from "./terminal";
+import { useAtomCommand } from "./use-atom-command";
+
+export class TerminalRestartUnavailableError extends Data.TaggedError(
+  "TerminalRestartUnavailableError",
+)<{
+  readonly message: string;
+}> {}
 
 export function useAttachedTerminalSession(input: {
   readonly environmentId: EnvironmentId | null;
@@ -95,11 +109,19 @@ export function useTerminalController(input: {
   readonly environmentId: EnvironmentId;
   readonly terminal: TerminalAttachInput;
 }) {
-  const writeTerminal = useAtomSet(terminalEnvironment.write, { mode: "promise" });
-  const resizeTerminal = useAtomSet(terminalEnvironment.resize, { mode: "promise" });
-  const clearTerminal = useAtomSet(terminalEnvironment.clear, { mode: "promise" });
-  const restartTerminal = useAtomSet(terminalEnvironment.restart, { mode: "promise" });
-  const closeTerminal = useAtomSet(terminalEnvironment.close, { mode: "promise" });
+  const writeTerminal = useAtomCommand(terminalEnvironment.write, {
+    reportFailure: false,
+  });
+  const resizeTerminal = useAtomCommand(terminalEnvironment.resize, {
+    reportFailure: false,
+  });
+  const clearTerminal = useAtomCommand(terminalEnvironment.clear);
+  const restartTerminal = useAtomCommand(terminalEnvironment.restart, {
+    reportFailure: false,
+  });
+  const closeTerminal = useAtomCommand(terminalEnvironment.close);
+  type RestartTerminalError = AtomCommandFailure<Awaited<ReturnType<typeof restartTerminal>>>;
+  type RestartTerminalValue = AtomCommandSuccess<Awaited<ReturnType<typeof restartTerminal>>>;
   const session = useAttachedTerminalSession(input);
   const { environmentId, terminal } = input;
 
@@ -139,10 +161,16 @@ export function useTerminalController(input: {
       }),
     [clearTerminal, environmentId, terminal.terminalId, terminal.threadId],
   );
-  const restart = useCallback(() => {
+  const restart = useCallback(async (): Promise<
+    AtomCommandResult<RestartTerminalValue, RestartTerminalError | TerminalRestartUnavailableError>
+  > => {
     if (terminal.cwd === undefined || terminal.cols === undefined || terminal.rows === undefined) {
-      return Promise.reject(
-        new Error("Terminal restart requires the working directory and dimensions."),
+      return AsyncResult.failure(
+        Cause.fail(
+          new TerminalRestartUnavailableError({
+            message: "Terminal restart requires the working directory and dimensions.",
+          }),
+        ),
       );
     }
     return restartTerminal({

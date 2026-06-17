@@ -4,12 +4,14 @@ import {
   type GitRunStackedActionResult,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import type { AtomCommandResult } from "./runtime.ts";
 import {
   applyVcsActionProgressEvent,
   beginVcsActionState,
@@ -294,11 +296,11 @@ describe("vcsActionState", () => {
     const target = { environmentId, cwd };
     let finishFirst!: () => void;
     let failSecond!: (error: Error) => void;
-    const firstAction = new Promise<void>((resolve) => {
-      finishFirst = resolve;
+    const firstAction = new Promise<AtomCommandResult<void, never>>((resolve) => {
+      finishFirst = () => resolve(AsyncResult.success(undefined));
     });
-    const secondAction = new Promise<void>((_resolve, reject) => {
-      failSecond = reject;
+    const secondAction = new Promise<AtomCommandResult<void, Error>>((resolve) => {
+      failSecond = (error) => resolve(AsyncResult.failure(Cause.fail(error)));
     });
 
     const first = manager.track(
@@ -325,9 +327,9 @@ describe("vcsActionState", () => {
     });
     expect(secondActionId).not.toBe(firstActionId);
 
-    const secondFailure = expect(second).rejects.toThrow("switch failed");
     failSecond(new Error("switch failed"));
-    await secondFailure;
+    const secondFailure = await second;
+    expect(AsyncResult.isFailure(secondFailure)).toBe(true);
     expect(registry.get(manager.stateAtom(target))).toMatchObject({
       actionId: secondActionId,
       error: "switch failed",

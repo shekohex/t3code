@@ -115,6 +115,20 @@ const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make"
   const accountGeneration = yield* Ref.make(0);
   const activeAccountId = yield* Ref.make<Option.Option<string>>(Option.none());
   const refreshGeneration = yield* Ref.make(0);
+  const offlineReportFingerprints = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
+
+  const clearOfflineReport = Effect.fn("RelayEnvironmentDiscovery.clearOfflineReport")(function* (
+    environmentId: string,
+  ) {
+    yield* Ref.update(offlineReportFingerprints, (current) => {
+      if (!current.has(environmentId)) {
+        return current;
+      }
+      const next = new Map(current);
+      next.delete(environmentId);
+      return next;
+    });
+  });
 
   const updateEnvironment = Effect.fn("RelayEnvironmentDiscovery.updateEnvironment")(function* (
     generation: number,
@@ -153,6 +167,25 @@ const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make"
       );
 
     if (result._tag === "Success") {
+      if (result.success.status === "offline") {
+        const fingerprint = `${result.success.endpoint.httpBaseUrl}\n${result.success.error ?? ""}`;
+        const shouldReport = yield* Ref.modify(offlineReportFingerprints, (current) => {
+          if (current.get(environment.environmentId) === fingerprint) {
+            return [false, current];
+          }
+          return [true, new Map(current).set(environment.environmentId, fingerprint)];
+        });
+        if (shouldReport) {
+          yield* Effect.logWarning("Relay environment health check reported offline", {
+            environmentId: result.success.environmentId,
+            endpoint: result.success.endpoint.httpBaseUrl,
+            message: result.success.error,
+            traceId: result.success.traceId,
+          });
+        }
+      } else {
+        yield* clearOfflineReport(environment.environmentId);
+      }
       yield* updateEnvironment(generation, environment.environmentId, (current) => ({
         ...current,
         availability: result.success.status,
@@ -162,6 +195,7 @@ const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make"
       return;
     }
 
+    yield* clearOfflineReport(environment.environmentId);
     yield* updateEnvironment(generation, environment.environmentId, (current) => ({
       ...current,
       availability: "error",
@@ -278,6 +312,7 @@ const makeRelayEnvironmentDiscovery = Effect.fn("RelayEnvironmentDiscovery.make"
         ? Effect.gen(function* () {
             yield* Ref.update(accountGeneration, (current) => current + 1);
             yield* Ref.set(activeAccountId, Option.none());
+            yield* Ref.set(offlineReportFingerprints, new Map());
             const shouldRefresh = yield* Ref.get(hasRefreshed);
             yield* SubscriptionRef.set(state, EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
             if (shouldRefresh) {

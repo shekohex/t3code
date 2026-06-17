@@ -1,5 +1,6 @@
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -37,7 +38,8 @@ import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { shellEnvironment } from "../state/shell";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
+import { useAtomCommand } from "../state/use-atom-command";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
   primaryServerConfigAtom,
@@ -240,7 +242,9 @@ function EventRouter() {
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
   const primaryEnvironment = usePrimaryEnvironment();
-  const openInEditor = useAtomSet(shellEnvironment.openInEditor, { mode: "promise" });
+  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
+    reportFailure: false,
+  });
   const serverConfig = useAtomValue(primaryServerConfigAtom);
   const serverConfigEvent = useAtomValue(primaryServerConfigEventAtom);
   const serverWelcome = useAtomValue(primaryServerWelcomeAtom);
@@ -324,13 +328,18 @@ function EventRouter() {
             if (!editor) {
               return;
             }
-            void openInEditor({
-              environmentId: primaryEnvironment.environmentId,
-              input: {
-                cwd: serverConfig.keybindingsConfigPath,
-                editor,
-              },
-            }).catch((error) => {
+            void (async () => {
+              const result = await openInEditor({
+                environmentId: primaryEnvironment.environmentId,
+                input: {
+                  cwd: serverConfig.keybindingsConfigPath,
+                  editor,
+                },
+              });
+              if (result._tag === "Success") {
+                return;
+              }
+              const error = squashAtomCommandFailure(result);
               toastManager.add(
                 stackedThreadToast({
                   type: "error",
@@ -339,7 +348,7 @@ function EventRouter() {
                     error instanceof Error ? error.message : "Unknown error opening file.",
                 }),
               );
-            });
+            })();
           },
         },
       }),

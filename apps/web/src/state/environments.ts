@@ -1,23 +1,14 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import {
   connectionCatalogDisplayUrl,
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
-import {
-  RelayConnectionRegistration,
-  RelayConnectionTarget,
-} from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import * as Option from "effect/Option";
 import { Atom } from "effect/unstable/reactivity";
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
-import {
-  connectPairing as connectPairingAtom,
-  connectSshEnvironment as connectSshEnvironmentAtom,
-} from "../connection/onboarding";
 import { environmentPresentations, useEnvironmentPresentation } from "./presentation";
 import { useEnvironmentQuery } from "./query";
 import { relayEnvironmentDiscovery } from "./relay";
@@ -105,68 +96,4 @@ export function useRelayEnvironmentDiscovery() {
 
 export function useEnvironmentConnectionState(environmentId: EnvironmentId) {
   return useEnvironmentQuery(environmentCatalog.stateAtom(environmentId));
-}
-
-export function useEnvironmentConnectionActions() {
-  const register = useAtomSet(environmentCatalog.register, { mode: "promise" });
-  const remove = useAtomSet(environmentCatalog.remove, { mode: "promise" });
-  const removeRelayEnvironments = useAtomSet(environmentCatalog.removeRelayEnvironments, {
-    mode: "promise",
-  });
-  const retryNow = useAtomSet(environmentCatalog.retryNow, { mode: "promise" });
-
-  return useMemo(
-    () => ({
-      register,
-      remove,
-      removeRelayEnvironments,
-      retryNow,
-    }),
-    [register, remove, removeRelayEnvironments, retryNow],
-  );
-}
-
-export function useEnvironmentActions() {
-  const { register, remove, retryNow } = useEnvironmentConnectionActions();
-  const connectPairing = useAtomSet(connectPairingAtom, {
-    mode: "promise",
-  });
-  const connectSshEnvironment = useAtomSet(connectSshEnvironmentAtom, {
-    mode: "promise",
-  });
-  const refreshRelayEnvironments = useAtomSet(relayEnvironmentDiscovery.refresh, {
-    mode: "promise",
-  });
-
-  const connectRelayEnvironment = useCallback(
-    (environment: RelayClientEnvironmentRecord) =>
-      register(
-        new RelayConnectionRegistration({
-          target: new RelayConnectionTarget({
-            environmentId: environment.environmentId,
-            label: environment.label,
-          }),
-        }),
-      ),
-    [register],
-  );
-
-  return useMemo(
-    () => ({
-      connectPairing,
-      connectSshEnvironment,
-      connectRelayEnvironment,
-      removeEnvironment: remove,
-      retryEnvironment: retryNow,
-      refreshRelayEnvironments,
-    }),
-    [
-      connectPairing,
-      connectRelayEnvironment,
-      connectSshEnvironment,
-      refreshRelayEnvironments,
-      remove,
-      retryNow,
-    ],
-  );
 }

@@ -7,7 +7,11 @@ import {
   InfoIcon,
   RefreshCwIcon,
 } from "lucide-react";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type {
   ServerProcessDiagnosticsEntry,
@@ -33,6 +37,7 @@ import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { SettingsPageContainer, SettingsSection, useRelativeTimeTick } from "./settingsLayout";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 const NUMBER_FORMAT = new Intl.NumberFormat();
 
@@ -809,8 +814,12 @@ export function DiagnosticsSettingsPanel() {
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   const primaryEnvironment = usePrimaryEnvironment();
   const environmentId = primaryEnvironment?.environmentId ?? null;
-  const signalServerProcess = useAtomSet(serverEnvironment.signalProcess, { mode: "promise" });
-  const openInEditor = useAtomSet(shellEnvironment.openInEditor, { mode: "promise" });
+  const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
+    reportFailure: false,
+  });
+  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
+    reportFailure: false,
+  });
   const [resourceWindowMs, setResourceWindowMs] = useState(15 * 60_000);
   const selectedResourceWindow =
     RESOURCE_HISTORY_WINDOWS.find((option) => option.windowMs === resourceWindowMs) ??
@@ -866,21 +875,22 @@ export function DiagnosticsSettingsPanel() {
 
     setIsOpeningLogsDirectory(true);
     setOpenLogsDirectoryError(null);
-    void openInEditor({
-      environmentId,
-      input: {
-        cwd: logsDirectoryPath,
-        editor,
-      },
-    })
-      .catch((error: unknown) => {
+    void (async () => {
+      const result = await openInEditor({
+        environmentId,
+        input: {
+          cwd: logsDirectoryPath,
+          editor,
+        },
+      });
+      setIsOpeningLogsDirectory(false);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         setOpenLogsDirectoryError(
           error instanceof Error ? error.message : "Unable to open logs folder.",
         );
-      })
-      .finally(() => {
-        setIsOpeningLogsDirectory(false);
-      });
+      }
+    })();
   }, [availableEditors, environmentId, observability?.logsDirectoryPath, openInEditor]);
 
   const isInitialLoading = isPending && data === null;
@@ -898,43 +908,45 @@ export function DiagnosticsSettingsPanel() {
       }
 
       setSignalingPid(pid);
-      void signalServerProcess({
-        environmentId,
-        input: { pid, signal },
-      })
-        .then((result) => {
-          if (!result.signaled) {
-            const message = Option.getOrUndefined(result.message);
-            refreshProcesses();
-            if (isStaleProcessSignalMessage(message)) {
-              toastManager.add({
-                type: "info",
-                title: "Process already exited",
-                description:
-                  "The process is not a child of the T3 Server. It might already have exited.",
-              });
-              return;
-            }
-
+      void (async () => {
+        const result = await signalServerProcess({
+          environmentId,
+          input: { pid, signal },
+        });
+        setSignalingPid(null);
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
             toastManager.add({
               type: "error",
               title: `Could not send ${signal}`,
-              description: message ?? `Failed to send ${signal}.`,
+              description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
+            });
+          }
+          return;
+        }
+        if (!result.value.signaled) {
+          const message = Option.getOrUndefined(result.value.message);
+          refreshProcesses();
+          if (isStaleProcessSignalMessage(message)) {
+            toastManager.add({
+              type: "info",
+              title: "Process already exited",
+              description:
+                "The process is not a child of the T3 Server. It might already have exited.",
             });
             return;
           }
-          refreshProcesses();
-        })
-        .catch((error: unknown) => {
+
           toastManager.add({
             type: "error",
             title: `Could not send ${signal}`,
-            description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
+            description: message ?? `Failed to send ${signal}.`,
           });
-        })
-        .finally(() => {
-          setSignalingPid(null);
-        });
+          return;
+        }
+        refreshProcesses();
+      })();
     },
     [environmentId, refreshProcesses, signalServerProcess],
   );

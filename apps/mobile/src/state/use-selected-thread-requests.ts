@@ -1,4 +1,4 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useMemo, useState } from "react";
 
 import { ApprovalRequestId, type ProviderApprovalDecision } from "@t3tools/contracts";
@@ -16,6 +16,7 @@ import {
 import { appAtomRegistry } from "./atom-registry";
 import { useSelectedThreadDetail } from "./use-thread-detail";
 import { useThreadSelection } from "./use-thread-selection";
+import { useAtomCommand } from "./use-atom-command";
 
 const userInputDraftsByRequestKeyAtom = Atom.make<
   Record<string, Record<string, PendingUserInputDraftAnswer>>
@@ -53,8 +54,14 @@ function setUserInputDraftCustomAnswer(
 }
 
 export function useSelectedThreadRequests() {
-  const respondToApproval = useAtomSet(threadEnvironment.respondToApproval, { mode: "promise" });
-  const respondToUserInput = useAtomSet(threadEnvironment.respondToUserInput, { mode: "promise" });
+  const respondToApproval = useAtomCommand(
+    threadEnvironment.respondToApproval,
+    "thread approval response",
+  );
+  const respondToUserInput = useAtomCommand(
+    threadEnvironment.respondToUserInput,
+    "thread user input response",
+  );
   const { selectedThread: selectedThreadShell } = useThreadSelection();
   const selectedThread = useSelectedThreadDetail();
   const userInputDraftsByRequestKey = useAtomValue(userInputDraftsByRequestKeyAtom);
@@ -114,18 +121,16 @@ export function useSelectedThreadRequests() {
       }
 
       setRespondingApprovalId(requestId);
-      try {
-        await respondToApproval({
-          environmentId: selectedThreadShell.environmentId,
-          input: {
-            threadId: selectedThreadShell.id,
-            requestId,
-            decision,
-          },
-        });
-      } finally {
-        setRespondingApprovalId((current) => (current === requestId ? null : current));
-      }
+      const result = await respondToApproval({
+        environmentId: selectedThreadShell.environmentId,
+        input: {
+          threadId: selectedThreadShell.id,
+          requestId,
+          decision,
+        },
+      });
+      setRespondingApprovalId((current) => (current === requestId ? null : current));
+      return result;
     },
     [respondToApproval, selectedThreadShell],
   );
@@ -136,20 +141,18 @@ export function useSelectedThreadRequests() {
     }
 
     setRespondingUserInputId(activePendingUserInput.requestId);
-    try {
-      await respondToUserInput({
-        environmentId: selectedThreadShell.environmentId,
-        input: {
-          threadId: selectedThreadShell.id,
-          requestId: activePendingUserInput.requestId,
-          answers: activePendingUserInputAnswers,
-        },
-      });
-    } finally {
-      setRespondingUserInputId((current) =>
-        current === activePendingUserInput.requestId ? null : current,
-      );
-    }
+    const result = await respondToUserInput({
+      environmentId: selectedThreadShell.environmentId,
+      input: {
+        threadId: selectedThreadShell.id,
+        requestId: activePendingUserInput.requestId,
+        answers: activePendingUserInputAnswers,
+      },
+    });
+    setRespondingUserInputId((current) =>
+      current === activePendingUserInput.requestId ? null : current,
+    );
+    return result;
   }, [
     activePendingUserInput,
     activePendingUserInputAnswers,

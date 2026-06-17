@@ -4,7 +4,6 @@ import * as NodeCrypto from "node:crypto";
 
 import { beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
 import Constants from "expo-constants";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -38,8 +37,7 @@ const widgetMocks = vi.hoisted(() => ({
 const backgroundRuntime = vi.hoisted(() => ({
   pending: [] as Array<{
     readonly operation: unknown;
-    readonly resolve: (value: unknown) => void;
-    readonly reject: (error: unknown) => void;
+    readonly resolve: (exit: Exit.Exit<unknown, unknown>) => void;
   }>,
 }));
 
@@ -105,9 +103,9 @@ vi.mock("react-native", () => ({
 
 vi.mock("../../lib/runtime", () => ({
   runtime: {
-    runPromise: (operation: unknown) =>
-      new Promise((resolve, reject) => {
-        backgroundRuntime.pending.push({ operation, resolve, reject });
+    runPromiseExit: (operation: unknown) =>
+      new Promise((resolve) => {
+        backgroundRuntime.pending.push({ operation, resolve });
       }),
   },
 }));
@@ -147,21 +145,23 @@ const relayTestLayer = managedRelayClientLayer("https://relay.example.test").pip
 
 const runBackgroundOperations = Effect.fn("TestRemoteRegistration.runBackgroundOperations")(
   function* () {
+    let idlePasses = 0;
     for (;;) {
       yield* Effect.promise(() => Promise.resolve());
       const pending = backgroundRuntime.pending.shift();
       if (!pending) {
-        return;
+        idlePasses++;
+        if (idlePasses >= 3) {
+          return;
+        }
+        continue;
       }
+      idlePasses = 0;
       const exit = yield* Effect.exit(
         pending.operation as Effect.Effect<unknown, unknown, ManagedRelayClient>,
       );
       yield* Effect.sync(() => {
-        if (Exit.isSuccess(exit)) {
-          pending.resolve(exit.value);
-        } else {
-          pending.reject(Cause.squash(exit.cause));
-        }
+        pending.resolve(exit);
       });
     }
   },
@@ -406,6 +406,30 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     return Effect.gen(function* () {
       yield* runBackgroundOperations();
       expect(Notifications.getPermissionsAsync).toHaveBeenCalledTimes(1);
+    }).pipe(Effect.provide(relayTestLayer));
+  });
+
+  it.effect("continues queued device registration after a failed auth lookup", () => {
+    Constants.expoConfig!.extra = {
+      relay: {
+        url: "https://relay.example.test/",
+      },
+    };
+
+    const tokenProvider = vi
+      .fn<() => Promise<string | null>>()
+      .mockRejectedValueOnce(new Error("auth unavailable"))
+      .mockResolvedValue("clerk-token-user-a");
+    setAgentAwarenessRelayTokenProvider(tokenProvider);
+    const tokenListener = vi.mocked(Notifications.addPushTokenListener).mock.calls.at(-1)?.[0];
+    expect(tokenListener).toBeDefined();
+    tokenListener?.({ type: "ios", data: "rotated-apns-token" } as never);
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+
+      expect(backgroundRuntime.pending).toHaveLength(0);
+      expect(tokenProvider).toHaveBeenCalledTimes(2);
     }).pipe(Effect.provide(relayTestLayer));
   });
 

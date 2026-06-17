@@ -1,7 +1,8 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { type MessageId } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import * as Cause from "effect/Cause";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
@@ -15,6 +16,7 @@ import {
   type QueuedThreadMessage,
 } from "./thread-outbox-model";
 import { threadEnvironment } from "./threads";
+import { useAtomCommand } from "./use-atom-command";
 import { useThreadOutboxMessages, useThreadOutboxShellStatuses } from "./use-thread-outbox";
 import { useRemoteConnectionStatus } from "./use-remote-environment-registry";
 
@@ -43,7 +45,7 @@ function findThread(
 }
 
 export function useThreadOutboxDrain(): void {
-  const startTurn = useAtomSet(threadEnvironment.startTurn, { mode: "promise" });
+  const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const dispatchingQueuedMessageId = useAtomValue(dispatchingQueuedMessageIdAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const shellStatuses = useThreadOutboxShellStatuses();
@@ -66,30 +68,31 @@ export function useThreadOutboxDrain(): void {
 
   const sendQueuedMessage = useCallback(
     async (queuedMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
-      try {
-        await startTurn({
-          environmentId: queuedMessage.environmentId,
-          input: {
-            commandId: queuedMessage.commandId,
-            threadId: queuedMessage.threadId,
-            message: {
-              messageId: queuedMessage.messageId,
-              role: "user",
-              text: queuedMessage.text,
-              attachments: queuedMessage.attachments,
-            },
-            runtimeMode: thread.runtimeMode,
-            interactionMode: thread.interactionMode,
-            createdAt: queuedMessage.createdAt,
+      const deliveryResult = await startTurn({
+        environmentId: queuedMessage.environmentId,
+        input: {
+          commandId: queuedMessage.commandId,
+          threadId: queuedMessage.threadId,
+          message: {
+            messageId: queuedMessage.messageId,
+            role: "user",
+            text: queuedMessage.text,
+            attachments: queuedMessage.attachments,
           },
-        });
-      } catch (error) {
-        const retry = shouldRetryThreadOutboxDelivery(error);
+          runtimeMode: thread.runtimeMode,
+          interactionMode: thread.interactionMode,
+          createdAt: queuedMessage.createdAt,
+        },
+      });
+      if (AsyncResult.isFailure(deliveryResult)) {
+        const error = Cause.squash(deliveryResult.cause);
+        const retry =
+          Cause.hasInterruptsOnly(deliveryResult.cause) || shouldRetryThreadOutboxDelivery(error);
         console.warn("[thread-outbox] queued message delivery failed", {
           environmentId: queuedMessage.environmentId,
           threadId: queuedMessage.threadId,
           messageId: queuedMessage.messageId,
-          error,
+          cause: deliveryResult.cause,
           retry,
         });
         if (retry) {

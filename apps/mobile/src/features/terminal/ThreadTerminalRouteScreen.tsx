@@ -1,4 +1,3 @@
-import { useAtomSet } from "@effect/atom-react";
 import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { SymbolView } from "expo-symbols";
@@ -20,9 +19,10 @@ import {
 import { EmptyState } from "../../components/EmptyState";
 import { GlassSurface } from "../../components/GlassSurface";
 import { LoadingScreen } from "../../components/LoadingScreen";
-import { useEnvironmentConnectionActions } from "../../state/environments";
+import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { terminalEnvironment } from "../../state/terminal";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useWorkspaceState } from "../../state/workspace";
 import { buildThreadTerminalNavigation } from "../../lib/routes";
 import {
@@ -154,10 +154,10 @@ function pickRunningTerminalSessionForBootstrap(
 
 export function ThreadTerminalRouteScreen() {
   const router = useRouter();
-  const writeTerminal = useAtomSet(terminalEnvironment.write, { mode: "promise" });
-  const resizeTerminal = useAtomSet(terminalEnvironment.resize, { mode: "promise" });
-  const clearTerminal = useAtomSet(terminalEnvironment.clear, { mode: "promise" });
-  const environmentActions = useEnvironmentConnectionActions();
+  const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
+  const resizeTerminal = useAtomCommand(terminalEnvironment.resize, "terminal resize");
+  const clearTerminal = useAtomCommand(terminalEnvironment.clear, "terminal clear");
+  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
   const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
   const { state: workspaceState } = useWorkspaceState();
   const params = useLocalSearchParams<{
@@ -208,7 +208,7 @@ export function ThreadTerminalRouteScreen() {
             terminalId,
           }
         : null,
-    [selectedThread?.environmentId, selectedThread?.id, terminalId],
+    [selectedThread, terminalId],
   );
   const launchTargetKey = launchTarget
     ? `${launchTarget.environmentId}:${launchTarget.threadId}:${launchTarget.terminalId}`
@@ -861,9 +861,9 @@ export function ThreadTerminalRouteScreen() {
   }, []);
   const handleRetryEnvironment = useCallback(() => {
     if (routeEnvironmentId !== null) {
-      void environmentActions.retryNow(routeEnvironmentId);
+      void retryEnvironment(routeEnvironmentId);
     }
-  }, [environmentActions, routeEnvironmentId]);
+  }, [retryEnvironment, routeEnvironmentId]);
 
   if (!selectedThread) {
     if (workspaceState.isLoadingConnections) {

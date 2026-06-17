@@ -6,6 +6,13 @@ import type {
   PreviewSessionSnapshot,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import {
+  type AtomCommandResult,
+  mapAtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
+import * as Cause from "effect/Cause";
+import * as Data from "effect/Data";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import { isPreviewSupportedInRuntime, usePreviewStateStore } from "~/previewStateStore";
@@ -14,39 +21,53 @@ import { useRightPanelStore } from "~/rightPanelStore";
 export const isBrowserPreviewFile = (path: string): boolean =>
   /\.(?:html?|pdf)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 
-export type OpenPreviewMutation = (input: {
+export class BrowserPreviewUnavailableError extends Data.TaggedError(
+  "BrowserPreviewUnavailableError",
+)<{
+  readonly message: string;
+}> {}
+
+export type OpenPreviewMutation<E = unknown> = (input: {
   readonly environmentId: EnvironmentId;
   readonly input: PreviewOpenInput;
-}) => Promise<PreviewSessionSnapshot>;
+}) => Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
 
-export async function openUrlInPreview(input: {
+export async function openUrlInPreview<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly url: string;
-  readonly openPreview: OpenPreviewMutation;
-}): Promise<void> {
-  const snapshot = await input.openPreview({
+  readonly openPreview: OpenPreviewMutation<E>;
+}): Promise<AtomCommandResult<void, E>> {
+  const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: { threadId: input.threadRef.threadId, url: input.url },
   });
-  usePreviewStateStore.getState().applyServerSnapshot(input.threadRef, snapshot);
-  usePreviewStateStore.getState().rememberUrl(input.threadRef, input.url);
-  useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
+  return mapAtomCommandResult(result, (snapshot) => {
+    usePreviewStateStore.getState().applyServerSnapshot(input.threadRef, snapshot);
+    usePreviewStateStore.getState().rememberUrl(input.threadRef, input.url);
+    useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
+  });
 }
 
-export async function openFileInPreview(input: {
+export async function openFileInPreview<AssetError, PreviewError>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly filePath: string;
   readonly httpBaseUrl: string;
   readonly createAssetUrl: (input: {
     readonly environmentId: EnvironmentId;
     readonly input: { readonly resource: AssetResource };
-  }) => Promise<AssetCreateUrlResult>;
-  readonly openPreview: OpenPreviewMutation;
-}): Promise<void> {
+  }) => Promise<AtomCommandResult<AssetCreateUrlResult, AssetError>>;
+  readonly openPreview: OpenPreviewMutation<PreviewError>;
+}): Promise<AtomCommandResult<void, AssetError | PreviewError | BrowserPreviewUnavailableError>> {
   if (!isPreviewSupportedInRuntime()) {
-    throw new Error("The integrated browser is unavailable in this runtime.");
+    return AsyncResult.failure(
+      Cause.fail(
+        new BrowserPreviewUnavailableError({
+          message: "The integrated browser is unavailable in this runtime.",
+        }),
+      ),
+    );
   }
-  const asset = await resolveAssetUrl({
+  const assetResult = await resolveAssetUrl({
     environmentId: input.threadRef.environmentId,
     httpBaseUrl: input.httpBaseUrl,
     resource: {
@@ -56,9 +77,12 @@ export async function openFileInPreview(input: {
     },
     createUrl: input.createAssetUrl,
   });
-  await openUrlInPreview({
+  if (assetResult._tag === "Failure") {
+    return AsyncResult.failure(assetResult.cause);
+  }
+  return openUrlInPreview({
     threadRef: input.threadRef,
-    url: asset.url,
+    url: assetResult.value.url,
     openPreview: input.openPreview,
   });
 }
