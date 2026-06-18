@@ -71,13 +71,13 @@ import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
-import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
   getComposerProviderState,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./composerProviderState";
+import { useComposerMenuHighlight } from "./useComposerMenuHighlight";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
@@ -865,10 +865,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [composerTrigger, setComposerTrigger] = useState<ComposerTrigger | null>(() =>
     detectComposerTrigger(prompt, prompt.length),
   );
-  const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
-  const [composerHighlightedSearchKey, setComposerHighlightedSearchKey] = useState<string | null>(
-    null,
-  );
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
@@ -1005,20 +1001,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerMenuSearchKey = composerTrigger
     ? `${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
     : null;
+  const {
+    activeItemId: activeComposerMenuItemId,
+    nudge: nudgeStoredComposerMenuHighlight,
+    reset: resetComposerMenuHighlight,
+    setHighlightedItemId: setComposerMenuHighlightedItemId,
+  } = useComposerMenuHighlight({
+    items: composerMenuItems,
+    menuOpen: composerMenuOpen,
+    searchKey: composerMenuSearchKey,
+  });
   const activeComposerMenuItem = useMemo(() => {
-    const activeItemId = resolveComposerMenuActiveItemId({
-      items: composerMenuItems,
-      highlightedItemId: composerHighlightedItemId,
-      currentSearchKey: composerMenuSearchKey,
-      highlightedSearchKey: composerHighlightedSearchKey,
-    });
-    return composerMenuItems.find((item) => item.id === activeItemId) ?? null;
-  }, [
-    composerHighlightedItemId,
-    composerHighlightedSearchKey,
-    composerMenuItems,
-    composerMenuSearchKey,
-  ]);
+    return composerMenuItems.find((item) => item.id === activeComposerMenuItemId) ?? null;
+  }, [activeComposerMenuItemId, composerMenuItems]);
 
   composerMenuOpenRef.current = composerMenuOpen;
   composerMenuItemsRef.current = composerMenuItems;
@@ -1208,35 +1203,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerElementContextsRef.current = composerElementContexts;
   }, [composerElementContexts, composerElementContextsRef]);
 
-  // ------------------------------------------------------------------
-  // Composer menu highlight sync
-  // ------------------------------------------------------------------
-  useEffect(() => {
-    if (!composerMenuOpen) {
-      setComposerHighlightedItemId(null);
-      setComposerHighlightedSearchKey(null);
-      return;
-    }
-    const nextActiveItemId = resolveComposerMenuActiveItemId({
-      items: composerMenuItems,
-      highlightedItemId: composerHighlightedItemId,
-      currentSearchKey: composerMenuSearchKey,
-      highlightedSearchKey: composerHighlightedSearchKey,
-    });
-    setComposerHighlightedItemId((existing) =>
-      existing === nextActiveItemId ? existing : nextActiveItemId,
-    );
-    setComposerHighlightedSearchKey((existing) =>
-      existing === composerMenuSearchKey ? existing : composerMenuSearchKey,
-    );
-  }, [
-    composerHighlightedItemId,
-    composerHighlightedSearchKey,
-    composerMenuItems,
-    composerMenuOpen,
-    composerMenuSearchKey,
-  ]);
-
   const lastSyncedPendingInputRef = useRef<{
     requestId: string | null;
     questionId: string | null;
@@ -1274,24 +1240,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         expandCollapsedComposerCursor(nextCustomAnswer, nextCursor),
       ),
     );
-    setComposerHighlightedItemId(null);
+    resetComposerMenuHighlight();
   }, [
     activePendingProgress?.customAnswer,
     activePendingProgress?.activeQuestion?.id,
     activePendingUserInput?.requestId,
     promptRef,
+    resetComposerMenuHighlight,
   ]);
 
   // ------------------------------------------------------------------
   // Reset compositor state on thread/draft change
   // ------------------------------------------------------------------
   useEffect(() => {
-    setComposerHighlightedItemId(null);
+    resetComposerMenuHighlight();
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
     setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
-  }, [draftId, activeThreadId, promptRef]);
+  }, [activeThreadId, draftId, promptRef, resetComposerMenuHighlight]);
 
   // ------------------------------------------------------------------
   // Footer compact layout observation
@@ -1577,7 +1544,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
         );
         if (applied) {
-          setComposerHighlightedItemId(null);
+          resetComposerMenuHighlight();
         }
         return;
       }
@@ -1588,7 +1555,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             focusEditorAfterReplace: false,
           });
           if (applied) {
-            setComposerHighlightedItemId(null);
+            resetComposerMenuHighlight();
             setIsComposerModelPickerOpen(true);
           }
           return;
@@ -1598,7 +1565,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
         });
         if (applied) {
-          setComposerHighlightedItemId(null);
+          resetComposerMenuHighlight();
         }
         return;
       }
@@ -1616,7 +1583,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
         );
         if (applied) {
-          setComposerHighlightedItemId(null);
+          resetComposerMenuHighlight();
         }
         return;
       }
@@ -1634,37 +1601,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
         );
         if (applied) {
-          setComposerHighlightedItemId(null);
+          resetComposerMenuHighlight();
         }
         return;
       }
     },
-    [applyPromptReplacement, handleInteractionModeChange, resolveActiveComposerTrigger],
+    [
+      applyPromptReplacement,
+      handleInteractionModeChange,
+      resolveActiveComposerTrigger,
+      resetComposerMenuHighlight,
+    ],
   );
 
   const onComposerMenuItemHighlighted = useCallback(
     (itemId: string | null) => {
-      setComposerHighlightedItemId(itemId);
-      setComposerHighlightedSearchKey(composerMenuSearchKey);
+      setComposerMenuHighlightedItemId(itemId);
     },
-    [composerMenuSearchKey],
+    [setComposerMenuHighlightedItemId],
   );
 
   const nudgeComposerMenuHighlight = useCallback(
     (key: "ArrowDown" | "ArrowUp") => {
-      if (composerMenuItems.length === 0) return;
-      const highlightedIndex = composerMenuItems.findIndex(
-        (item) => item.id === composerHighlightedItemId,
-      );
-      const normalizedIndex =
-        highlightedIndex >= 0 ? highlightedIndex : key === "ArrowDown" ? -1 : 0;
-      const offset = key === "ArrowDown" ? 1 : -1;
-      const nextIndex =
-        (normalizedIndex + offset + composerMenuItems.length) % composerMenuItems.length;
-      const nextItem = composerMenuItems[nextIndex];
-      setComposerHighlightedItemId(nextItem?.id ?? null);
+      nudgeStoredComposerMenuHighlight(key);
     },
-    [composerHighlightedItemId, composerMenuItems],
+    [nudgeStoredComposerMenuHighlight],
   );
 
   const blurMobileComposerAfterSend = useCallback(() => {
@@ -1957,7 +1918,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }) => {
         const promptForState = options?.prompt ?? promptRef.current;
         const cursor = clampCollapsedComposerCursor(promptForState, options?.cursor ?? 0);
-        setComposerHighlightedItemId(null);
+        resetComposerMenuHighlight();
         setComposerCursor(cursor);
         setComposerTrigger(
           options?.detectTrigger
@@ -2044,6 +2005,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedPromptEffort,
       selectedProvider,
       selectedProviderModels,
+      resetComposerMenuHighlight,
     ],
   );
 
