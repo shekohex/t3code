@@ -163,6 +163,17 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     Effect.forkScoped,
   );
 
+  yield* Effect.addFinalizer(() =>
+    SubscriptionRef.get(state).pipe(
+      Effect.flatMap((current) =>
+        Option.match(current.snapshot, {
+          onNone: () => Effect.void,
+          onSome: persist,
+        }),
+      ),
+    ),
+  );
+
   return state;
 });
 

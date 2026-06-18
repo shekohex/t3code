@@ -7,7 +7,7 @@ import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef } from "@t3tools/contracts"
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {
-  markPromotedDraftThreadByRef,
+  finalizePromotedDraftThreadByRef,
   type DraftThreadEnvMode,
   type DraftThreadState,
   useComposerDraftStore,
@@ -71,7 +71,7 @@ export function useNewThreadHandler() {
           ? null
           : storedDraftThread;
       if (storedDraftThreadRef && reusableStoredDraftThread === null) {
-        markPromotedDraftThreadByRef(storedDraftThreadRef);
+        finalizePromotedDraftThreadByRef(storedDraftThreadRef);
       }
       const latestActiveDraftThread: DraftThreadState | null = currentRouteTarget
         ? currentRouteTarget.kind === "server"
