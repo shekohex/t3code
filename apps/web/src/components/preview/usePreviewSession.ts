@@ -46,7 +46,14 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
         return;
       }
 
-      const localSnapshot = readThreadPreviewState(threadRef).snapshot;
+      const localState = readThreadPreviewState(threadRef);
+
+      // If local state already tracks active sessions, the empty list result is
+      // stale — a recent open/event hasn't reached the list cache yet. Skip to
+      // avoid clearing state or firing duplicate recovery.
+      if (Object.keys(localState.sessions).length > 0) return;
+
+      const localSnapshot = localState.snapshot;
       const recoverableUrl =
         localSnapshot && localSnapshot.navStatus._tag !== "Idle"
           ? localSnapshot.navStatus.url
