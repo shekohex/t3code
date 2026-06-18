@@ -77,6 +77,19 @@ function makeEnvironmentDraftRow(
   };
 }
 
+function getProviderEnvironmentSectionKey(
+  environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
+): string {
+  return JSON.stringify(
+    environment.map((variable) => [
+      variable.name,
+      variable.value,
+      variable.sensitive,
+      variable.valueRedacted ?? null,
+    ]),
+  );
+}
+
 /**
  * Read a string[] at `key` from the opaque config blob, filtering out
  * non-string entries. Used for `customModels`, which is always typed as
@@ -444,6 +457,8 @@ export function ProviderInstanceCard({
     : null;
 
   const customModels = readConfigStringArray(instance.config, "customModels");
+  const environment = instance.environment ?? [];
+  const environmentSectionKey = getProviderEnvironmentSectionKey(environment);
   // Server-returned models may lag behind settings writes. Treat probe
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
@@ -759,7 +774,8 @@ export function ProviderInstanceCard({
 
             <div className="border-t border-border/60 px-4 py-3 sm:px-5">
               <ProviderEnvironmentSection
-                environment={instance.environment ?? []}
+                key={environmentSectionKey}
+                environment={environment}
                 onChange={updateEnvironment}
               />
             </div>

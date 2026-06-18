@@ -1106,6 +1106,11 @@ export default function ThreadTerminalDrawer({
 
   useEffect(() => {
     lastSyncedHeightRef.current = controlledDrawerHeight;
+    setDrawerHeightState((current) =>
+      current.threadId === threadId && current.height === controlledDrawerHeight
+        ? current
+        : { threadId, height: controlledDrawerHeight },
+    );
   }, [controlledDrawerHeight, threadId]);
 
   const handleResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
