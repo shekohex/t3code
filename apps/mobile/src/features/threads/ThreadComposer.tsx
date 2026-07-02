@@ -74,6 +74,11 @@ export const COMPOSER_COLLAPSED_CHROME = 60;
  * Used by the parent to compute the larger feed bottom inset when the composer is focused.
  */
 export const COMPOSER_EXPANDED_CHROME = 174;
+const DEFAULT_RUNTIME_MODES: ReadonlyArray<RuntimeMode> = [
+  "approval-required",
+  "auto-accept-edits",
+  "full-access",
+];
 
 export interface ThreadComposerProps {
   readonly draftMessage: string;
@@ -314,6 +319,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       ) ?? null
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
+  const supportedRuntimeModes =
+    selectedProviderStatus?.supportedRuntimeModes ?? DEFAULT_RUNTIME_MODES;
+  const showInteractionModeToggle = selectedProviderStatus?.showInteractionModeToggle ?? true;
 
   // ── Trigger detection ────────────────────────────────────
   const [composerSelection, setComposerSelection] = useState(() => ({
@@ -625,33 +633,48 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           { id: "options:runtime:approval-required", title: "Approve actions" },
           { id: "options:runtime:auto-accept-edits", title: "Auto-accept edits" },
           { id: "options:runtime:full-access", title: "Full access" },
-        ].map((option) => {
-          const value = option.id.replace("options:runtime:", "");
-          return {
-            id: option.id,
-            title: option.title,
-            state: currentRuntimeMode === value ? ("on" as const) : undefined,
-          };
-        }),
+        ]
+          .filter((option) => {
+            const value = option.id.replace("options:runtime:", "") as RuntimeMode;
+            return supportedRuntimeModes.includes(value);
+          })
+          .map((option) => {
+            const value = option.id.replace("options:runtime:", "");
+            return {
+              id: option.id,
+              title: option.title,
+              state: currentRuntimeMode === value ? ("on" as const) : undefined,
+            };
+          }),
       },
-      {
-        id: "options-interaction",
-        title: "Interaction",
-        subtitle: currentInteractionMode === "plan" ? "Plan" : "Default",
-        subactions: [
-          { id: "options:interaction:default", title: "Default" },
-          { id: "options:interaction:plan", title: "Plan" },
-        ].map((option) => {
-          const value = option.id.replace("options:interaction:", "");
-          return {
-            id: option.id,
-            title: option.title,
-            state: currentInteractionMode === value ? ("on" as const) : undefined,
-          };
-        }),
-      },
+      ...(showInteractionModeToggle
+        ? [
+            {
+              id: "options-interaction",
+              title: "Interaction",
+              subtitle: currentInteractionMode === "plan" ? "Plan" : "Default",
+              subactions: [
+                { id: "options:interaction:default", title: "Default" },
+                { id: "options:interaction:plan", title: "Plan" },
+              ].map((option) => {
+                const value = option.id.replace("options:interaction:", "");
+                return {
+                  id: option.id,
+                  title: option.title,
+                  state: currentInteractionMode === value ? ("on" as const) : undefined,
+                };
+              }),
+            },
+          ]
+        : []),
     ],
-    [currentInteractionMode, currentRuntimeMode, providerOptionDescriptors],
+    [
+      currentInteractionMode,
+      currentRuntimeMode,
+      providerOptionDescriptors,
+      showInteractionModeToggle,
+      supportedRuntimeModes,
+    ],
   );
 
   // ── Menu handlers ────────────────────────────────────────

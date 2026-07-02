@@ -31,7 +31,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   const accentStyle = props.accentColor
     ? ({ "--provider-accent": props.accentColor } as CSSProperties)
     : undefined;
-  const badgeContent = props.badgeContent ?? "initials";
+  const badgeContent = props.badgeContent ?? (props.driverKind === "piAgent" ? "none" : "initials");
 
   return (
     <span

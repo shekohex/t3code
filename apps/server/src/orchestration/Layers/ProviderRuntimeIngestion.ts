@@ -487,6 +487,32 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "content.delta": {
+      if (
+        event.payload.streamKind !== "reasoning_text" &&
+        event.payload.streamKind !== "reasoning_summary_text"
+      ) {
+        return [];
+      }
+      const summary = truncateDetail(event.payload.delta);
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "task.progress",
+          summary: "Reasoning update",
+          payload: {
+            taskId: `reasoning:${event.itemId ?? event.turnId ?? event.eventId}`,
+            detail: summary,
+            summary,
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "task.completed": {
       return [
         {
@@ -1290,7 +1316,9 @@ const make = Effect.gen(function* () {
         const status = (() => {
           switch (event.type) {
             case "session.state.changed":
-              return orchestrationSessionStatusFromRuntimeState(event.payload.state);
+              return event.payload.state === "ready" && activeTurnId !== null
+                ? "running"
+                : orchestrationSessionStatusFromRuntimeState(event.payload.state);
             case "turn.started":
               return "running";
             case "session.exited":

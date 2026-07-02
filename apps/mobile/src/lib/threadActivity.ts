@@ -491,6 +491,9 @@ function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
 }
 
 function workEntryStatus(entry: WorkLogEntry): ThreadFeedActivity["status"] {
+  if (entry.tone === "thinking") {
+    return null;
+  }
   if (!workLogEntryIsToolLike(entry)) {
     return null;
   }

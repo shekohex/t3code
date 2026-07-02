@@ -1011,6 +1011,36 @@ describe("deriveMessagesTimelineRows", () => {
       expanded: true,
     });
   });
+
+  it("shows thinking work entries", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "thinking-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:01Z",
+          entry: {
+            id: "thinking-1",
+            createdAt: "2026-01-01T00:00:01Z",
+            label: "Inspecting repository state",
+            tone: "thinking",
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        kind: "work",
+        id: "thinking-entry",
+        groupedEntries: [expect.objectContaining({ id: "thinking-1" })],
+      }),
+    );
+  });
 });
 
 describe("computeStableMessagesTimelineRows", () => {

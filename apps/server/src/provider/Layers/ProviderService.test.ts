@@ -1283,6 +1283,50 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("persists a rollback-updated provider resume cursor", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = asThreadId("thread-rollback-resume-cursor");
+      const modelSelection = createModelSelection(codexInstanceId, "gpt-5.4", [
+        { id: "effort", value: "high" },
+      ]);
+      const rolledBackCursor = { opaque: "resume-after-rollback" };
+
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+        modelSelection,
+      });
+      routing.codex.rollbackThread.mockImplementationOnce((rollbackThreadId) =>
+        Effect.sync(() => {
+          routing.codex.updateSession(rollbackThreadId, (session) => ({
+            ...session,
+            resumeCursor: rolledBackCursor,
+            updatedAt: "2026-01-01T00:00:01.000Z",
+          }));
+        }).pipe(Effect.as({ threadId: rollbackThreadId, turns: [] as const })),
+      );
+
+      yield* provider.rollbackConversation({ threadId, numTurns: 1 });
+      const persisted = yield* runtimeRepository.getByThreadId({ threadId });
+
+      assert.equal(Option.isSome(persisted), true);
+      if (Option.isSome(persisted)) {
+        assert.deepEqual(persisted.value.resumeCursor, rolledBackCursor);
+        const runtimePayload = persisted.value.runtimePayload;
+        assert.equal(runtimePayload !== null && typeof runtimePayload === "object", true);
+        if (runtimePayload !== null && typeof runtimePayload === "object") {
+          const payload = runtimePayload as Record<string, unknown>;
+          assert.deepEqual(payload.modelSelection, modelSelection);
+          assert.equal(payload.lastRuntimeEvent, "provider.rollbackConversation");
+        }
+      }
+    }),
+  );
+
   it.effect("reuses persisted resume cursor when startSession is called after a restart", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(

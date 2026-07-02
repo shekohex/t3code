@@ -469,6 +469,17 @@ describe("ProviderRuntimeIngestion", () => {
     );
 
     harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-ready-midturn-lifecycle"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      payload: {
+        state: "ready",
+        reason: "provider-queue-empty",
+      },
+    });
+    harness.emit({
       type: "thread.started",
       eventId: asEventId("evt-thread-started-midturn-lifecycle"),
       provider: ProviderDriverKind.make("codex"),
@@ -2945,6 +2956,46 @@ describe("ProviderRuntimeIngestion", () => {
         (entry: ProviderRuntimeTestProposedPlan) => entry.id === "plan:thread-1:turn:turn-task-1",
       )?.planMarkdown,
     ).toBe("# Plan title");
+  });
+
+  it("projects reasoning content deltas into thinking activities", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning-1"),
+      itemId: "reasoning-item-1",
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "Need inspect lifecycle before patching.",
+        contentIndex: 0,
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-reasoning-delta",
+      ),
+    );
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-reasoning-delta",
+    );
+    const payload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(activity?.kind).toBe("task.progress");
+    expect(activity?.summary).toBe("Reasoning update");
+    expect(activity?.turnId).toBe("turn-reasoning-1");
+    expect(payload?.taskId).toBe("reasoning:reasoning-item-1");
+    expect(payload?.detail).toBe("Need inspect lifecycle before patching.");
+    expect(payload?.summary).toBe("Need inspect lifecycle before patching.");
   });
 
   it("projects structured user input request and resolution as thread activities", async () => {

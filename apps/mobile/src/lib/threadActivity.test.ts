@@ -465,4 +465,49 @@ describe("buildThreadFeed", () => {
       expanded: true,
     });
   });
+
+  it("keeps thinking activities visible", () => {
+    const turnId = TurnId.make("turn-thinking");
+    const thread = makeThread({
+      id: ThreadId.make("thread-thinking"),
+      projectId: ProjectId.make("project-thinking"),
+      title: "Thinking thread",
+      latestTurn: {
+        turnId,
+        state: "running",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("reasoning-activity"),
+          kind: "task.progress",
+          summary: "Reasoning update",
+          tone: "info",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: {
+            taskId: "reasoning:item-1",
+            summary: "Inspecting repository state",
+            detail: "Inspecting repository state",
+          },
+        }),
+      ],
+    });
+
+    const presentation = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      thread.latestTurn,
+      new Set(),
+    );
+
+    expect(presentation).toContainEqual(
+      expect.objectContaining({
+        type: "activity-group",
+        activities: [expect.objectContaining({ icon: "agent", status: null })],
+      }),
+    );
+  });
 });

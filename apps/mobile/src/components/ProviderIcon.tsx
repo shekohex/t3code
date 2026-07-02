@@ -21,6 +21,14 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  if (props.provider === "piAgent") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Path fill={isDarkMode ? "#e5e5e5" : "#171717"} d="M3 5h18v3h-3v11h-3V8H9v11H6V8H3V5Z" />
+      </Svg>
+    );
+  }
+
   return (
     <Svg width={size} height={size} viewBox="0 0 256 260" fill="none">
       <Path
