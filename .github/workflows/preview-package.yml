@@ -29,10 +29,7 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: |
-            args:
-              - --filter=t3...
-              - --filter=@t3tools/web...
+          run-install: true
 
       - name: Setup GitHub Packages
         uses: actions/setup-node@v6
