@@ -1,0 +1,135 @@
+name: Preview Package
+
+on:
+  push:
+    branches:
+      - pi-agent-fork-changes
+  workflow_dispatch:
+
+concurrency:
+  group: preview-package
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+              - --filter=@t3tools/web...
+
+      - name: Setup GitHub Packages
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+          scope: "@shekohex"
+
+      - name: Check
+        run: vp check
+
+      - name: Typecheck
+        run: vp run typecheck
+
+      - id: version
+        name: Resolve preview version
+        shell: bash
+        run: |
+          base_version="$(node -p "require('./apps/server/package.json').version")"
+          short_sha="$(git rev-parse --short HEAD)"
+          preview_version="${base_version}-preview.${GITHUB_RUN_NUMBER}.${short_sha}"
+          echo "value=$preview_version" >> "$GITHUB_OUTPUT"
+
+      - name: Build combined package
+        run: vp run --filter t3 build
+
+      - name: Publish preview package
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: |
+          node apps/server/scripts/cli.ts publish \
+            --package-name '@shekohex/t3' \
+            --registry 'https://npm.pkg.github.com' \
+            --tag preview \
+            --app-version '${{ steps.version.outputs.value }}' \
+            --verbose
+
+      - name: Render preview release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PACKAGE_VERSION: ${{ steps.version.outputs.value }}
+          INSTALL_SCRIPT_URL: https://github.com/${{ github.repository }}/releases/download/preview/install-github-package.sh
+          WINDOWS_INSTALL_SCRIPT_URL: https://github.com/${{ github.repository }}/releases/download/preview/install-github-package.ps1
+        shell: bash
+        run: |
+          previous_target=''
+          if gh api "repos/${REPOSITORY}/releases/tags/preview" >/dev/null 2>&1; then
+            previous_target="$(gh api "repos/${REPOSITORY}/releases/tags/preview" --jq '.target_commitish')"
+          fi
+
+          changelog_body='- Rolling preview initialized.'
+          if [[ -n "$previous_target" ]] && git rev-parse --verify "$previous_target" >/dev/null 2>&1; then
+            changelog_body="$(git log --no-merges --pretty='- %s (%h)' "${previous_target}..HEAD")"
+            [[ -n "$changelog_body" ]] || changelog_body='- No user-facing commits since previous preview.'
+          fi
+
+          export CHANGELOG_BODY="$changelog_body"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const template = fs.readFileSync('.github/release-notes/preview.md', 'utf8');
+          const notes = template
+            .replace('{{CHANGELOG_BODY}}', process.env.CHANGELOG_BODY)
+            .replace('{{PACKAGE_VERSION}}', process.env.PACKAGE_VERSION)
+            .replace('{{INSTALL_SCRIPT_URL}}', process.env.INSTALL_SCRIPT_URL)
+            .replace('{{WINDOWS_INSTALL_SCRIPT_URL}}', process.env.WINDOWS_INSTALL_SCRIPT_URL);
+          fs.writeFileSync('/tmp/preview-release-notes.md', notes);
+          for (const fileName of ['install-github-package.sh', 'install-github-package.ps1']) {
+            const installer = fs
+              .readFileSync(`scripts/${fileName}`, 'utf8')
+              .replace('__T3_PACKAGE_VERSION__', process.env.PACKAGE_VERSION);
+            fs.writeFileSync(`/tmp/${fileName}`, installer);
+          }
+          fs.writeFileSync('/tmp/release-manifest.json', JSON.stringify({
+            packageName: '@shekohex/t3',
+            version: process.env.PACKAGE_VERSION,
+            channel: 'preview',
+            commit: process.env.GITHUB_SHA,
+            registryUrl: 'https://npm.pkg.github.com'
+          }, null, 2) + '\n');
+          NODE
+
+      - name: Publish rolling preview release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view preview >/dev/null 2>&1; then
+            gh release delete preview --yes --cleanup-tag
+          fi
+          gh release create preview \
+            --title Preview \
+            --target "$(git rev-parse HEAD)" \
+            --prerelease \
+            --notes-file /tmp/preview-release-notes.md
+          gh release upload preview \
+            /tmp/install-github-package.sh#install-github-package.sh \
+            /tmp/install-github-package.ps1#install-github-package.ps1 \
+            /tmp/release-manifest.json#release-manifest.json \
+            --clobber

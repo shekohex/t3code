@@ -197,15 +197,18 @@ const buildCmd = Command.make(
 interface PublishCommandConfig {
   readonly access: string;
   readonly tag: string;
+  readonly packageName: Option.Option<string>;
+  readonly registry: Option.Option<string>;
   readonly provenance: boolean;
   readonly dryRun: boolean;
 }
 
 const createVpPmPublishArgs = (config: PublishCommandConfig): ReadonlyArray<string> => {
+  const packageName = Option.getOrElse(config.packageName, () => serverPackageJson.name);
   const args = [
     "publish",
     "--filter",
-    "t3",
+    packageName,
     "--access",
     config.access,
     "--tag",
@@ -215,6 +218,7 @@ const createVpPmPublishArgs = (config: PublishCommandConfig): ReadonlyArray<stri
 
   if (config.provenance) args.push("--provenance");
   if (config.dryRun) args.push("--dry-run");
+  if (Option.isSome(config.registry)) args.push("--", "--registry", config.registry.value);
 
   return args;
 };
@@ -224,6 +228,8 @@ const publishCmd = Command.make(
   {
     tag: Flag.string("tag").pipe(Flag.withDefault("latest")),
     access: Flag.string("access").pipe(Flag.withDefault("public")),
+    packageName: Flag.string("package-name").pipe(Flag.optional),
+    registry: Flag.string("registry").pipe(Flag.optional),
     appVersion: Flag.string("app-version").pipe(Flag.optional),
     provenance: Flag.boolean("provenance").pipe(Flag.withDefault(false)),
     dryRun: Flag.boolean("dry-run").pipe(Flag.withDefault(false)),
@@ -254,7 +260,7 @@ const publishCmd = Command.make(
           const workspaceCatalog = workspaceConfig.catalog ?? {};
           const workspaceOverrides = workspaceConfig.overrides ?? {};
           const pkg: PackageJson = {
-            name: serverPackageJson.name,
+            name: Option.getOrElse(config.packageName, () => serverPackageJson.name),
             repository: serverPackageJson.repository,
             bin: serverPackageJson.bin,
             type: serverPackageJson.type,
