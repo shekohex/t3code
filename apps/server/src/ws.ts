@@ -68,6 +68,7 @@ import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
+import { OrchestrationCommandPreviouslyRejectedError } from "./orchestration/Errors.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
@@ -115,6 +116,9 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isOrchestrationCommandPreviouslyRejectedError = Schema.is(
+  OrchestrationCommandPreviouslyRejectedError,
+);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -496,13 +500,20 @@ const makeWsRpcLayer = (
           authorizeEffect(requiredScopeForMethod(method), effect),
           traceAttributes,
         );
-      const toDispatchCommandError = (cause: unknown, fallbackMessage: string) =>
-        isOrchestrationDispatchCommandError(cause)
-          ? cause
-          : new OrchestrationDispatchCommandError({
-              message: cause instanceof Error ? cause.message : fallbackMessage,
-              cause,
-            });
+      const toDispatchCommandError = (cause: unknown, fallbackMessage: string) => {
+        if (isOrchestrationDispatchCommandError(cause)) return cause;
+        if (isOrchestrationCommandPreviouslyRejectedError(cause)) {
+          return new OrchestrationDispatchCommandError({
+            message: "Command was previously rejected.",
+            code: "command_previously_rejected",
+            commandId: CommandId.make(cause.commandId),
+          });
+        }
+        return new OrchestrationDispatchCommandError({
+          message: cause instanceof Error ? cause.message : fallbackMessage,
+          cause,
+        });
+      };
       const randomUUID = crypto.randomUUIDv4.pipe(
         Effect.mapError((cause) =>
           toDispatchCommandError(cause, "Failed to generate orchestration command identifier."),
@@ -558,13 +569,17 @@ const makeWsRpcLayer = (
 
       const toBootstrapDispatchCommandCauseError = (cause: Cause.Cause<unknown>) => {
         const error = Cause.squash(cause);
-        return isOrchestrationDispatchCommandError(error)
-          ? error
-          : new OrchestrationDispatchCommandError({
-              message:
-                error instanceof Error ? error.message : "Failed to bootstrap thread turn start.",
-              cause,
-            });
+        if (
+          isOrchestrationDispatchCommandError(error) ||
+          isOrchestrationCommandPreviouslyRejectedError(error)
+        ) {
+          return toDispatchCommandError(error, "Failed to bootstrap thread turn start.");
+        }
+        return new OrchestrationDispatchCommandError({
+          message:
+            error instanceof Error ? error.message : "Failed to bootstrap thread turn start.",
+          cause,
+        });
       };
 
       const enrichProjectEvent = (

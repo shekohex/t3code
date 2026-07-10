@@ -77,7 +77,10 @@ import * as GitManager from "./git/GitManager.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
-import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
+import {
+  OrchestrationCommandPreviouslyRejectedError,
+  OrchestrationListenerCallbackError,
+} from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
@@ -131,6 +134,7 @@ const testEnvironmentDescriptor = {
   serverVersion: "0.0.0-test",
   capabilities: {
     repositoryIdentity: true,
+    conductorSessionApi: 0,
   },
 };
 const makeDefaultOrchestrationReadModel = () => {
@@ -6579,6 +6583,96 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         dispatchedCommands.map((command) => command.type),
         ["thread.create", "thread.delete"],
       );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("returns 409 for previously rejected HTTP orchestration commands", () =>
+    Effect.gen(function* () {
+      const commandId = CommandId.make("cmd-http-previously-rejected");
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: () =>
+              Effect.fail(
+                new OrchestrationCommandPreviouslyRejectedError({
+                  commandId,
+                  detail: "Previously rejected.",
+                }),
+              ),
+          },
+        },
+      });
+
+      const { cookie } = yield* bootstrapBrowserSession();
+      const response = yield* fetchEffect(yield* getHttpServerUrl("/api/orchestration/dispatch"), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: cookie?.split(";")[0] ?? "",
+        },
+        body: jsonRequestBody({
+          type: "thread.turn.start",
+          commandId,
+          threadId: ThreadId.make("thread-http-previously-rejected"),
+          message: {
+            messageId: MessageId.make("message-http-previously-rejected"),
+            role: "user",
+            text: "retry",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }),
+      });
+      const body = yield* responseJsonEffect<{
+        readonly code: string;
+        readonly commandId: string;
+        readonly traceId: string;
+      }>(response);
+
+      assert.equal(response.status, 409);
+      assert.equal(body.code, "command_previously_rejected");
+      assert.equal(body.commandId, commandId);
+      assert.isTrue(body.traceId.length > 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("preserves rejected command receipts over websocket dispatch", () =>
+    Effect.gen(function* () {
+      const commandId = CommandId.make("cmd-ws-previously-rejected");
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: () =>
+              Effect.fail(
+                new OrchestrationCommandPreviouslyRejectedError({
+                  commandId,
+                  detail: "Previously rejected.",
+                }),
+              ),
+          },
+        },
+      });
+
+      const result = yield* Effect.scoped(
+        withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.session.stop",
+            commandId,
+            threadId: ThreadId.make("thread-ws-previously-rejected"),
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }).pipe(Effect.result),
+        ),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assert.equal(result.failure._tag, "OrchestrationDispatchCommandError");
+      if (result.failure._tag === "OrchestrationDispatchCommandError") {
+        assert.equal(result.failure.code, "command_previously_rejected");
+        assert.equal(result.failure.commandId, commandId);
+        assert.equal(result.failure.message, "Command was previously rejected.");
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

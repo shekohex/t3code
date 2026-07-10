@@ -24,7 +24,7 @@ import {
   AuthWebSocketTicketResult,
   ServerAuthSessionMethod,
 } from "./auth.ts";
-import { AuthSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { AuthSessionId, CommandId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
   ClientOrchestrationCommand,
@@ -175,6 +175,23 @@ export class EnvironmentResourceNotFoundError extends Schema.TaggedErrorClass<En
   }
 }
 
+export class EnvironmentOrchestrationCommandPreviouslyRejectedError extends Schema.TaggedErrorClass<EnvironmentOrchestrationCommandPreviouslyRejectedError>()(
+  "EnvironmentOrchestrationCommandPreviouslyRejectedError",
+  {
+    code: Schema.Literal("command_previously_rejected"),
+    commandId: CommandId,
+    traceId: TrimmedNonEmptyString,
+  },
+  { httpApiStatus: 409 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(EnvironmentOrchestrationCommandPreviouslyRejectedError)(
+      this,
+      { status: 409 },
+    );
+  }
+}
+
 export const EnvironmentHttpCommonError = Schema.Union([
   EnvironmentRequestInvalidError,
   EnvironmentAuthInvalidError,
@@ -298,6 +315,7 @@ const EnvironmentOrchestrationThreadSnapshotErrors = [
 const EnvironmentOrchestrationDispatchErrors = [
   EnvironmentRequestInvalidError,
   EnvironmentScopeRequiredError,
+  EnvironmentOrchestrationCommandPreviouslyRejectedError,
   EnvironmentInternalError,
 ] as const;
 

@@ -489,6 +489,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           serverVersion: "0.0.0-test",
           capabilities: {
             repositoryIdentity: true,
+            conductorSessionApi: 0,
           },
         } satisfies ExecutionEnvironmentDescriptor;
 
@@ -622,6 +623,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           serverVersion: "0.0.0-test",
           capabilities: {
             repositoryIdentity: true,
+            conductorSessionApi: 0,
           },
         } satisfies ExecutionEnvironmentDescriptor;
 

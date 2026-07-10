@@ -1,4 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeAssert from "node:assert/strict";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { it } from "@effect/vitest";
 import {
   ApprovalRequestId,
@@ -16,14 +20,17 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import type { ServerConfig } from "../../config.ts";
+import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { __PiAdapterTestKit, makePiAdapter } from "./PiAdapter.ts";
 import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   PiRpcRuntimeError,
   type PiRpcCommand,
   type PiRpcRawEvent,
+  type PiRpcRuntimeOptions,
   type PiRpcRuntimeShape,
 } from "../piRpcRuntime.ts";
 
@@ -38,6 +45,7 @@ interface FakePiRuntime {
   readonly requests: Array<PiRpcCommand>;
   readonly notifications: Array<PiRpcCommand>;
   readonly emit: (event: unknown) => Effect.Effect<void>;
+  readonly end: Effect.Effect<void>;
   readonly closeCalls: () => number;
 }
 
@@ -73,6 +81,7 @@ function makeFakePiRuntime(
       requests,
       notifications,
       emit: (event) => Queue.offer(events, { event }),
+      end: Queue.shutdown(events),
       closeCalls: () => closeCount,
     };
   });
@@ -80,14 +89,22 @@ function makeFakePiRuntime(
 
 function makeTestAdapter(
   makeRuntime: () => Effect.Effect<PiRpcRuntimeShape, PiRpcRuntimeError, Scope.Scope>,
-  options?: { readonly nativeEventLogger?: EventNdjsonLogger | undefined },
+  options?: {
+    readonly attachmentsDir?: string | undefined;
+    readonly nativeEventLogger?: EventNdjsonLogger | undefined;
+    readonly onRuntimeOptions?: ((options: PiRpcRuntimeOptions) => void) | undefined;
+    readonly settings?: Partial<PiAgentSettings> | undefined;
+  },
 ) {
-  return makePiAdapter(decodePiSettings({ binaryPath: "pi" }), {
-    serverConfig: { attachmentsDir: "/tmp/t3-pi-test-attachments" } as ServerConfig["Service"],
+  return makePiAdapter(decodePiSettings({ binaryPath: "pi", ...options?.settings }), {
+    serverConfig: {
+      attachmentsDir: options?.attachmentsDir ?? "/tmp/t3-pi-test-attachments",
+    } as ServerConfig["Service"],
     ...(options?.nativeEventLogger ? { nativeEventLogger: options.nativeEventLogger } : {}),
-    makeRuntime: () =>
+    makeRuntime: (runtimeOptions) =>
       Effect.gen(function* () {
         const scope = yield* Scope.Scope;
+        options?.onRuntimeOptions?.(runtimeOptions);
         const runtime = yield* makeRuntime();
         yield* Scope.addFinalizer(scope, runtime.close);
         return runtime;
@@ -160,6 +177,96 @@ it.effect("rejects Pi runtime modes it cannot enforce", () =>
       NodeAssert.equal(result._tag, "Failure");
       NodeAssert.deepEqual(fake.requests, []);
       if (result._tag === "Failure") NodeAssert.match(result.failure.message, /full-access/i);
+    }),
+  ),
+);
+
+it.effect("adds validated Pi mode flags after static launch args", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const runtimeOptions: PiRpcRuntimeOptions[] = [];
+      const fake = yield* makeFakePiRuntime((command) =>
+        command.type === "get_state" ? Effect.succeed(initialState()) : Effect.succeed({}),
+      );
+      const adapter = yield* makeTestAdapter(() => Effect.succeed(fake.runtime), {
+        settings: { launchArgs: "--static launch" },
+        onRuntimeOptions: (options) => runtimeOptions.push(options),
+      });
+
+      yield* adapter.startSession({
+        threadId: ThreadId.make("pi-mode-flags"),
+        runtimeMode: "full-access",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("piAgent"),
+          model: "example/new-model",
+          options: [{ id: "piModeFlags", value: "--mode-safe --mode-debug" }],
+        },
+      });
+
+      NodeAssert.deepEqual(runtimeOptions[0]?.args, [
+        "--mode",
+        "rpc",
+        "--model",
+        "example/new-model",
+        "--static",
+        "launch",
+        "--mode-safe",
+        "--mode-debug",
+      ]);
+    }),
+  ),
+);
+
+it.effect("rejects invalid Pi mode flags before starting a runtime", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let runtimeStartCalls = 0;
+      const adapter = yield* makeTestAdapter(() => {
+        runtimeStartCalls += 1;
+        return Effect.die("runtime must not start for invalid Pi mode flags");
+      });
+
+      const result = yield* adapter
+        .startSession({
+          threadId: ThreadId.make("pi-invalid-mode-flag"),
+          runtimeMode: "full-access",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("piAgent"),
+            model: "example/new-model",
+            options: [{ id: "piModeFlags", value: "--unsafe-flag" }],
+          },
+        })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.equal(runtimeStartCalls, 0);
+      if (result._tag === "Failure") NodeAssert.match(result.failure.message, /--mode-/);
+    }),
+  ),
+);
+
+it.effect("rejects Pi launch arguments that override managed session flags", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let runtimeStartCalls = 0;
+      const adapter = yield* makeTestAdapter(
+        () => {
+          runtimeStartCalls += 1;
+          return Effect.die("runtime must not start for managed launch flags");
+        },
+        { settings: { launchArgs: "--mode text" } },
+      );
+
+      const result = yield* adapter
+        .startSession({
+          threadId: ThreadId.make("pi-managed-launch-flag"),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.equal(runtimeStartCalls, 0);
+      if (result._tag === "Failure") NodeAssert.match(result.failure.message, /managed by T3 Code/);
     }),
   ),
 );
@@ -299,7 +406,7 @@ it("uses Pi cumulative partial text to keep assistant markdown complete", () => 
 it("projects Pi cumulative thinking snapshots as reasoning deltas", () => {
   const context = __PiAdapterTestKit.makeContext({ threadId, turnId });
 
-  const events = __PiAdapterTestKit.mapEvent(context, {
+  const buffered = __PiAdapterTestKit.mapEvent(context, {
     type: "message_update",
     assistantMessageEvent: {
       type: "text_delta",
@@ -315,7 +422,11 @@ it("projects Pi cumulative thinking snapshots as reasoning deltas", () => {
     },
   });
 
-  const reasoningDelta = events.find(
+  const flushed = __PiAdapterTestKit.mapEvent(context, {
+    type: "message_update",
+    assistantMessageEvent: { type: "thinking_end", contentIndex: 0 },
+  });
+  const reasoningDelta = [...buffered, ...flushed].find(
     (event) => event.type === "content.delta" && event.payload.streamKind === "reasoning_text",
   );
 
@@ -324,7 +435,7 @@ it("projects Pi cumulative thinking snapshots as reasoning deltas", () => {
     reasoningDelta?.type === "content.delta" ? reasoningDelta.payload.delta : undefined,
     "Think",
   );
-  NodeAssert.ok(events.every((event) => event.type !== "task.progress"));
+  NodeAssert.ok([...buffered, ...flushed].every((event) => event.type !== "task.progress"));
 });
 
 it("does not duplicate Pi thinking_delta when partial snapshot carries the same thinking", () => {
@@ -354,14 +465,92 @@ it("does not duplicate Pi thinking_delta when partial snapshot carries the same 
       },
     },
   });
+  const flushed = __PiAdapterTestKit.mapEvent(context, {
+    type: "message_update",
+    assistantMessageEvent: { type: "thinking_end", contentIndex: 0 },
+  });
 
-  const reasoningDeltas = [...first, ...second].filter(
+  const reasoningDeltas = [...first, ...second, ...flushed].filter(
     (event) => event.type === "content.delta" && event.payload.streamKind === "reasoning_text",
   );
   NodeAssert.deepEqual(
     reasoningDeltas.map((event) => (event.type === "content.delta" ? event.payload.delta : "")),
-    ["Think", " more"],
+    ["Think more"],
   );
+});
+
+it("coalesces Pi reasoning without losing text", () => {
+  const context = __PiAdapterTestKit.makeContext({ threadId, turnId });
+  const events = Array.from({ length: 1_000 }, () =>
+    __PiAdapterTestKit.mapEvent(context, {
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "x" },
+    }),
+  ).flat();
+  const flushed = __PiAdapterTestKit.mapEvent(context, {
+    type: "message_update",
+    assistantMessageEvent: { type: "thinking_end", contentIndex: 0 },
+  });
+  const reasoningDeltas = [...events, ...flushed].filter(
+    (event) => event.type === "content.delta" && event.payload.streamKind === "reasoning_text",
+  );
+
+  NodeAssert.equal(reasoningDeltas.length, 2);
+  NodeAssert.equal(
+    reasoningDeltas
+      .map((event) => (event.type === "content.delta" ? event.payload.delta : ""))
+      .join("").length,
+    1_000,
+  );
+});
+
+it("maps Pi stderr and turn usage into canonical events", () => {
+  const context = __PiAdapterTestKit.makeContext({ threadId, turnId });
+  const stderr = __PiAdapterTestKit.mapEvent(context, {
+    type: "stderr",
+    message: "provider connection is slow",
+  });
+  const usage = __PiAdapterTestKit.mapEvent(context, {
+    type: "turn_end",
+    message: {
+      role: "assistant",
+      usage: {
+        input: 100,
+        output: 20,
+        cacheRead: 50,
+        reasoning: 8,
+        totalTokens: 170,
+      },
+    },
+  });
+
+  NodeAssert.equal(stderr[0]?.type, "runtime.warning");
+  NodeAssert.equal(usage[0]?.type, "thread.token-usage.updated");
+  if (usage[0]?.type === "thread.token-usage.updated") {
+    NodeAssert.deepEqual(usage[0].payload.usage, {
+      usedTokens: 170,
+      inputTokens: 100,
+      lastInputTokens: 100,
+      cachedInputTokens: 50,
+      lastCachedInputTokens: 50,
+      outputTokens: 20,
+      lastOutputTokens: 20,
+      reasoningOutputTokens: 8,
+      lastReasoningOutputTokens: 8,
+      lastUsedTokens: 170,
+    });
+  }
+});
+
+it("maps Pi extension and JSON parse failures to runtime errors", () => {
+  for (const rawEvent of [
+    { type: "extension_error", message: "extension failed" },
+    { type: "parse_error", message: "invalid JSONL" },
+  ]) {
+    const context = __PiAdapterTestKit.makeContext({ threadId, turnId });
+    const events = __PiAdapterTestKit.mapEvent(context, rawEvent);
+    NodeAssert.equal(events[0]?.type, "runtime.error");
+  }
 });
 
 it("ignores non-interactive Pi UI status requests", () => {
@@ -377,7 +566,7 @@ it("ignores non-interactive Pi UI status requests", () => {
   NodeAssert.deepEqual(events, []);
 });
 
-it("maps Pi tool-call JSON deltas to tool lifecycle, not assistant text", () => {
+it("buffers Pi tool-call JSON deltas until execution starts", () => {
   const context = __PiAdapterTestKit.makeContext({ threadId, turnId });
 
   const toolStart = __PiAdapterTestKit.mapEvent(context, {
@@ -388,13 +577,33 @@ it("maps Pi tool-call JSON deltas to tool lifecycle, not assistant text", () => 
       toolCall: { id: "call-1", name: "bash" },
     },
   });
-  const toolDelta = __PiAdapterTestKit.mapEvent(context, {
+  const toolDeltas = Array.from({ length: 1_000 }, () =>
+    __PiAdapterTestKit.mapEvent(context, {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "toolcall_delta",
+        contentIndex: 1,
+        delta: " ",
+      },
+    }),
+  ).flat();
+  const toolEnd = __PiAdapterTestKit.mapEvent(context, {
     type: "message_update",
     assistantMessageEvent: {
-      type: "toolcall_delta",
+      type: "toolcall_end",
       contentIndex: 1,
-      delta: '{"command":"vp check","description":"Runs quality checks"}',
+      toolCall: {
+        id: "call-1",
+        name: "bash",
+        arguments: { command: "vp check", description: "Runs quality checks" },
+      },
     },
+  });
+  const executionStart = __PiAdapterTestKit.mapEvent(context, {
+    type: "tool_execution_start",
+    toolCallId: "call-1",
+    toolName: "bash",
+    args: { command: "vp check", description: "Runs quality checks" },
   });
   const executionUpdate = __PiAdapterTestKit.mapEvent(context, {
     type: "tool_execution_update",
@@ -402,13 +611,21 @@ it("maps Pi tool-call JSON deltas to tool lifecycle, not assistant text", () => 
     toolName: "bash",
     partialResult: { output: "check output" },
   });
+  const executionEnd = __PiAdapterTestKit.mapEvent(context, {
+    type: "tool_execution_end",
+    toolCallId: "call-1",
+    toolName: "bash",
+    result: { output: "check output" },
+    isError: false,
+  });
 
-  NodeAssert.equal(toolStart[0]?.type, "item.started");
-  NodeAssert.equal(toolDelta[0]?.type, "item.updated");
-  NodeAssert.equal(toolDelta[0]?.itemId, toolStart[0]?.itemId);
-  NodeAssert.ok(toolDelta.every((event) => event.type !== "content.delta"));
+  NodeAssert.deepEqual(toolStart, []);
+  NodeAssert.deepEqual(toolDeltas, []);
+  NodeAssert.deepEqual(toolEnd, []);
 
-  const payload = toolDelta[0]?.payload;
+  const started = executionStart[0];
+  NodeAssert.equal(started?.type, "item.started");
+  const payload = started?.payload;
   NodeAssert.equal(payload?.itemType, "command_execution");
   NodeAssert.equal(payload?.detail, "Runs quality checks");
   NodeAssert.deepEqual(payload?.data, {
@@ -418,23 +635,71 @@ it("maps Pi tool-call JSON deltas to tool lifecycle, not assistant text", () => 
     input: { command: "vp check", description: "Runs quality checks" },
   });
 
-  const executionUpdateLifecycle = executionUpdate[0];
-  NodeAssert.ok(executionUpdateLifecycle?.type === "item.updated");
-  NodeAssert.equal(executionUpdateLifecycle.itemId, toolStart[0]?.itemId);
-  NodeAssert.equal(executionUpdateLifecycle.payload.detail, "Runs quality checks");
-  NodeAssert.deepEqual(executionUpdateLifecycle.payload.data, {
+  NodeAssert.equal(executionUpdate.length, 1);
+  NodeAssert.equal(executionUpdate[0]?.type, "content.delta");
+  NodeAssert.equal(
+    executionUpdate[0]?.type === "content.delta" ? executionUpdate[0].payload.streamKind : null,
+    "command_output",
+  );
+  NodeAssert.equal(executionUpdate[0]?.itemId, started?.itemId);
+
+  NodeAssert.equal(executionEnd.length, 1);
+  const completed = executionEnd[0];
+  NodeAssert.equal(completed?.type, "item.completed");
+  NodeAssert.equal(completed?.itemId, started?.itemId);
+  NodeAssert.deepEqual(completed?.payload.data, {
     toolCallId: "call-1",
     toolName: "bash",
     command: "vp check",
     input: { command: "vp check", description: "Runs quality checks" },
-    partialResult: { output: "check output" },
+    result: { output: "check output" },
     outputText: "check output",
+    isError: false,
   });
-  NodeAssert.equal(executionUpdate[1]?.type, "content.delta");
-  NodeAssert.equal(
-    executionUpdate[1]?.type === "content.delta" ? executionUpdate[1].payload.streamKind : null,
-    "command_output",
-  );
+});
+
+it("uses distinct Pi tool lifecycle state when content indexes are reused", () => {
+  const context = __PiAdapterTestKit.makeContext({ threadId, turnId });
+
+  const executeTool = (toolCallId: string) => {
+    __PiAdapterTestKit.mapEvent(context, {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "toolcall_start",
+        contentIndex: 0,
+        toolCall: { id: toolCallId, name: "read" },
+      },
+    });
+    __PiAdapterTestKit.mapEvent(context, {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "toolcall_end",
+        contentIndex: 0,
+        toolCall: { id: toolCallId, name: "read", arguments: { path: `${toolCallId}.ts` } },
+      },
+    });
+    const started = __PiAdapterTestKit.mapEvent(context, {
+      type: "tool_execution_start",
+      toolCallId,
+      toolName: "read",
+      args: { path: `${toolCallId}.ts` },
+    });
+    __PiAdapterTestKit.mapEvent(context, {
+      type: "tool_execution_end",
+      toolCallId,
+      toolName: "read",
+      result: { output: toolCallId },
+      isError: false,
+    });
+    return started.find((event) => event.type === "item.started");
+  };
+
+  const first = executeTool("call-1");
+  const second = executeTool("call-2");
+
+  NodeAssert.equal(first?.type, "item.started");
+  NodeAssert.equal(second?.type, "item.started");
+  NodeAssert.notEqual(first?.itemId, second?.itemId);
 });
 
 it("keeps Pi tool result content in structured payload", () => {
@@ -448,7 +713,7 @@ it("keeps Pi tool result content in structured payload", () => {
     isError: false,
   });
 
-  const completed = toolEnd[0];
+  const completed = toolEnd.find((event) => event.type === "item.completed");
   NodeAssert.equal(completed?.type, "item.completed");
   NodeAssert.deepEqual(completed?.payload.data, {
     toolCallId: "call-read",
@@ -821,6 +1086,18 @@ it("classifies nonzero Pi process exits as errors and fails active turns", () =>
   );
 });
 
+it("settles active turns when the Pi child errors without an exit event", () => {
+  const context = __PiAdapterTestKit.makeContext({ threadId, turnId });
+  const events = __PiAdapterTestKit.mapEvent(context, {
+    type: "process_error",
+    message: "Pi RPC process error.",
+  });
+
+  NodeAssert.equal(events.filter((event) => event.type === "runtime.error").length, 1);
+  NodeAssert.equal(events.find((event) => event.type === "turn.completed")?.type, "turn.completed");
+  NodeAssert.equal(events.at(-1)?.type, "session.exited");
+});
+
 it.effect("restores a fresh session after Pi prompt rejection and emits turn.aborted", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -917,8 +1194,11 @@ it.effect("marks an explicitly interrupted Pi turn as interrupted when it settle
         input: "interrupt me",
         attachments: [],
       });
-      yield* adapter.interruptTurn(testThreadId, turn.turnId);
+      const interruptFiber = yield* adapter
+        .interruptTurn(testThreadId, turn.turnId)
+        .pipe(Effect.forkChild({ startImmediately: true }));
       yield* fake.emit({ type: "agent_settled" });
+      yield* Fiber.join(interruptFiber);
       const completed = yield* nextRuntimeEvent(adapter);
 
       NodeAssert.deepEqual(
@@ -964,7 +1244,11 @@ it.effect("settles an interrupted Pi turn when abort succeeds", () =>
           }
         }),
       ).pipe(Effect.forkChild);
-      yield* adapter.interruptTurn(testThreadId, turn.turnId);
+      const interruptFiber = yield* adapter
+        .interruptTurn(testThreadId, turn.turnId)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* fake.emit({ type: "agent_settled" });
+      yield* Fiber.join(interruptFiber);
 
       const session = (yield* adapter.listSessions())[0];
       NodeAssert.equal(session?.status, "ready");
@@ -981,13 +1265,13 @@ it.effect("settles an interrupted Pi turn when abort succeeds", () =>
       }
       NodeAssert.equal(ready.type, "session.state.changed");
       if (ready.type === "session.state.changed") {
-        NodeAssert.deepEqual(ready.payload, { state: "ready", reason: "abort" });
+        NodeAssert.deepEqual(ready.payload, { state: "ready", reason: "agent_settled" });
       }
     }),
   ),
 );
 
-it.effect("ignores a late Pi settlement after interrupting a prior turn", () =>
+it.effect("does not start the next Pi turn until the interrupted turn settles", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fake = yield* makeFakePiRuntime((command) =>
@@ -1003,21 +1287,24 @@ it.effect("ignores a late Pi settlement after interrupting a prior turn", () =>
         input: "interrupt me",
         attachments: [],
       });
-      yield* adapter.interruptTurn(testThreadId, interruptedTurn.turnId);
-
-      const nextTurn = yield* adapter.sendTurn({
-        threadId: testThreadId,
-        input: "continue",
-        attachments: [],
-      });
+      const interruptFiber = yield* adapter
+        .interruptTurn(testThreadId, interruptedTurn.turnId)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      const nextTurnFiber = yield* adapter
+        .sendTurn({
+          threadId: testThreadId,
+          input: "continue",
+          attachments: [],
+        })
+        .pipe(Effect.forkChild);
       yield* fake.emit({ type: "agent_settled" });
-      for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
-        yield* Effect.yieldNow;
-      }
+      yield* Fiber.join(interruptFiber);
+      const nextTurn = yield* Fiber.join(nextTurnFiber);
 
       const session = (yield* adapter.listSessions())[0];
       NodeAssert.equal(session?.status, "running");
       NodeAssert.equal(session?.activeTurnId, nextTurn.turnId);
+      NodeAssert.notEqual(nextTurn.turnId, interruptedTurn.turnId);
     }),
   ),
 );
@@ -1038,7 +1325,11 @@ it.effect("settles the next Pi turn when no late settlement arrives", () =>
         input: "interrupt me",
         attachments: [],
       });
-      yield* adapter.interruptTurn(testThreadId, interruptedTurn.turnId);
+      const interruptFiber = yield* adapter
+        .interruptTurn(testThreadId, interruptedTurn.turnId)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* fake.emit({ type: "agent_settled" });
+      yield* Fiber.join(interruptFiber);
 
       const nextTurn = yield* adapter.sendTurn({
         threadId: testThreadId,
@@ -1081,6 +1372,7 @@ it.effect("uses public Pi model and thinking commands before a turn", () =>
       const testThreadId = ThreadId.make("pi-model-thinking");
 
       yield* adapter.startSession({ threadId: testThreadId, runtimeMode: "full-access" });
+      yield* nextRuntimeEvent(adapter);
       yield* adapter.sendTurn({
         threadId: testThreadId,
         input: "configure",
@@ -1091,6 +1383,7 @@ it.effect("uses public Pi model and thinking commands before a turn", () =>
           options: [{ id: "thinking", value: "high" }],
         },
       });
+      const configured = yield* nextRuntimeEvent(adapter);
       const session = (yield* adapter.listSessions())[0];
 
       NodeAssert.deepEqual(
@@ -1104,6 +1397,10 @@ it.effect("uses public Pi model and thinking commands before a turn", () =>
       });
       NodeAssert.deepEqual(fake.requests[2], { type: "set_thinking_level", level: "high" });
       NodeAssert.equal(session?.model, "example/new-model");
+      NodeAssert.equal(configured._tag, "Some");
+      if (configured._tag === "Some") {
+        NodeAssert.equal(configured.value.type, "session.configured");
+      }
     }),
   ),
 );
@@ -1277,6 +1574,86 @@ it.effect("rejects Pi accept-for-session confirmations without claiming native s
   ),
 );
 
+it("preserves Pi input placeholders and editor prefill", () => {
+  const inputContext = __PiAdapterTestKit.makeContext({ threadId, turnId });
+  const input = __PiAdapterTestKit.mapEvent(inputContext, {
+    type: "extension_ui_request",
+    id: "input-placeholder",
+    method: "input",
+    title: "Name the branch",
+    placeholder: "feature/example",
+  });
+  const editorContext = __PiAdapterTestKit.makeContext({ threadId, turnId });
+  const editor = __PiAdapterTestKit.mapEvent(editorContext, {
+    type: "extension_ui_request",
+    id: "editor-prefill",
+    method: "editor",
+    title: "Edit release notes",
+    prefill: "## Changes\n",
+  });
+
+  NodeAssert.equal(input[0]?.type, "user-input.requested");
+  NodeAssert.equal(editor[0]?.type, "user-input.requested");
+  if (input[0]?.type === "user-input.requested") {
+    NodeAssert.deepEqual(input[0].payload.questions[0], {
+      id: "input-placeholder",
+      header: "input",
+      question: "Name the branch",
+      options: [],
+      placeholder: "feature/example",
+    });
+  }
+  if (editor[0]?.type === "user-input.requested") {
+    NodeAssert.deepEqual(editor[0].payload.questions[0], {
+      id: "editor-prefill",
+      header: "editor",
+      question: "Edit release notes",
+      options: [],
+      defaultValue: "## Changes\n",
+    });
+  }
+});
+
+it.effect("expires Pi dialog requests when the upstream timeout elapses", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fake = yield* makeFakePiRuntime((command) =>
+        command.type === "get_state" ? Effect.succeed(initialState()) : Effect.succeed({}),
+      );
+      const adapter = yield* makeTestAdapter(() => Effect.succeed(fake.runtime));
+      const testThreadId = ThreadId.make("pi-ui-timeout");
+      const requestId = ApprovalRequestId.make("input-timeout");
+
+      yield* adapter.startSession({ threadId: testThreadId, runtimeMode: "full-access" });
+      yield* nextRuntimeEvent(adapter);
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: requestId,
+        method: "input",
+        title: "Temporary input",
+        timeout: 1_000,
+      });
+      const requested = yield* nextRuntimeEvent(adapter);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("1 second");
+      yield* Effect.yieldNow;
+      const resolved = yield* nextRuntimeEvent(adapter);
+      const staleResponse = yield* adapter
+        .respondToUserInput(testThreadId, requestId, { [requestId]: "too late" })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(requested._tag, "Some");
+      if (requested._tag === "Some") NodeAssert.equal(requested.value.type, "user-input.requested");
+      NodeAssert.equal(resolved._tag, "Some");
+      if (resolved._tag === "Some") {
+        NodeAssert.equal(resolved.value.type, "user-input.resolved");
+      }
+      NodeAssert.equal(staleResponse._tag, "Failure");
+      NodeAssert.deepEqual(fake.notifications, []);
+    }),
+  ),
+);
+
 it.effect("keeps Pi session ready when an attachment cannot be loaded", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1311,6 +1688,79 @@ it.effect("keeps Pi session ready when an attachment cannot be loaded", () =>
         fake.requests.map((command) => command.type),
         ["get_state"],
       );
+    }),
+  ),
+);
+
+it.effect("forwards Pi image attachments through RPC", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const attachmentsDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pi-images-"));
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(attachmentsDir, { recursive: true, force: true })),
+      );
+      const fake = yield* makeFakePiRuntime((command) =>
+        command.type === "get_state" ? Effect.succeed(initialState()) : Effect.succeed({}),
+      );
+      const adapter = yield* makeTestAdapter(() => Effect.succeed(fake.runtime), {
+        attachmentsDir,
+      });
+      const testThreadId = ThreadId.make("pi-image-attachment");
+      const attachment = {
+        type: "image" as const,
+        id: "pi-image-attachment-12345678-1234-1234-1234-123456789abc",
+        name: "diagram.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+      };
+      const attachmentPath = resolveAttachmentPath({ attachmentsDir, attachment });
+      NodeAssert.ok(attachmentPath);
+      NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
+      NodeFS.writeFileSync(attachmentPath, Uint8Array.from([1, 2, 3, 4]));
+
+      yield* adapter.startSession({ threadId: testThreadId, runtimeMode: "full-access" });
+      yield* adapter.sendTurn({
+        threadId: testThreadId,
+        input: "Read this image.",
+        attachments: [attachment],
+      });
+
+      NodeAssert.deepEqual(fake.requests, [
+        { type: "get_state" },
+        {
+          type: "prompt",
+          message: "Read this image.",
+          images: [{ type: "image", data: "AQIDBA==", mimeType: "image/png" }],
+        },
+      ]);
+    }),
+  ),
+);
+
+it.effect("rejects oversized combined Pi image payloads before reading files", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fake = yield* makeFakePiRuntime((command) =>
+        command.type === "get_state" ? Effect.succeed(initialState()) : Effect.succeed({}),
+      );
+      const adapter = yield* makeTestAdapter(() => Effect.succeed(fake.runtime));
+      const testThreadId = ThreadId.make("pi-image-total-limit");
+      const attachments = Array.from({ length: 3 }, (_, index) => ({
+        type: "image" as const,
+        id: `pi-image-total-${index}`,
+        name: `image-${index}.png`,
+        mimeType: "image/png",
+        sizeBytes: 10 * 1024 * 1024,
+      }));
+
+      yield* adapter.startSession({ threadId: testThreadId, runtimeMode: "full-access" });
+      const result = yield* adapter
+        .sendTurn({ threadId: testThreadId, input: "Read images", attachments })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.deepEqual(fake.requests, [{ type: "get_state" }]);
+      if (result._tag === "Failure") NodeAssert.match(result.failure.message, /combined limit/);
     }),
   ),
 );
@@ -1358,6 +1808,70 @@ it.effect("replaces same-thread Pi sessions without leaking the predecessor", ()
         sessionId: "second",
         cwd: process.cwd(),
       });
+    }),
+  ),
+);
+
+it.effect("reads only the active Pi branch and reconstructs turn boundaries", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const entries = {
+        leafId: "assistant-2",
+        entries: [
+          { id: "user-1", parentId: null, type: "message", message: { role: "user" } },
+          {
+            id: "assistant-1",
+            parentId: "user-1",
+            type: "message",
+            message: { role: "assistant" },
+          },
+          {
+            id: "abandoned-user",
+            parentId: "assistant-1",
+            type: "message",
+            message: { role: "user" },
+          },
+          {
+            id: "abandoned-assistant",
+            parentId: "abandoned-user",
+            type: "message",
+            message: { role: "assistant" },
+          },
+          {
+            id: "user-2",
+            parentId: "assistant-1",
+            type: "message",
+            message: { role: "user" },
+          },
+          {
+            id: "assistant-2",
+            parentId: "user-2",
+            type: "message",
+            message: { role: "assistant" },
+          },
+        ],
+      };
+      const fake = yield* makeFakePiRuntime((command) => {
+        if (command.type === "get_state") return Effect.succeed(initialState());
+        if (command.type === "get_entries") return Effect.succeed(entries);
+        return Effect.succeed({});
+      });
+      const adapter = yield* makeTestAdapter(() => Effect.succeed(fake.runtime));
+      const testThreadId = ThreadId.make("pi-active-branch");
+
+      yield* adapter.startSession({ threadId: testThreadId, runtimeMode: "full-access" });
+      const snapshot = yield* adapter.readThread(testThreadId);
+
+      NodeAssert.equal(snapshot.turns.length, 2);
+      NodeAssert.deepEqual(
+        snapshot.turns.map((turn) =>
+          turn.items.map((item) => (item as { readonly id: string }).id),
+        ),
+        [
+          ["user-1", "assistant-1"],
+          ["user-2", "assistant-2"],
+        ],
+      );
     }),
   ),
 );
@@ -1492,6 +2006,32 @@ it.effect("serializes concurrent Pi sends before deciding prompt versus steer", 
   ),
 );
 
+it.effect("uses follow_up for an active queued Pi delivery", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fake = yield* makeFakePiRuntime((command) =>
+        command.type === "get_state" ? Effect.succeed(initialState()) : Effect.succeed({}),
+      );
+      const adapter = yield* makeTestAdapter(() => Effect.succeed(fake.runtime));
+      const testThreadId = ThreadId.make("pi-follow-up");
+
+      yield* adapter.startSession({ threadId: testThreadId, runtimeMode: "full-access" });
+      yield* adapter.sendTurn({ threadId: testThreadId, input: "first", attachments: [] });
+      yield* adapter.sendTurn({
+        threadId: testThreadId,
+        input: "queued",
+        attachments: [],
+        delivery: "followUp",
+      });
+
+      NodeAssert.deepEqual(
+        fake.requests.map((command) => command.type),
+        ["get_state", "prompt", "follow_up"],
+      );
+    }),
+  ),
+);
+
 it.effect("removes exited Pi sessions from active session routing", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1505,9 +2045,18 @@ it.effect("removes exited Pi sessions from active session routing", () =>
       yield* nextRuntimeEvent(adapter);
       yield* fake.emit({ type: "process_exit", code: 17, signal: null });
       yield* nextRuntimeEvent(adapter);
+      const closedSend = yield* adapter
+        .sendTurn({ threadId: testThreadId, input: "too late", attachments: [] })
+        .pipe(Effect.result);
+      yield* fake.end;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
 
       NodeAssert.equal(yield* adapter.hasSession(testThreadId), false);
       NodeAssert.deepEqual(yield* adapter.listSessions(), []);
+      NodeAssert.equal(fake.closeCalls(), 1);
+      NodeAssert.equal(closedSend._tag, "Failure");
+      if (closedSend._tag === "Failure") NodeAssert.match(closedSend.failure.message, /closed/i);
     }),
   ),
 );
@@ -1549,6 +2098,46 @@ it.effect("writes raw Pi RPC events without delaying canonical mapping", () =>
       NodeAssert.equal(logged.event.method, "agent_start");
       NodeAssert.equal(logged.event.threadId, testThreadId);
       NodeAssert.deepEqual(logged.event.payload, { type: "agent_start" });
+    }),
+  ),
+);
+
+it.effect("skips noisy Pi status and tool-call delta native logs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const nativeEvents: unknown[] = [];
+      const nativeEventLogger: EventNdjsonLogger = {
+        filePath: "memory://pi-native-filtered-events",
+        write: (event) => Effect.sync(() => void nativeEvents.push(event)),
+        close: () => Effect.void,
+      };
+      const fake = yield* makeFakePiRuntime((command) =>
+        command.type === "get_state" ? Effect.succeed(initialState()) : Effect.succeed({}),
+      );
+      const adapter = yield* makeTestAdapter(() => Effect.succeed(fake.runtime), {
+        nativeEventLogger,
+      });
+      const testThreadId = ThreadId.make("pi-native-filtered-events");
+
+      yield* adapter.startSession({ threadId: testThreadId, runtimeMode: "full-access" });
+      yield* nextRuntimeEvent(adapter);
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "status-noise",
+        method: "setStatus",
+        statusKey: "usage",
+        statusText: "50%",
+      });
+      yield* fake.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: "x" },
+      });
+      yield* fake.emit({ type: "agent_start" });
+      yield* nextRuntimeEvent(adapter);
+
+      NodeAssert.equal(nativeEvents.length, 1);
+      const logged = nativeEvents[0] as { readonly event: { readonly method: string } };
+      NodeAssert.equal(logged.event.method, "agent_start");
     }),
   ),
 );

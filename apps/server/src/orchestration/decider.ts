@@ -1,4 +1,5 @@
 import {
+  DEFAULT_TURN_DELIVERY,
   EventId,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -460,6 +461,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.titleSeed !== undefined ? { titleSeed: command.titleSeed } : {}),
           runtimeMode: targetThread.runtimeMode,
           interactionMode: targetThread.interactionMode,
+          delivery: command.delivery ?? DEFAULT_TURN_DELIVERY,
           ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
           createdAt: command.createdAt,
         },

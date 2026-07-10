@@ -109,6 +109,7 @@ const SERVER_CONFIG: ServerConfigType = {
     serverVersion: "0.0.0-test",
     capabilities: {
       repositoryIdentity: true,
+      conductorSessionApi: 0,
     },
   },
   auth: {

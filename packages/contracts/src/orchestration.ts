@@ -21,6 +21,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { DEFAULT_TURN_DELIVERY, TurnDelivery } from "./turnDelivery.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -614,6 +615,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
+  delivery: TurnDelivery.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_TURN_DELIVERY))),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
@@ -633,6 +635,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  delivery: Schema.optionalKey(TurnDelivery),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
@@ -800,7 +803,14 @@ export const OrchestrationCommand = Schema.Union([
   DispatchableClientOrchestrationCommand,
   InternalOrchestrationCommand,
 ]);
-export type OrchestrationCommand = typeof OrchestrationCommand.Type;
+type DecodedThreadTurnStartCommand = typeof ThreadTurnStartCommand.Type;
+type ThreadTurnStartCommandInput = Omit<DecodedThreadTurnStartCommand, "delivery"> & {
+  readonly delivery?: TurnDelivery;
+};
+type DecodedOrchestrationCommand = typeof OrchestrationCommand.Type;
+export type OrchestrationCommand =
+  | Exclude<DecodedOrchestrationCommand, { readonly type: "thread.turn.start" }>
+  | ThreadTurnStartCommandInput;
 
 export const OrchestrationEventType = Schema.Literals([
   "project.created",
@@ -933,6 +943,7 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
+  delivery: TurnDelivery.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_TURN_DELIVERY))),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
 });
@@ -1283,6 +1294,8 @@ export class OrchestrationDispatchCommandError extends Schema.TaggedErrorClass<O
   "OrchestrationDispatchCommandError",
   {
     message: TrimmedNonEmptyString,
+    code: Schema.optional(Schema.Literal("command_previously_rejected")),
+    commandId: Schema.optional(CommandId),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}

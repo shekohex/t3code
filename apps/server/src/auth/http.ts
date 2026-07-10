@@ -8,12 +8,14 @@ import {
   AuthRelayWriteScope,
   AuthReviewWriteScope,
   AuthTerminalOperateScope,
+  CommandId,
   EnvironmentAuthInvalidError,
   type EnvironmentAuthInvalidReason,
   EnvironmentHttpApi,
   EnvironmentInternalError,
   type EnvironmentInternalErrorReason,
   EnvironmentOperationForbiddenError,
+  EnvironmentOrchestrationCommandPreviouslyRejectedError,
   EnvironmentRequestInvalidError,
   type EnvironmentRequestInvalidReason,
   EnvironmentResourceNotFoundError,
@@ -107,6 +109,20 @@ export function failEnvironmentInvalidRequest(reason: EnvironmentRequestInvalidR
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
       Effect.fail(new EnvironmentRequestInvalidError({ code: "invalid_request", reason, traceId })),
+    ),
+  );
+}
+
+export function failEnvironmentCommandPreviouslyRejected(commandId: string) {
+  return currentEnvironmentTraceId.pipe(
+    Effect.flatMap((traceId) =>
+      Effect.fail(
+        new EnvironmentOrchestrationCommandPreviouslyRejectedError({
+          code: "command_previously_rejected",
+          commandId: CommandId.make(commandId),
+          traceId,
+        }),
+      ),
     ),
   );
 }

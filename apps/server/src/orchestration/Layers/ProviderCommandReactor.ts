@@ -10,6 +10,7 @@ import {
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
+  type TurnDelivery,
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
@@ -589,6 +590,7 @@ const make = Effect.gen(function* () {
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
+    readonly delivery: TurnDelivery;
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
@@ -641,6 +643,7 @@ const make = Effect.gen(function* () {
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      delivery: input.delivery,
     };
   });
 
@@ -845,6 +848,7 @@ const make = Effect.gen(function* () {
         ? { modelSelection: event.payload.modelSelection }
         : {}),
       interactionMode: event.payload.interactionMode,
+      delivery: event.payload.delivery,
       createdAt: event.payload.createdAt,
     }).pipe(
       Effect.map(Option.some),

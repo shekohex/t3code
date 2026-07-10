@@ -90,3 +90,9 @@ it("derives Pi thinking options from public model metadata", () => {
   );
   NodeAssert.deepEqual(models[1]?.capabilities?.optionDescriptors, []);
 });
+
+it("rejects Pi versions older than the tested RPC protocol", () => {
+  NodeAssert.equal(__PiProviderTestKit.isSupportedVersion("0.80.5"), false);
+  NodeAssert.equal(__PiProviderTestKit.isSupportedVersion("0.80.6"), true);
+  NodeAssert.equal(__PiProviderTestKit.isSupportedVersion("0.81.0"), true);
+});

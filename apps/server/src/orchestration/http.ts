@@ -12,6 +12,7 @@ import {
   annotateEnvironmentRequest,
   failEnvironmentInternal,
   failEnvironmentInvalidRequest,
+  failEnvironmentCommandPreviouslyRejected,
   failEnvironmentNotFound,
   requireEnvironmentScope,
 } from "../auth/http.ts";
@@ -80,13 +81,20 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           const normalizedCommand = yield* normalizeDispatchCommand(args.payload).pipe(
             Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
           );
-          return yield* orchestrationEngine
-            .dispatch(normalizedCommand)
-            .pipe(
-              Effect.catch((cause) =>
-                failEnvironmentInternal("orchestration_dispatch_failed", cause),
-              ),
-            );
+          const dispatchResult = yield* orchestrationEngine.dispatch(normalizedCommand).pipe(
+            Effect.match({
+              onFailure: (error) => ({ type: "failure" as const, error }),
+              onSuccess: (result) => ({ type: "success" as const, result }),
+            }),
+          );
+          if (dispatchResult.type === "success") return dispatchResult.result;
+          if (dispatchResult.error._tag === "OrchestrationCommandPreviouslyRejectedError") {
+            return yield* failEnvironmentCommandPreviouslyRejected(dispatchResult.error.commandId);
+          }
+          return yield* failEnvironmentInternal(
+            "orchestration_dispatch_failed",
+            dispatchResult.error,
+          );
         }),
       );
   }),

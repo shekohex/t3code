@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
@@ -22,6 +23,7 @@ import {
   RuntimeMode,
 } from "./orchestration.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+import { DEFAULT_TURN_DELIVERY, TurnDelivery } from "./turnDelivery.ts";
 
 const ProviderSessionStatus = Schema.Literals([
   "connecting",
@@ -74,8 +76,12 @@ export const ProviderSendTurnInput = Schema.Struct({
   ),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  delivery: TurnDelivery.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_TURN_DELIVERY))),
 });
-export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
+type DecodedProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
+export type ProviderSendTurnInput = Omit<DecodedProviderSendTurnInput, "delivery"> & {
+  readonly delivery?: TurnDelivery;
+};
 
 export const ProviderTurnStartResult = Schema.Struct({
   threadId: ThreadId,

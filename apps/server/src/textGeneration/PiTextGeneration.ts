@@ -150,10 +150,19 @@ export const makePiTextGeneration = (
           const completion = yield* Deferred.make<void, TextGenerationError>();
           const terminalModelError = yield* Ref.make<string | undefined>(undefined);
           const createRuntime = options?.makeRuntime ?? makePiRpcRuntime;
+          const args = yield* Effect.try({
+            try: () => buildPiTextGenerationArgs(settings, input.modelSelection),
+            catch: (cause) =>
+              toTextGenerationError(
+                input.operation,
+                cause instanceof Error ? cause.message : String(cause),
+                cause,
+              ),
+          });
           const runtime = yield* createRuntime({
             binaryPath: settings.binaryPath,
             cwd: input.cwd,
-            args: buildPiTextGenerationArgs(settings, input.modelSelection),
+            args,
             env: buildPiEnvironment(settings, environment),
             extendEnv: true,
           }).pipe(

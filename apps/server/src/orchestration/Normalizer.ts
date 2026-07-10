@@ -3,6 +3,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import {
   type ClientOrchestrationCommand,
+  DEFAULT_TURN_DELIVERY,
   type OrchestrationCommand,
   OrchestrationDispatchCommandError,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -136,6 +137,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
 
     return {
       ...command,
+      delivery: command.delivery ?? DEFAULT_TURN_DELIVERY,
       message: {
         ...command.message,
         attachments: normalizedAttachments,

@@ -6,6 +6,8 @@ import type {
 } from "@t3tools/contracts";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { compareSemverVersions } from "@t3tools/shared/semver";
+import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -46,6 +48,12 @@ const PI_THINKING_OPTIONS = [
 
 const EMPTY_PI_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const PI_MODEL_PROBE_TIMEOUT = Duration.seconds(15);
+const MINIMUM_PI_VERSION = "0.80.6";
+
+class PiProviderLaunchArgsError extends Data.TaggedError("PiProviderLaunchArgsError")<{
+  readonly detail: string;
+  readonly cause?: unknown;
+}> {}
 
 interface PiProviderCapabilities {
   readonly modelsResponse: unknown;
@@ -149,18 +157,16 @@ function piModelRowsFromRpc(value: unknown): ReadonlyArray<ServerProviderModel> 
   return models;
 }
 
-const probePiCapabilities = (settings: PiAgentSettings, env: NodeJS.ProcessEnv) =>
+const probePiCapabilities = (
+  settings: PiAgentSettings,
+  env: NodeJS.ProcessEnv,
+  launchArgs: ReadonlyArray<string>,
+) =>
   Effect.scoped(
     makePiRpcRuntime({
       binaryPath: settings.binaryPath,
       cwd: process.cwd(),
-      args: [
-        "--mode",
-        "rpc",
-        "--no-session",
-        "--no-tools",
-        ...splitPiLaunchArgs(settings.launchArgs),
-      ],
+      args: ["--mode", "rpc", "--no-session", "--no-tools", ...launchArgs],
       env,
       extendEnv: true,
     }).pipe(
@@ -366,10 +372,55 @@ export const checkPiProviderStatus = (
       });
     }
 
-    const capabilitiesProbe = yield* probePiCapabilities(settings, probeEnv).pipe(
-      Effect.timeoutOption(PI_MODEL_PROBE_TIMEOUT),
-      Effect.result,
-    );
+    if (!version || compareSemverVersions(version, MINIMUM_PI_VERSION) < 0) {
+      return buildServerProvider({
+        driver: DRIVER_KIND,
+        presentation: PI_PRESENTATION,
+        enabled: settings.enabled,
+        checkedAt,
+        models: piModelsFromSettings(settings.customModels),
+        probe: {
+          installed: true,
+          version,
+          status: "error",
+          auth: { status: "unknown" },
+          message: version
+            ? `Pi Agent ${version} is unsupported. T3 Code requires ${MINIMUM_PI_VERSION} or newer.`
+            : `Unable to determine Pi Agent version. T3 Code requires ${MINIMUM_PI_VERSION} or newer.`,
+        },
+      });
+    }
+
+    const launchArgsResult = yield* Effect.try({
+      try: () => splitPiLaunchArgs(settings.launchArgs),
+      catch: (cause) =>
+        new PiProviderLaunchArgsError({
+          detail: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+    }).pipe(Effect.result);
+    if (launchArgsResult._tag === "Failure") {
+      return buildServerProvider({
+        driver: DRIVER_KIND,
+        presentation: PI_PRESENTATION,
+        enabled: settings.enabled,
+        checkedAt,
+        models: piModelsFromSettings(settings.customModels),
+        probe: {
+          installed: true,
+          version,
+          status: "error",
+          auth: { status: "unknown" },
+          message: launchArgsResult.failure.detail,
+        },
+      });
+    }
+
+    const capabilitiesProbe = yield* probePiCapabilities(
+      settings,
+      probeEnv,
+      launchArgsResult.success,
+    ).pipe(Effect.timeoutOption(PI_MODEL_PROBE_TIMEOUT), Effect.result);
 
     const discoveredModels =
       capabilitiesProbe._tag === "Success" && Option.isSome(capabilitiesProbe.success)
@@ -409,6 +460,7 @@ export const checkPiProviderStatus = (
   });
 
 export const __PiProviderTestKit = {
+  isSupportedVersion: (version: string) => compareSemverVersions(version, MINIMUM_PI_VERSION) >= 0,
   piCommandRowsFromRpc,
   piModelRowsFromRpc,
 };

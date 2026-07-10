@@ -176,3 +176,30 @@ it.effect("fails one-shot Pi generation when its RPC process exits before settle
     }),
   ),
 );
+
+it.effect("rejects managed Pi launch flags before starting text generation", () =>
+  Effect.gen(function* () {
+    let runtimeStarts = 0;
+    const textGeneration = yield* makePiTextGeneration(
+      decodePiSettings({ binaryPath: "pi", launchArgs: "--tools bash" }),
+      undefined,
+      {
+        makeRuntime: () => {
+          runtimeStarts += 1;
+          return Effect.die("runtime must not start for managed launch flags");
+        },
+      },
+    );
+    const result = yield* textGeneration
+      .generateThreadTitle({
+        cwd: process.cwd(),
+        message: "fix Pi lifecycle",
+        modelSelection: createModelSelection(ProviderInstanceId.make("piAgent"), "example/model"),
+      })
+      .pipe(Effect.result);
+
+    NodeAssert.equal(result._tag, "Failure");
+    NodeAssert.equal(runtimeStarts, 0);
+    if (result._tag === "Failure") NodeAssert.match(result.failure.detail, /managed by T3 Code/);
+  }),
+);

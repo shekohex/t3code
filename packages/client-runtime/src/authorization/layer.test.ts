@@ -27,6 +27,7 @@ const DESCRIPTOR = {
   serverVersion: "0.0.0-test",
   capabilities: {
     repositoryIdentity: true,
+    conductorSessionApi: 0,
   },
 };
 const BOOTSTRAP: RemoteEnvironmentAuthorization.RelayEnvironmentAuthorization = {

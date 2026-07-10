@@ -115,6 +115,23 @@ describe("ProviderSessionStartInput", () => {
 });
 
 describe("ProviderSendTurnInput", () => {
+  it("defaults delivery to steer", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+    });
+
+    expect(parsed.delivery).toBe("steer");
+  });
+
+  it("accepts followUp delivery", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      delivery: "followUp",
+    });
+
+    expect(parsed.delivery).toBe("followUp");
+  });
+
   it("accepts codex modelSelection", () => {
     const parsed = decodeProviderSendTurnInput({
       threadId: "thread-1",

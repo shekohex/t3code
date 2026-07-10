@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Image attachments must be encoded for Pi RPC payloads.
 // @effect-diagnostics globalDate:off - Provider runtime event timestamps are ISO wall-clock stamps.
 import * as NodeCrypto from "node:crypto";
-import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 import type {
   CanonicalItemType,
   CanonicalRequestType,
@@ -16,12 +16,14 @@ import type {
   ProviderUserInputAnswers,
   RuntimeItemId,
   RuntimeRequestId,
+  ThreadTokenUsageSnapshot,
   TurnId,
 } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
   EventId,
   ProviderDriverKind,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   RuntimeItemId as RuntimeItemIdSchema,
   RuntimeRequestId as RuntimeRequestIdSchema,
   RuntimeTaskId as RuntimeTaskIdSchema,
@@ -29,7 +31,10 @@ import {
   TurnId as TurnIdSchema,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -66,6 +71,13 @@ import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 const PROVIDER = ProviderDriverKind.make("piAgent");
 const RPC_RAW_SOURCE = "pi.rpc.event" as const;
 const isPiResumeCursor = Schema.is(PiResumeCursorSchema);
+const PI_REASONING_DELTA_CHUNK_SIZE = 512;
+const PI_MAX_TOTAL_IMAGE_BYTES = PROVIDER_SEND_TURN_MAX_IMAGE_BYTES * 2;
+
+class PiAttachmentInputError extends Data.TaggedError("PiAttachmentInputError")<{
+  readonly detail: string;
+  readonly cause?: unknown;
+}> {}
 
 interface PiAdapterOptions {
   readonly instanceId?: ProviderInstanceId | undefined;
@@ -92,6 +104,7 @@ interface PiAdapterSessionContext {
   readonly assistantTextItemsByContentIndex: Map<number, RuntimeItemId>;
   readonly assistantTextByContentIndex: Map<number, string>;
   readonly reasoningItemsByContentIndex: Map<number, RuntimeItemId>;
+  readonly reasoningPendingDeltaByContentIndex: Map<number, string>;
   readonly reasoningTextByContentIndex: Map<number, string>;
   readonly toolCallsByContentIndex: Map<number, PiToolCallState>;
   readonly toolCallStatesByToolCallId: Map<string, PiToolCallState>;
@@ -106,8 +119,18 @@ interface PiAdapterSessionContext {
   terminalTurnState?: "failed" | "interrupted" | undefined;
   terminalErrorMessage?: string | undefined;
   interruptRequestedTurnId?: TurnId | undefined;
-  discardNextAgentSettled?: boolean | undefined;
+  interruptSettlement?:
+    | {
+        readonly turnId: TurnId;
+        readonly deferred: Deferred.Deferred<void>;
+      }
+    | undefined;
   stopped: boolean;
+}
+
+interface PiThreadLock {
+  readonly semaphore: Semaphore.Semaphore;
+  readonly references: number;
 }
 
 interface PiModelReference {
@@ -144,6 +167,7 @@ interface PiTreeEntry {
   readonly parentId: string | null;
   readonly type: string;
   readonly role?: string | undefined;
+  readonly raw: unknown;
 }
 
 interface PiEntriesSnapshot {
@@ -303,10 +327,22 @@ function thinkingLevel(
   );
 }
 
+const PI_MODE_FLAG = /^--mode-[a-z0-9-]+$/;
+
+type PiArgsBuildResult =
+  | { readonly args: ReadonlyArray<string> }
+  | { readonly invalidModeFlag: string };
+
 function buildPiArgs(input: {
   readonly settings: PiAgentSettings;
   readonly start: ProviderSessionStartInput;
-}): ReadonlyArray<string> {
+}): PiArgsBuildResult {
+  const piModeFlags = splitPiLaunchArgs(
+    getModelSelectionStringOptionValue(input.start.modelSelection, "piModeFlags") ?? "",
+  );
+  const invalidModeFlag = piModeFlags.find((flag) => !PI_MODE_FLAG.test(flag));
+  if (invalidModeFlag !== undefined) return { invalidModeFlag };
+
   const args = ["--mode", "rpc"];
   const resumeCursor = parseResumeCursor(input.start.resumeCursor);
 
@@ -325,26 +361,55 @@ function buildPiArgs(input: {
   if (input.settings.projectTrust === "no-approve") args.push("--no-approve");
 
   args.push(...splitPiLaunchArgs(input.settings.launchArgs));
-  return args;
+  args.push(...piModeFlags);
+  return { args };
 }
 
 function imageInputs(
   attachments: ReadonlyArray<ChatAttachment> | undefined,
   attachmentsDir: string,
-): ReadonlyArray<{ type: "image"; data: string; mimeType: string }> | undefined {
-  const images = (attachments ?? []).flatMap((attachment) => {
-    if (attachment.type !== "image") return [];
-    const imagePath = resolveAttachmentPath({ attachmentsDir, attachment });
-    if (!imagePath) return [];
-    return [
-      {
-        type: "image" as const,
-        data: NodeFS.readFileSync(imagePath).toString("base64"),
-        mimeType: attachment.mimeType,
-      },
-    ];
-  });
-  return images.length > 0 ? images : undefined;
+): Effect.Effect<
+  ReadonlyArray<{ type: "image"; data: string; mimeType: string }> | undefined,
+  PiAttachmentInputError
+> {
+  const imageAttachments = (attachments ?? []).filter((attachment) => attachment.type === "image");
+  const totalImageBytes = imageAttachments.reduce(
+    (total, attachment) => total + attachment.sizeBytes,
+    0,
+  );
+  if (totalImageBytes > PI_MAX_TOTAL_IMAGE_BYTES) {
+    return new PiAttachmentInputError({
+      detail: `Pi image attachments exceed the ${PI_MAX_TOTAL_IMAGE_BYTES}-byte combined limit.`,
+    });
+  }
+
+  return Effect.forEach(
+    imageAttachments,
+    (attachment) => {
+      const imagePath = resolveAttachmentPath({ attachmentsDir, attachment });
+      if (!imagePath) return Effect.void;
+      return Effect.tryPromise({
+        try: () => NodeFSP.readFile(imagePath),
+        catch: (cause) =>
+          new PiAttachmentInputError({
+            detail: `Failed to read Pi image attachment '${attachment.name}'.`,
+            cause,
+          }),
+      }).pipe(
+        Effect.map((data) => ({
+          type: "image" as const,
+          data: data.toString("base64"),
+          mimeType: attachment.mimeType,
+        })),
+      );
+    },
+    { concurrency: 4 },
+  ).pipe(
+    Effect.map((images) => {
+      const loadedImages = images.filter((image) => image !== undefined);
+      return loadedImages.length > 0 ? loadedImages : undefined;
+    }),
+  );
 }
 
 function updateSession(
@@ -565,6 +630,7 @@ function clearTurnStreamState(context: PiAdapterSessionContext): void {
   context.assistantTextItemsByContentIndex.clear();
   context.assistantTextByContentIndex.clear();
   context.reasoningItemsByContentIndex.clear();
+  context.reasoningPendingDeltaByContentIndex.clear();
   context.reasoningTextByContentIndex.clear();
   context.toolCallsByContentIndex.clear();
   context.toolCallStatesByToolCallId.clear();
@@ -585,6 +651,13 @@ function isPiDialogMethod(method: string): boolean {
   return method === "confirm" || isPiUserInputMethod(method);
 }
 
+function shouldLogPiNativeEvent(event: unknown): boolean {
+  if (!isRecord(event)) return true;
+  if (event.type === "extension_ui_request" && event.method === "setStatus") return false;
+  if (event.type !== "message_update") return true;
+  return readRecord(event, "assistantMessageEvent")?.type !== "toolcall_delta";
+}
+
 function ensureTurnStarted(
   context: PiAdapterSessionContext,
   rawEvent: unknown,
@@ -597,7 +670,10 @@ function ensureTurnStarted(
     ...runtimeEventBase(context, rawEvent),
     turnId: context.activeTurnId,
     type: "turn.started",
-    payload: {},
+    payload: {
+      ...(context.activeModel ? { model: piModelSlug(context.activeModel) } : {}),
+      ...(context.activeThinkingLevel ? { effort: context.activeThinkingLevel } : {}),
+    },
   } satisfies ProviderRuntimeEvent;
 }
 
@@ -853,6 +929,52 @@ function reasoningItemId(context: PiAdapterSessionContext, contentIndex: number)
   return itemId;
 }
 
+function emitBufferedPiReasoningDelta(
+  context: PiAdapterSessionContext,
+  rawEvent: Record<string, unknown>,
+  contentIndex: number,
+  flush: boolean,
+): ReadonlyArray<ProviderRuntimeEvent> {
+  const pendingDelta = context.reasoningPendingDeltaByContentIndex.get(contentIndex) ?? "";
+  if (
+    pendingDelta.length === 0 ||
+    (!flush && pendingDelta.length < PI_REASONING_DELTA_CHUNK_SIZE)
+  ) {
+    return [];
+  }
+  context.reasoningPendingDeltaByContentIndex.delete(contentIndex);
+  return [
+    {
+      ...runtimeEventBase(context, rawEvent),
+      itemId: reasoningItemId(context, contentIndex),
+      type: "content.delta",
+      payload: { streamKind: "reasoning_text", delta: pendingDelta, contentIndex },
+    } satisfies ProviderRuntimeEvent,
+  ];
+}
+
+function bufferPiReasoningDelta(
+  context: PiAdapterSessionContext,
+  rawEvent: Record<string, unknown>,
+  contentIndex: number,
+  delta: string,
+): ReadonlyArray<ProviderRuntimeEvent> {
+  context.reasoningPendingDeltaByContentIndex.set(
+    contentIndex,
+    `${context.reasoningPendingDeltaByContentIndex.get(contentIndex) ?? ""}${delta}`,
+  );
+  return emitBufferedPiReasoningDelta(context, rawEvent, contentIndex, false);
+}
+
+function flushPiReasoningDeltas(
+  context: PiAdapterSessionContext,
+  rawEvent: Record<string, unknown>,
+): ReadonlyArray<ProviderRuntimeEvent> {
+  return [...context.reasoningPendingDeltaByContentIndex.keys()].flatMap((contentIndex) =>
+    emitBufferedPiReasoningDelta(context, rawEvent, contentIndex, true),
+  );
+}
+
 function mapPiReasoningSnapshots(
   context: PiAdapterSessionContext,
   rawEvent: Record<string, unknown>,
@@ -864,28 +986,18 @@ function mapPiReasoningSnapshots(
       const delta = outputDelta(previous, text);
       context.reasoningTextByContentIndex.set(contentIndex, text);
       if (delta.length === 0) return [];
-      const itemId = reasoningItemId(context, contentIndex);
-      return [
-        {
-          ...runtimeEventBase(context, rawEvent),
-          itemId,
-          type: "content.delta",
-          payload: { streamKind: "reasoning_text", delta, contentIndex },
-        } satisfies ProviderRuntimeEvent,
-      ];
+      reasoningItemId(context, contentIndex);
+      return bufferPiReasoningDelta(context, rawEvent, contentIndex, delta);
     },
   );
 }
 
-function hasReasoningDeltaForContentIndex(
-  events: ReadonlyArray<ProviderRuntimeEvent>,
+function hasReasoningSnapshotForContentIndex(
+  assistantMessageEvent: Record<string, unknown>,
   contentIndex: number,
 ): boolean {
-  return events.some(
-    (event) =>
-      event.type === "content.delta" &&
-      event.payload.streamKind === "reasoning_text" &&
-      event.payload.contentIndex === contentIndex,
+  return thinkingEntriesFromAssistantEvent(assistantMessageEvent).some(
+    (entry) => entry.contentIndex === contentIndex,
   );
 }
 
@@ -921,11 +1033,23 @@ function getOrCreateToolCallState(
   toolCall: Record<string, unknown> | undefined,
 ): PiToolCallState {
   const toolCallId = toolCallIdFromToolCall(toolCall);
+  const contentIndexState = context.toolCallsByContentIndex.get(contentIndex);
+  const existingByToolCallId = toolCallId
+    ? context.toolCallStatesByToolCallId.get(toolCallId)
+    : undefined;
   const existing =
-    context.toolCallsByContentIndex.get(contentIndex) ??
-    (toolCallId ? context.toolCallStatesByToolCallId.get(toolCallId) : undefined);
+    existingByToolCallId ??
+    (contentIndexState &&
+    (toolCallId === undefined ||
+      contentIndexState.toolCallId === undefined ||
+      contentIndexState.toolCallId === toolCallId)
+      ? contentIndexState
+      : undefined);
   const mappedItemId = toolCallId ? context.toolCallItemIdsByToolCallId.get(toolCallId) : undefined;
-  const itemId = existing?.itemId ?? mappedItemId ?? scopedItemId("pi-tool", context, contentIndex);
+  const itemId =
+    existing?.itemId ??
+    mappedItemId ??
+    (toolCallId ? runtimeItemId(toolCallId) : scopedItemId("pi-tool", context, contentIndex));
   const toolName = toolNameFromToolCall(toolCall) ?? existing?.toolName;
   const input = toolArgumentsFromToolCall(toolCall) ?? existing?.input;
   const state: PiToolCallState = existing ?? {
@@ -1079,43 +1203,28 @@ function mapPiMessageUpdate(
     case "thinking_delta": {
       const delta = readString(assistantMessageEvent, "delta");
       if (!delta) return reasoningEvents;
-      if (hasReasoningDeltaForContentIndex(reasoningEvents, contentIndex)) return reasoningEvents;
+      if (hasReasoningSnapshotForContentIndex(assistantMessageEvent, contentIndex)) {
+        return reasoningEvents;
+      }
       context.reasoningTextByContentIndex.set(
         contentIndex,
         `${context.reasoningTextByContentIndex.get(contentIndex) ?? ""}${delta}`,
       );
+      reasoningItemId(context, contentIndex);
       return [
         ...reasoningEvents,
-        {
-          ...runtimeEventBase(context, rawEvent),
-          itemId: reasoningItemId(context, contentIndex),
-          type: "content.delta",
-          payload: { streamKind: "reasoning_text", delta, contentIndex },
-        } satisfies ProviderRuntimeEvent,
+        ...bufferPiReasoningDelta(context, rawEvent, contentIndex, delta),
       ];
     }
     case "thinking_end": {
+      const flushed = emitBufferedPiReasoningDelta(context, rawEvent, contentIndex, true);
       context.reasoningItemsByContentIndex.delete(contentIndex);
-      return reasoningEvents;
+      return [...reasoningEvents, ...flushed];
     }
     case "toolcall_start": {
       const toolCall = toolCallFromAssistantEvent(assistantMessageEvent);
-      const state = getOrCreateToolCallState(context, contentIndex, toolCall);
-      state.started = true;
-      return [
-        ...reasoningEvents,
-        {
-          ...runtimeEventBase(context, rawEvent),
-          itemId: state.itemId,
-          type: "item.started",
-          payload: toolPayload({
-            toolCallId: state.toolCallId,
-            toolName: state.toolName,
-            input: state.input,
-            status: "inProgress",
-          }),
-        } satisfies ProviderRuntimeEvent,
-      ];
+      getOrCreateToolCallState(context, contentIndex, toolCall);
+      return reasoningEvents;
     }
     case "toolcall_delta": {
       const toolCall = toolCallFromAssistantEvent(assistantMessageEvent);
@@ -1125,43 +1234,13 @@ function mapPiMessageUpdate(
         state.inputBuffer += delta;
         state.input = tryParseJsonRecord(state.inputBuffer) ?? state.input;
       }
-      const eventType = state.started ? "item.updated" : "item.started";
-      state.started = true;
-      return [
-        ...reasoningEvents,
-        {
-          ...runtimeEventBase(context, rawEvent),
-          itemId: state.itemId,
-          type: eventType,
-          payload: toolPayload({
-            toolCallId: state.toolCallId,
-            toolName: state.toolName,
-            input: state.input,
-            status: "inProgress",
-          }),
-        } satisfies ProviderRuntimeEvent,
-      ];
+      return reasoningEvents;
     }
     case "toolcall_end": {
       const toolCall = toolCallFromAssistantEvent(assistantMessageEvent);
       const state = getOrCreateToolCallState(context, contentIndex, toolCall);
       state.input = toolArgumentsFromToolCall(toolCall) ?? state.input;
-      const eventType = state.started ? "item.updated" : "item.started";
-      state.started = true;
-      return [
-        ...reasoningEvents,
-        {
-          ...runtimeEventBase(context, rawEvent),
-          itemId: state.itemId,
-          type: eventType,
-          payload: toolPayload({
-            toolCallId: state.toolCallId,
-            toolName: state.toolName,
-            input: state.input,
-            status: "inProgress",
-          }),
-        } satisfies ProviderRuntimeEvent,
-      ];
+      return reasoningEvents;
     }
     case "done": {
       return completeAssistantMessageEvents(context, rawEvent);
@@ -1193,35 +1272,21 @@ function mapPiToolExecution(
     : undefined;
   if (outputText) context.toolOutputByToolCallId.set(toolCallId, outputText);
 
-  const lifecycle =
-    rawEvent.type === "tool_execution_start"
-      ? "item.started"
-      : rawEvent.type === "tool_execution_update"
-        ? "item.updated"
-        : "item.completed";
-  const status =
-    rawEvent.type === "tool_execution_end"
-      ? rawEvent.isError
-        ? "failed"
-        : "completed"
-      : "inProgress";
-
-  const events: ProviderRuntimeEvent[] = [
-    {
+  const events: ProviderRuntimeEvent[] = [];
+  if (!state.started) {
+    state.started = true;
+    events.push({
       ...runtimeEventBase(context, rawEvent),
       itemId: state.itemId,
-      type: lifecycle,
+      type: "item.started",
       payload: toolPayload({
         toolCallId: state.toolCallId,
         toolName: state.toolName,
         input: state.input,
-        status,
-        partialResult,
-        result,
-        ...(typeof rawEvent.isError === "boolean" ? { isError: rawEvent.isError } : {}),
+        status: "inProgress",
       }),
-    } satisfies ProviderRuntimeEvent,
-  ];
+    });
+  }
 
   const streamKind = outputStreamKind(itemType);
   if (streamKind && outputTextDelta && outputTextDelta.length > 0) {
@@ -1234,6 +1299,19 @@ function mapPiToolExecution(
   }
 
   if (rawEvent.type === "tool_execution_end") {
+    events.push({
+      ...runtimeEventBase(context, rawEvent),
+      itemId: state.itemId,
+      type: "item.completed",
+      payload: toolPayload({
+        toolCallId: state.toolCallId,
+        toolName: state.toolName,
+        input: state.input,
+        status: rawEvent.isError ? "failed" : "completed",
+        result,
+        ...(typeof rawEvent.isError === "boolean" ? { isError: rawEvent.isError } : {}),
+      }),
+    });
     context.toolOutputByToolCallId.delete(toolCallId);
   }
   return events;
@@ -1415,6 +1493,50 @@ function mapPiThinkingLevelChanged(
   ];
 }
 
+function piTokenUsageFromTurnEnd(
+  rawEvent: Record<string, unknown>,
+): ThreadTokenUsageSnapshot | undefined {
+  const message = readRecord(rawEvent, "message");
+  const usage = message ? readRecord(message, "usage") : undefined;
+  if (!usage) return undefined;
+  const usedTokens = readNumber(usage, "totalTokens");
+  if (usedTokens === undefined || usedTokens <= 0) return undefined;
+  const inputTokens = readNumber(usage, "input");
+  const cachedInputTokens = readNumber(usage, "cacheRead");
+  const outputTokens = readNumber(usage, "output");
+  const reasoningOutputTokens = readNumber(usage, "reasoning");
+  return {
+    usedTokens,
+    ...(inputTokens !== undefined ? { inputTokens, lastInputTokens: inputTokens } : {}),
+    ...(cachedInputTokens !== undefined
+      ? { cachedInputTokens, lastCachedInputTokens: cachedInputTokens }
+      : {}),
+    ...(outputTokens !== undefined ? { outputTokens, lastOutputTokens: outputTokens } : {}),
+    ...(reasoningOutputTokens !== undefined
+      ? {
+          reasoningOutputTokens,
+          lastReasoningOutputTokens: reasoningOutputTokens,
+        }
+      : {}),
+    lastUsedTokens: usedTokens,
+  };
+}
+
+function mapPiTurnEnd(
+  context: PiAdapterSessionContext,
+  rawEvent: Record<string, unknown>,
+): ReadonlyArray<ProviderRuntimeEvent> {
+  const usage = piTokenUsageFromTurnEnd(rawEvent);
+  if (!usage) return [];
+  return [
+    {
+      ...runtimeEventBase(context, rawEvent),
+      type: "thread.token-usage.updated",
+      payload: { usage },
+    } satisfies ProviderRuntimeEvent,
+  ];
+}
+
 function settlePiTurn(
   context: PiAdapterSessionContext,
   rawEvent: Record<string, unknown>,
@@ -1427,6 +1549,7 @@ function settlePiTurn(
     return [];
   }
 
+  const reasoningDeltas = flushPiReasoningDeltas(context, rawEvent);
   const assistantCompletions = completeAssistantMessageEvents(context, rawEvent);
   const state =
     context.terminalTurnState ??
@@ -1440,6 +1563,7 @@ function settlePiTurn(
   resetTerminalTurnState(context);
 
   return [
+    ...reasoningDeltas,
     ...assistantCompletions,
     ...(state === "failed"
       ? [
@@ -1472,6 +1596,8 @@ function settlePiTurn(
 }
 
 function processExitDetail(rawEvent: Record<string, unknown>): string {
+  const message = readString(rawEvent, "message") ?? readString(rawEvent, "error");
+  if (message) return message;
   const code = readNumber(rawEvent, "code");
   const signal = readString(rawEvent, "signal");
   return `Pi RPC process exited${code === undefined ? "" : ` with code ${code}`}${signal ? ` (${signal})` : ""}.`;
@@ -1493,6 +1619,7 @@ function mapPiProcessExit(
     context.terminalTurnState ??
     (context.interruptRequestedTurnId === activeTurnId ? "interrupted" : "failed");
   const terminalError = context.terminalErrorMessage ?? detail;
+  const reasoningDeltas = flushPiReasoningDeltas(context, rawEvent);
   const assistantCompletions = completeAssistantMessageEvents(context, rawEvent);
 
   context.activeTurnId = undefined;
@@ -1503,6 +1630,7 @@ function mapPiProcessExit(
   resetTerminalTurnState(context);
 
   return [
+    ...reasoningDeltas,
     ...assistantCompletions,
     ...(activeTurnId
       ? [
@@ -1527,7 +1655,7 @@ function mapPiProcessExit(
           } satisfies ProviderRuntimeEvent,
         ]
       : []),
-    ...(exitKind === "error"
+    ...(exitKind === "error" && activeTurnId === undefined
       ? [
           {
             ...runtimeEventBase(context, rawEvent),
@@ -1552,7 +1680,6 @@ function mapPiEvent(
 
   switch (rawEvent.type) {
     case "agent_start": {
-      context.discardNextAgentSettled = undefined;
       if (!context.activeTurnId) resetTerminalTurnState(context);
       clearTurnStreamState(context);
       const started = ensureTurnStarted(context, rawEvent);
@@ -1563,17 +1690,14 @@ function mapPiEvent(
       return started ? [started] : [];
     }
     case "turn_end":
-      return [];
+      return mapPiTurnEnd(context, rawEvent);
     case "agent_end": {
+      const reasoningDeltas = flushPiReasoningDeltas(context, rawEvent);
       const assistantCompletions = completeAssistantMessageEvents(context, rawEvent);
       clearTurnStreamState(context);
-      return assistantCompletions;
+      return [...reasoningDeltas, ...assistantCompletions];
     }
     case "agent_settled":
-      if (context.discardNextAgentSettled) {
-        context.discardNextAgentSettled = undefined;
-        return [];
-      }
       return settlePiTurn(context, rawEvent);
     case "message_start": {
       const message = readRecord(rawEvent, "message");
@@ -1613,20 +1737,14 @@ function mapPiEvent(
       if (method === "notify") {
         const message = readString(rawEvent, "message");
         if (!message) return [];
-        if (rawEvent.notifyType === "error") {
-          return [
-            {
-              ...runtimeEventBase(context, rawEvent),
-              type: "runtime.error",
-              payload: { message, class: "provider_error" },
-            } satisfies ProviderRuntimeEvent,
-          ];
-        }
         return [
           {
             ...runtimeEventBase(context, rawEvent),
             type: "runtime.warning",
-            payload: { message },
+            payload: {
+              message:
+                rawEvent.notifyType === "error" ? `Pi extension reported: ${message}` : message,
+            },
           } satisfies ProviderRuntimeEvent,
         ];
       }
@@ -1645,6 +1763,8 @@ function mapPiEvent(
       }
       if (isPiUserInputMethod(method)) {
         const title = readString(rawEvent, "title") ?? "Pi input";
+        const placeholder = readString(rawEvent, "placeholder");
+        const defaultValue = method === "editor" ? readString(rawEvent, "prefill") : undefined;
         const options = Array.isArray(rawEvent.options)
           ? rawEvent.options.filter((option): option is string => typeof option === "string")
           : [];
@@ -1660,6 +1780,8 @@ function mapPiEvent(
                   header: method,
                   question: title,
                   options: options.map((option) => ({ label: option, description: option })),
+                  ...(placeholder ? { placeholder } : {}),
+                  ...(defaultValue ? { defaultValue } : {}),
                 },
               ],
             },
@@ -1699,11 +1821,16 @@ function mapPiEvent(
       const message =
         readString(rawEvent, "message") ?? readString(rawEvent, "error") ?? "Pi runtime error";
       markTerminalTurnState(context, "failed", message);
+      return mapPiProcessExit(context, rawEvent);
+    }
+    case "stderr": {
+      const message = readString(rawEvent, "message");
+      if (!message) return [];
       return [
         {
           ...runtimeEventBase(context, rawEvent),
-          type: "runtime.error",
-          payload: { message, class: "transport_error" },
+          type: "runtime.warning",
+          payload: { message },
         } satisfies ProviderRuntimeEvent,
       ];
     }
@@ -1737,7 +1864,7 @@ function readPiEntriesSnapshot(value: unknown): PiEntriesSnapshot | undefined {
       entry.parentId === null || typeof entry.parentId === "string" ? entry.parentId : null;
     const role =
       readString(readRecord(entry, "message") ?? {}, "role") ?? readString(entry, "role");
-    return [{ id, type, parentId, ...(role ? { role } : {}) }];
+    return [{ id, type, parentId, ...(role ? { role } : {}), raw: entry }];
   });
   return {
     leafId: value.leafId === null || typeof value.leafId === "string" ? value.leafId : null,
@@ -1745,8 +1872,8 @@ function readPiEntriesSnapshot(value: unknown): PiEntriesSnapshot | undefined {
   };
 }
 
-function rollbackTargetId(snapshot: PiEntriesSnapshot, numTurns: number): string | undefined {
-  if (!snapshot.leafId || numTurns <= 0) return undefined;
+function activePiEntryPath(snapshot: PiEntriesSnapshot): ReadonlyArray<PiTreeEntry> {
+  if (!snapshot.leafId) return [];
   const entriesById = new Map(snapshot.entries.map((entry) => [entry.id, entry]));
   const path: PiTreeEntry[] = [];
   const visited = new Set<string>();
@@ -1758,22 +1885,52 @@ function rollbackTargetId(snapshot: PiEntriesSnapshot, numTurns: number): string
     path.push(entry);
     cursor = entry.parentId;
   }
-  const userMessages = path
-    .toReversed()
-    .filter((entry) => entry.type === "message" && entry.role === "user");
+  return path.toReversed();
+}
+
+function rollbackTargetId(snapshot: PiEntriesSnapshot, numTurns: number): string | undefined {
+  if (numTurns <= 0) return undefined;
+  const userMessages = activePiEntryPath(snapshot).filter(
+    (entry) => entry.type === "message" && entry.role === "user",
+  );
   return userMessages.at(-numTurns)?.id;
 }
 
-function threadSnapshotFromEntries(
-  threadId: ThreadId,
-  result: { readonly entries?: ReadonlyArray<unknown> },
-): ProviderThreadSnapshot {
+function threadSnapshotFromEntries(threadId: ThreadId, result: unknown): ProviderThreadSnapshot {
+  const snapshot = readPiEntriesSnapshot(result);
+  if (snapshot) {
+    const path = activePiEntryPath(snapshot);
+    const turns: ProviderThreadSnapshot["turns"][number][] = [];
+    let prelude: unknown[] = [];
+    let currentTurn: { readonly id: TurnId; readonly items: Array<unknown> } | undefined;
+
+    for (const entry of path) {
+      if (entry.type === "message" && entry.role === "user") {
+        if (currentTurn) turns.push(currentTurn);
+        currentTurn = {
+          id: TurnIdSchema.make(`pi:${entry.id}`),
+          items: [...prelude, entry.raw],
+        };
+        prelude = [];
+        continue;
+      }
+      if (currentTurn) currentTurn.items.push(entry.raw);
+      else prelude.push(entry.raw);
+    }
+    if (currentTurn) turns.push(currentTurn);
+    else if (prelude.length > 0) {
+      turns.push({ id: TurnIdSchema.make(`${threadId}-snapshot`), items: prelude });
+    }
+    return { threadId, turns };
+  }
+
+  const entries = isRecord(result) && Array.isArray(result.entries) ? result.entries : [];
   return {
     threadId,
     turns: [
       {
         id: TurnIdSchema.make(`${threadId}-snapshot`),
-        items: result.entries ?? [],
+        items: entries,
       },
     ],
   };
@@ -1801,6 +1958,7 @@ export const __PiAdapterTestKit = {
       assistantTextItemsByContentIndex: new Map(),
       assistantTextByContentIndex: new Map(),
       reasoningItemsByContentIndex: new Map(),
+      reasoningPendingDeltaByContentIndex: new Map(),
       reasoningTextByContentIndex: new Map(),
       toolCallsByContentIndex: new Map(),
       toolCallStatesByToolCallId: new Map(),
@@ -1822,14 +1980,14 @@ export const makePiAdapter = (
   Effect.gen(function* () {
     const parentScope = yield* Scope.Scope;
     const sessionsRef = yield* Ref.make(new Map<ThreadId, PiAdapterSessionContext>());
-    const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
-    const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
+    const threadLocksRef = yield* SynchronizedRef.make(new Map<string, PiThreadLock>());
+    const runtimeEvents = yield* Queue.bounded<ProviderRuntimeEvent>(512);
 
     const emitRuntimeEvent = (event: ProviderRuntimeEvent) =>
       Queue.offer(runtimeEvents, event).pipe(Effect.asVoid);
 
     const logNativeEvent = (context: PiAdapterSessionContext, event: unknown) => {
-      if (!options.nativeEventLogger) return Effect.void;
+      if (!options.nativeEventLogger || !shouldLogPiNativeEvent(event)) return Effect.void;
       const observedAt = nowIso();
       return options.nativeEventLogger
         .write(
@@ -1860,24 +2018,44 @@ export const makePiAdapter = (
         );
     };
 
-    const getThreadLock = (threadId: ThreadId) =>
+    const acquireThreadLock = (threadId: ThreadId) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (locks) => {
         const existing = Option.fromNullishOr(locks.get(threadId));
         return Option.match(existing, {
           onNone: () =>
             Semaphore.make(1).pipe(
-              Effect.map((lock) => {
+              Effect.map((semaphore) => {
+                const lock = { semaphore, references: 1 } satisfies PiThreadLock;
                 const next = new Map(locks);
                 next.set(threadId, lock);
                 return [lock, next] as const;
               }),
             ),
-          onSome: (lock) => Effect.succeed([lock, locks] as const),
+          onSome: (lock) => {
+            const acquired = { ...lock, references: lock.references + 1 } satisfies PiThreadLock;
+            const next = new Map(locks);
+            next.set(threadId, acquired);
+            return Effect.succeed([acquired, next] as const);
+          },
         });
       });
 
+    const releaseThreadLock = (threadId: ThreadId, acquired: PiThreadLock) =>
+      SynchronizedRef.update(threadLocksRef, (locks) => {
+        const current = locks.get(threadId);
+        if (!current || current.semaphore !== acquired.semaphore) return locks;
+        const next = new Map(locks);
+        if (current.references <= 1) next.delete(threadId);
+        else next.set(threadId, { ...current, references: current.references - 1 });
+        return next;
+      });
+
     const withThreadLock = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) =>
-      Effect.flatMap(getThreadLock(threadId), (lock) => lock.withPermit(effect));
+      Effect.acquireUseRelease(
+        acquireThreadLock(threadId),
+        (lock) => lock.semaphore.withPermit(effect),
+        (lock) => releaseThreadLock(threadId, lock),
+      );
 
     const getSessionContext = (threadId: ThreadId) =>
       Ref.get(sessionsRef).pipe(
@@ -1900,6 +2078,14 @@ export const makePiAdapter = (
         ),
       );
 
+    const removeSessionContext = (context: PiAdapterSessionContext) =>
+      Ref.update(sessionsRef, (sessions) => {
+        if (sessions.get(context.threadId) !== context) return sessions;
+        const next = new Map(sessions);
+        next.delete(context.threadId);
+        return next;
+      });
+
     const closeSession = (context: PiAdapterSessionContext) =>
       Effect.gen(function* () {
         if (context.stopped) return;
@@ -1907,13 +2093,77 @@ export const makePiAdapter = (
         context.pendingUiRequests.clear();
         if (context.eventFiber) yield* Fiber.interrupt(context.eventFiber).pipe(Effect.ignore);
         yield* Scope.close(context.scope, Exit.void).pipe(Effect.ignore);
-        yield* Ref.update(sessionsRef, (sessions) => {
-          if (sessions.get(context.threadId) !== context) return sessions;
-          const next = new Map(sessions);
-          next.delete(context.threadId);
-          return next;
-        });
+        yield* removeSessionContext(context);
       });
+
+    const cleanupEndedSession = (context: PiAdapterSessionContext) =>
+      Effect.gen(function* () {
+        if (context.stopped) return;
+        context.stopped = true;
+        context.pendingUiRequests.clear();
+        yield* removeSessionContext(context);
+        yield* Scope.close(context.scope, Exit.void).pipe(
+          Effect.ignore,
+          Effect.forkIn(parentScope),
+        );
+      });
+
+    const scheduleUiRequestTimeout = (
+      context: PiAdapterSessionContext,
+      rawEvent: unknown,
+    ): Effect.Effect<void> => {
+      if (!isRecord(rawEvent) || rawEvent.type !== "extension_ui_request") return Effect.void;
+      const id = readString(rawEvent, "id");
+      const method = readString(rawEvent, "method");
+      const timeoutMs = readNumber(rawEvent, "timeout");
+      if (!id || !method || !isPiDialogMethod(method) || !timeoutMs || timeoutMs <= 0) {
+        return Effect.void;
+      }
+      const requestId = ApprovalRequestId.make(id);
+      const pending = context.pendingUiRequests.get(requestId);
+      if (!pending) return Effect.void;
+
+      return Effect.sleep(Duration.millis(timeoutMs)).pipe(
+        Effect.andThen(
+          withThreadLock(
+            context.threadId,
+            Effect.gen(function* () {
+              if (context.pendingUiRequests.get(requestId) !== pending) return;
+              context.pendingUiRequests.delete(requestId);
+              if (isPiUserInputMethod(method)) {
+                yield* emitRuntimeEvent({
+                  ...runtimeEventBase(context, {
+                    type: "extension_ui_timeout",
+                    id,
+                    method,
+                  }),
+                  requestId: runtimeRequestId(id),
+                  type: "user-input.resolved",
+                  payload: { answers: {} },
+                });
+                return;
+              }
+              yield* emitRuntimeEvent({
+                ...runtimeEventBase(context, {
+                  type: "extension_ui_timeout",
+                  id,
+                  method,
+                }),
+                requestId: runtimeRequestId(id),
+                type: "request.resolved",
+                payload: {
+                  requestType: requestTypeForUi(method),
+                  decision: "cancel",
+                  resolution: { reason: "timeout" },
+                },
+              });
+            }),
+          ),
+        ),
+        Effect.forkIn(context.scope),
+        Effect.asVoid,
+      );
+    };
 
     yield* Scope.addFinalizer(
       parentScope,
@@ -1979,6 +2229,18 @@ export const makePiAdapter = (
           if (activeThinkingLevel) {
             context.activeThinkingLevel = activeThinkingLevel;
           }
+          yield* emitRuntimeEvent({
+            ...runtimeEventBase(context, { type: "configuration_changed" }),
+            type: "session.configured",
+            payload: {
+              config: {
+                ...(context.activeModel ? { model: piModelSlug(context.activeModel) } : {}),
+                ...(context.activeThinkingLevel
+                  ? { thinkingLevel: context.activeThinkingLevel }
+                  : {}),
+              },
+            },
+          });
         }
       });
 
@@ -2005,11 +2267,27 @@ export const makePiAdapter = (
             const childScope = yield* Scope.make();
             return yield* Effect.gen(function* () {
               const cwd = input.cwd ?? process.cwd();
+              const piArgs = yield* Effect.try({
+                try: () => buildPiArgs({ settings, start: input }),
+                catch: (cause) =>
+                  new ProviderAdapterValidationError({
+                    provider: PROVIDER,
+                    operation: "startSession",
+                    issue: cause instanceof Error ? cause.message : String(cause),
+                  }),
+              });
+              if ("invalidModeFlag" in piArgs) {
+                return yield* new ProviderAdapterValidationError({
+                  provider: PROVIDER,
+                  operation: "startSession",
+                  issue: `Pi mode flag '${piArgs.invalidModeFlag}' is not allowed. Only --mode-<name> flags are supported.`,
+                });
+              }
               const createRuntime = options.makeRuntime ?? makePiRpcRuntime;
               const runtime = yield* createRuntime({
                 binaryPath: settings.binaryPath,
                 cwd,
-                args: buildPiArgs({ settings, start: input }),
+                args: piArgs.args,
                 env: buildPiEnvironment(settings, options.environment),
                 extendEnv: true,
               }).pipe(
@@ -2046,6 +2324,7 @@ export const makePiAdapter = (
                 assistantTextItemsByContentIndex: new Map(),
                 assistantTextByContentIndex: new Map(),
                 reasoningItemsByContentIndex: new Map(),
+                reasoningPendingDeltaByContentIndex: new Map(),
                 reasoningTextByContentIndex: new Map(),
                 toolCallsByContentIndex: new Map(),
                 toolCallStatesByToolCallId: new Map(),
@@ -2058,15 +2337,30 @@ export const makePiAdapter = (
                 stopped: false,
               };
               const eventFiber = yield* runtime.events.pipe(
-                Stream.runForEach(({ event }) =>
-                  logNativeEvent(context, event).pipe(
+                Stream.runForEach(({ event }) => {
+                  const activeTurnIdBeforeEvent = context.activeTurnId;
+                  const mappedEvents = mapPiEvent(context, event);
+                  const interruptSettlement =
+                    isRecord(event) &&
+                    event.type === "agent_settled" &&
+                    context.interruptSettlement?.turnId === activeTurnIdBeforeEvent
+                      ? context.interruptSettlement
+                      : undefined;
+                  return Effect.forEach(mappedEvents, emitRuntimeEvent, {
+                    discard: true,
+                  }).pipe(
                     Effect.andThen(
-                      Effect.forEach(mapPiEvent(context, event), emitRuntimeEvent, {
-                        discard: true,
-                      }),
+                      interruptSettlement
+                        ? Deferred.succeed(interruptSettlement.deferred, undefined).pipe(
+                            Effect.ignore,
+                          )
+                        : Effect.void,
                     ),
-                  ),
-                ),
+                    Effect.andThen(scheduleUiRequestTimeout(context, event)),
+                    Effect.andThen(logNativeEvent(context, event)),
+                  );
+                }),
+                Effect.ensuring(cleanupEndedSession(context)),
                 Effect.forkIn(childScope),
               );
               context.eventFiber = eventFiber;
@@ -2092,10 +2386,12 @@ export const makePiAdapter = (
           input.threadId,
           Effect.gen(function* () {
             const context = yield* getOpenSessionContext(input.threadId);
-            const images = yield* Effect.try({
-              try: () => imageInputs(input.attachments, options.serverConfig.attachmentsDir),
-              catch: (error) => adapterError(input.threadId, "attachments", error),
-            });
+            const images = yield* imageInputs(
+              input.attachments,
+              options.serverConfig.attachmentsDir,
+            ).pipe(
+              Effect.mapError((error) => adapterError(input.threadId, "attachments", error.detail)),
+            );
             yield* applyPiConfiguration(context, input);
             const isSteering =
               context.activeTurnId !== undefined && context.session.status === "running";
@@ -2111,14 +2407,12 @@ export const makePiAdapter = (
               reserveTurn(context, activeTurnId);
             }
             const command = {
-              type: isSteering ? "steer" : "prompt",
+              type: !isSteering ? "prompt" : input.delivery === "followUp" ? "follow_up" : "steer",
               message: input.input ?? "",
               ...(images ? { images } : {}),
             };
             yield* context.runtime.request(command).pipe(
-              Effect.mapError((error) =>
-                adapterError(input.threadId, isSteering ? "steer" : "prompt", error),
-              ),
+              Effect.mapError((error) => adapterError(input.threadId, command.type, error)),
               Effect.tapError((error) => {
                 if (isSteering) return Effect.void;
                 context.session = previousSession;
@@ -2155,22 +2449,44 @@ export const makePiAdapter = (
                 const activeTurnId = context.activeTurnId;
                 if (requestedTurnId && requestedTurnId !== activeTurnId) return;
                 const previousInterruptRequestedTurnId = context.interruptRequestedTurnId;
-                if (activeTurnId) context.interruptRequestedTurnId = activeTurnId;
-                yield* context.runtime.request({ type: "abort" }).pipe(
-                  Effect.asVoid,
-                  Effect.mapError((error) => adapterError(threadId, "abort", error)),
-                  Effect.tapError(() =>
+                const interruptSettlement = activeTurnId
+                  ? {
+                      turnId: activeTurnId,
+                      deferred: yield* Deferred.make<void>(),
+                    }
+                  : undefined;
+                if (activeTurnId) {
+                  context.interruptRequestedTurnId = activeTurnId;
+                  context.interruptSettlement = interruptSettlement;
+                }
+                yield* Effect.gen(function* () {
+                  yield* context.runtime.request({ type: "abort" }).pipe(
+                    Effect.asVoid,
+                    Effect.mapError((error) => adapterError(threadId, "abort", error)),
+                    Effect.tapError(() =>
+                      Effect.sync(() => {
+                        context.interruptRequestedTurnId = previousInterruptRequestedTurnId;
+                      }),
+                    ),
+                  );
+                  if (!interruptSettlement || context.activeTurnId !== activeTurnId) return;
+                  const settled = yield* Deferred.await(interruptSettlement.deferred).pipe(
+                    Effect.timeoutOption(Duration.seconds(5)),
+                  );
+                  if (Option.isSome(settled)) return;
+                  return yield* new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "abort",
+                    detail: "Pi did not emit agent_settled after abort completed.",
+                  });
+                }).pipe(
+                  Effect.ensuring(
                     Effect.sync(() => {
-                      context.interruptRequestedTurnId = previousInterruptRequestedTurnId;
+                      if (context.interruptSettlement === interruptSettlement) {
+                        context.interruptSettlement = undefined;
+                      }
                     }),
                   ),
-                );
-                if (!activeTurnId || context.activeTurnId !== activeTurnId) return;
-                context.discardNextAgentSettled = true;
-                yield* Effect.forEach(
-                  settlePiTurn(context, { type: "abort" }, "abort"),
-                  emitRuntimeEvent,
-                  { discard: true },
                 );
               }),
             ),
