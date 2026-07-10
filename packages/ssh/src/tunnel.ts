@@ -337,16 +337,20 @@ NODE
 }
 
 ensure_remote_node_path() {
-  if command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1; then
-    return 0
-  fi
-
   prepend_path_if_dir "$HOME/.local/bin"
   prepend_path_if_dir "$HOME/bin"
+  prepend_path_if_dir "$HOME/.bun/bin"
+  prepend_path_if_dir "\${PNPM_HOME:-$HOME/.local/share/pnpm}"
+  prepend_path_if_dir "$HOME/.yarn/bin"
+  prepend_path_if_dir "$HOME/.config/yarn/global/node_modules/.bin"
   prepend_path_if_dir "/opt/homebrew/bin"
   prepend_path_if_dir "/usr/local/bin"
   prepend_path_if_dir "/usr/bin"
   prepend_path_if_dir "/bin"
+
+  if command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1; then
+    return 0
+  fi
 
   if [ -z "\${VOLTA_HOME:-}" ]; then
     VOLTA_HOME="$HOME/.volta"
@@ -420,15 +424,19 @@ if [ -n "$T3_NODE_SCRIPT_PATH" ]; then
     printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
     exit 1
   fi
+  printf '[t3:ssh-runner] selected=node-script path=%s node=%s\\n' "$T3_NODE_SCRIPT_PATH" "$(command -v node)" >&2
   exec node "$T3_NODE_SCRIPT_PATH" "$@"
 fi
 if command -v t3 >/dev/null 2>&1; then
+  printf '[t3:ssh-runner] selected=installed path=%s\\n' "$(command -v t3)" >&2
   exec t3 "$@"
 fi
 if command -v npx >/dev/null 2>&1; then
+  printf '[t3:ssh-runner] selected=npx path=%s package=%s\\n' "$(command -v npx)" @@T3_PACKAGE_SPEC@@ >&2
   exec npx --yes @@T3_PACKAGE_SPEC@@ "$@"
 fi
 if command -v npm >/dev/null 2>&1; then
+  printf '[t3:ssh-runner] selected=npm-exec path=%s package=%s\\n' "$(command -v npm)" @@T3_PACKAGE_SPEC@@ >&2
   exec npm exec --yes @@T3_PACKAGE_SPEC@@ -- "$@"
 fi
 printf 'Remote host is missing the t3 CLI and could not install @@T3_PACKAGE_SPEC@@ because node/npm/npx are unavailable on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2

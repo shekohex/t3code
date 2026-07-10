@@ -93,11 +93,24 @@ describe("ssh tunnel scripts", () => {
     const script = buildRemoteT3RunnerScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE });
 
     assert.include(script, "T3_NODE_SCRIPT_PATH=''");
+    assert.include(script, "[t3:ssh-runner] selected=node-script");
+    assert.include(script, "[t3:ssh-runner] selected=installed");
+    assert.include(script, "[t3:ssh-runner] selected=npx");
+    assert.include(script, "[t3:ssh-runner] selected=npm-exec");
     assert.include(script, 'exec t3 "$@"');
     assert.include(script, "exec npx --yes 't3@latest' \"$@\"");
     assert.include(script, "exec npm exec --yes 't3@latest' -- \"$@\"");
     assert.include(script, "could not install 't3@latest'");
     assert.include(script, 'prepend_path_if_dir "$HOME/.local/bin"');
+    assert.include(script, 'prepend_path_if_dir "$HOME/.bun/bin"');
+    assert.include(script, 'prepend_path_if_dir "${PNPM_HOME:-$HOME/.local/share/pnpm}"');
+    assert.include(script, 'prepend_path_if_dir "$HOME/.yarn/bin"');
+    assert.include(script, 'prepend_path_if_dir "$HOME/.config/yarn/global/node_modules/.bin"');
+    assert.isBelow(
+      script.indexOf('prepend_path_if_dir "$HOME/.bun/bin"'),
+      script.indexOf("if command -v node >/dev/null 2>&1 && remote_node_satisfies_engine"),
+    );
+    assert.isBelow(script.indexOf('exec t3 "$@"'), script.indexOf("exec npx --yes"));
     assert.include(script, `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);
     assert.include(script, "remote_node_satisfies_engine()");
     assert.include(script, "function satisfiesSemverRange");
