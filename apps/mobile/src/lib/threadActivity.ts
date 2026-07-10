@@ -195,14 +195,16 @@ function parseUserInputQuestions(
           };
         })
         .filter((option): option is UserInputQuestion["options"][number] => option !== null);
-      if (options.length === 0) {
-        return null;
-      }
+      if (question.options.length > 0 && options.length === 0) return null;
       return {
         id: question.id,
         header: question.header,
         question: question.question,
         options,
+        ...(typeof question.placeholder === "string" ? { placeholder: question.placeholder } : {}),
+        ...(typeof question.defaultValue === "string"
+          ? { defaultValue: question.defaultValue }
+          : {}),
         multiSelect: question.multiSelect === true,
       };
     })
@@ -220,9 +222,10 @@ function normalizeDraftAnswer(value: string | undefined): string | null {
 }
 
 function resolvePendingUserInputAnswer(
+  question: UserInputQuestion,
   draft: PendingUserInputDraftAnswer | undefined,
 ): string | null {
-  const customAnswer = normalizeDraftAnswer(draft?.customAnswer);
+  const customAnswer = normalizeDraftAnswer(draft ? draft.customAnswer : question.defaultValue);
   if (customAnswer) {
     return customAnswer;
   }
@@ -1302,7 +1305,7 @@ export function buildPendingUserInputAnswers(
   const answers: Record<string, string> = {};
 
   for (const question of questions) {
-    const answer = resolvePendingUserInputAnswer(draftAnswers[question.id]);
+    const answer = resolvePendingUserInputAnswer(question, draftAnswers[question.id]);
     if (!answer) {
       return null;
     }

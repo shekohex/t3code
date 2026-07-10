@@ -66,6 +66,23 @@ describe("resolvePendingUserInputAnswer", () => {
     ).toEqual(["Server", "Web"]);
   });
 
+  it("uses an editor default until the user changes it", () => {
+    const editorQuestion = {
+      id: "release_notes",
+      header: "Editor",
+      question: "Edit release notes",
+      options: [],
+      defaultValue: "## Changes",
+      multiSelect: false,
+    } as const;
+
+    expect(resolvePendingUserInputAnswer(editorQuestion, undefined)).toBe("## Changes");
+    expect(resolvePendingUserInputAnswer(editorQuestion, { customAnswer: "Updated" })).toBe(
+      "Updated",
+    );
+    expect(resolvePendingUserInputAnswer(editorQuestion, { customAnswer: "" })).toBeNull();
+  });
+
   it("clears the preset selection when a custom answer is entered", () => {
     expect(
       setPendingUserInputCustomAnswer(

@@ -78,11 +78,11 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
               })}
             </View>
             <TextInput
-              value={draft?.customAnswer ?? ""}
+              value={draft?.customAnswer ?? question.defaultValue ?? ""}
               onChangeText={(value) =>
                 props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
               }
-              placeholder="Or type a custom answer"
+              placeholder={question.placeholder ?? "Or type a custom answer"}
               className="min-h-[54px] rounded-2xl border border-neutral-200 bg-white px-3.5 py-3 font-sans text-base text-neutral-950 dark:border-white/8 dark:bg-neutral-950/70 dark:text-neutral-50"
             />
           </View>

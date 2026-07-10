@@ -107,6 +107,37 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.questions[0]?.options).toHaveLength(2);
   });
 
+  it("decodes free-text user input metadata", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "user-input.requested",
+      eventId: "event-free-text",
+      provider: "piAgent",
+      createdAt: "2026-02-28T00:00:01.000Z",
+      threadId: "thread-free-text",
+      requestId: "request-free-text",
+      payload: {
+        questions: [
+          {
+            id: "release_notes",
+            header: "editor",
+            question: "Edit release notes",
+            options: [],
+            placeholder: "Describe changes",
+            defaultValue: "## Changes",
+          },
+        ],
+      },
+    });
+
+    expect(parsed.type).toBe("user-input.requested");
+    if (parsed.type !== "user-input.requested") throw new Error("expected user input");
+    expect(parsed.payload.questions[0]).toMatchObject({
+      options: [],
+      placeholder: "Describe changes",
+      defaultValue: "## Changes",
+    });
+  });
+
   it("decodes user-input.resolved with answer map", () => {
     const parsed = decodeRuntimeEvent({
       type: "user-input.resolved",

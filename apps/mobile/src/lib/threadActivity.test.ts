@@ -12,7 +12,9 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  buildPendingUserInputAnswers,
   buildThreadFeed,
+  derivePendingUserInputs,
   deriveThreadFeedPresentation,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
@@ -509,5 +511,44 @@ describe("buildThreadFeed", () => {
         activities: [expect.objectContaining({ icon: "agent", status: null })],
       }),
     );
+  });
+});
+
+describe("pending user input", () => {
+  it("keeps free-text defaults without requiring options", () => {
+    const pending = derivePendingUserInputs([
+      makeActivity({
+        id: EventId.make("mobile-user-input"),
+        kind: "user-input.requested",
+        summary: "User input requested",
+        createdAt: "2026-04-01T00:00:00.000Z",
+        payload: {
+          requestId: "mobile-user-input",
+          questions: [
+            {
+              id: "release_notes",
+              header: "editor",
+              question: "Edit release notes",
+              options: [],
+              placeholder: "Describe changes",
+              defaultValue: "## Changes",
+            },
+          ],
+        },
+      }),
+    ]);
+
+    expect(pending[0]?.questions[0]).toEqual({
+      id: "release_notes",
+      header: "editor",
+      question: "Edit release notes",
+      options: [],
+      placeholder: "Describe changes",
+      defaultValue: "## Changes",
+      multiSelect: false,
+    });
+    expect(buildPendingUserInputAnswers(pending[0]?.questions ?? [], {})).toEqual({
+      release_notes: "## Changes",
+    });
   });
 });

@@ -265,6 +265,49 @@ describe("derivePendingUserInputs", () => {
     ]);
   });
 
+  it("keeps free-text prompts with placeholders and default values", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "user-input-free-text",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-free-text",
+          questions: [
+            {
+              id: "release_notes",
+              header: "editor",
+              question: "Edit release notes",
+              options: [],
+              placeholder: "Describe changes",
+              defaultValue: "## Changes",
+            },
+          ],
+        },
+      }),
+    ];
+
+    expect(derivePendingUserInputs(activities)).toEqual([
+      {
+        requestId: "req-user-input-free-text",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        questions: [
+          {
+            id: "release_notes",
+            header: "editor",
+            question: "Edit release notes",
+            options: [],
+            placeholder: "Describe changes",
+            defaultValue: "## Changes",
+            multiSelect: false,
+          },
+        ],
+      },
+    ]);
+  });
+
   it("clears stale pending user-input prompts when the provider reports an orphaned request", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

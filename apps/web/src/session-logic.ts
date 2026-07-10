@@ -446,14 +446,16 @@ function parseUserInputQuestions(
           };
         })
         .filter((option): option is UserInputQuestion["options"][number] => option !== null);
-      if (options.length === 0) {
-        return null;
-      }
+      if (question.options.length > 0 && options.length === 0) return null;
       return {
         id: question.id,
         header: question.header,
         question: question.question,
         options,
+        ...(typeof question.placeholder === "string" ? { placeholder: question.placeholder } : {}),
+        ...(typeof question.defaultValue === "string"
+          ? { defaultValue: question.defaultValue }
+          : {}),
         multiSelect: question.multiSelect === true,
       };
     })
