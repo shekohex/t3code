@@ -1617,7 +1617,8 @@ it.effect("presents Pi ask_user_question as one native questionnaire", () =>
         type: "extension_ui_request",
         id: "primitive-2",
         method: "editor",
-        title: "Pick checks?",
+        title:
+          'Pick checks?\n\n- Lint, format: Run lint and format\n- Tests: Run tests\n\nEnter one or more option labels, separated by commas or new lines. Enter "Chat about this" to continue in chat instead.',
         prefill: "",
       });
       yield* Effect.yieldNow;

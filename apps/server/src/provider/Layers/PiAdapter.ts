@@ -259,10 +259,12 @@ function matchesQuestionnairePrimitive(
   if (!question) return false;
   const expectedMethod =
     question.options.length === 0 ? "input" : question.multiSelect ? "editor" : "select";
-  return (
-    readString(rawEvent, "method") === expectedMethod &&
-    readString(rawEvent, "title") === question.question
-  );
+  const title = readString(rawEvent, "title");
+  const titleMatches =
+    expectedMethod === "editor"
+      ? title === question.question || title?.startsWith(`${question.question}\n\n`) === true
+      : title === question.question;
+  return readString(rawEvent, "method") === expectedMethod && titleMatches;
 }
 
 function questionnaireAnswerValue(
