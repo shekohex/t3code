@@ -1561,6 +1561,18 @@ it.effect("presents Pi ask_user_question as one native questionnaire", () =>
               ],
             },
             {
+              question: "Pick layout?",
+              header: "Layout",
+              options: [
+                {
+                  label: "Timeline",
+                  description: "Show progress",
+                  preview: "✓ Connected\n● Editing files",
+                },
+                { label: "Badges", description: "Show compact badges" },
+              ],
+            },
+            {
               question: "Pick checks?",
               header: "Checks",
               multiSelect: true,
@@ -1597,6 +1609,19 @@ it.effect("presents Pi ask_user_question as one native questionnaire", () =>
           },
           {
             id: "1",
+            header: "Layout",
+            question: "Pick layout?",
+            options: [
+              {
+                label: "Timeline",
+                description: "Show progress",
+              },
+              { label: "Badges", description: "Show compact badges" },
+            ],
+            multiSelect: false,
+          },
+          {
+            id: "2",
             header: "Checks",
             question: "Pick checks?",
             options: [
@@ -1610,12 +1635,22 @@ it.effect("presents Pi ask_user_question as one native questionnaire", () =>
 
       yield* adapter.respondToUserInput(testThreadId, ApprovalRequestId.make("primitive-1"), {
         "0": "Fast",
-        "1": ["Lint, format", "Tests"],
+        "1": "Timeline",
+        "2": ["Lint, format", "Tests"],
       });
       yield* nextRuntimeEvent(adapter);
       yield* fake.emit({
         type: "extension_ui_request",
         id: "primitive-2",
+        method: "editor",
+        title:
+          "Pick layout?\n\n- Timeline: Show progress\n\n✓ Connected\n● Editing files\n\n- Badges: Show compact badges\n\nEnter one option label exactly.",
+        prefill: "",
+      });
+      yield* Effect.yieldNow;
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "primitive-3",
         method: "editor",
         title:
           'Pick checks?\n\n- Lint, format: Run lint and format\n- Tests: Run tests\n\nEnter one or more option labels, separated by commas or new lines. Enter "Chat about this" to continue in chat instead.',
@@ -1625,9 +1660,10 @@ it.effect("presents Pi ask_user_question as one native questionnaire", () =>
 
       NodeAssert.deepEqual(fake.notifications, [
         { type: "extension_ui_response", id: "primitive-1", value: "Fast" },
+        { type: "extension_ui_response", id: "primitive-2", value: "Timeline" },
         {
           type: "extension_ui_response",
-          id: "primitive-2",
+          id: "primitive-3",
           value: '["Lint, format","Tests"]',
         },
       ]);

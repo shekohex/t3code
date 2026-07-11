@@ -1,5 +1,5 @@
 import { type ApprovalRequestId } from "@t3tools/contracts";
-import { memo, useEffect, useEffectEvent, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { type PendingUserInput } from "../../session-logic";
 import {
   derivePendingUserInputProgress,
@@ -91,6 +91,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     progress.selectedOptionLabels,
   ]);
 
+  useEffect(() => {
+    if (activeQuestion?.multiSelect && autoAdvanceTimerRef.current !== null) {
+      window.clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
+  }, [activeQuestion]);
+
   // Clear auto-advance timer on unmount
   useEffect(() => {
     return () => {
@@ -100,21 +107,24 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
   }, []);
 
-  const handleOptionSelection = useEffectEvent((questionId: string, optionLabel: string) => {
-    if (activeQuestion?.multiSelect) {
+  const handleOptionSelection = useCallback(
+    (questionId: string, optionLabel: string) => {
+      if (activeQuestion?.multiSelect) {
+        onToggleOption(questionId, optionLabel);
+        return;
+      }
+      setOptimisticSingleSelect({ questionId, optionLabel });
       onToggleOption(questionId, optionLabel);
-      return;
-    }
-    setOptimisticSingleSelect({ questionId, optionLabel });
-    onToggleOption(questionId, optionLabel);
-    if (autoAdvanceTimerRef.current !== null) {
-      window.clearTimeout(autoAdvanceTimerRef.current);
-    }
-    autoAdvanceTimerRef.current = window.setTimeout(() => {
-      autoAdvanceTimerRef.current = null;
-      onAdvanceRef.current();
-    }, 200);
-  });
+      if (autoAdvanceTimerRef.current !== null) {
+        window.clearTimeout(autoAdvanceTimerRef.current);
+      }
+      autoAdvanceTimerRef.current = window.setTimeout(() => {
+        autoAdvanceTimerRef.current = null;
+        onAdvanceRef.current();
+      }, 200);
+    },
+    [activeQuestion, onToggleOption],
+  );
 
   // Keyboard shortcut: number keys 1-9 select corresponding options when focus is
   // outside editable fields. Multi-select prompts toggle options in place; single-

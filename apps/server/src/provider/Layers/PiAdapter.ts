@@ -98,6 +98,7 @@ interface PendingUiRequest {
 interface PiAskUserQuestionState {
   readonly toolCallId: string;
   readonly questions: ReadonlyArray<UserInputQuestion>;
+  readonly methods: ReadonlyArray<string>;
   nextQuestionIndex: number;
   answers?: ProviderUserInputAnswers | undefined;
 }
@@ -240,14 +241,27 @@ function piAskUserQuestions(
   });
 }
 
+function piAskUserQuestionMethods(
+  input: Record<string, unknown> | undefined,
+): ReadonlyArray<string> {
+  if (!Array.isArray(input?.questions)) return [];
+  return input.questions.map((value) => {
+    if (!isRecord(value) || !Array.isArray(value.options) || value.options.length === 0) {
+      return "input";
+    }
+    const hasPreview = value.options.some(
+      (option) => isRecord(option) && readString(option, "preview") !== undefined,
+    );
+    return value.multiSelect === true || hasPreview ? "editor" : "select";
+  });
+}
+
 function supportsNativePiQuestionnaire(input: Record<string, unknown> | undefined): boolean {
   if (!Array.isArray(input?.questions)) return false;
   return input.questions.every((value) => {
     if (!isRecord(value) || value.screenshotRequest !== undefined) return false;
     if (!Array.isArray(value.options)) return false;
-    return value.options.every(
-      (option) => !isRecord(option) || readString(option, "preview") === undefined,
-    );
+    return true;
   });
 }
 
@@ -257,8 +271,8 @@ function matchesQuestionnairePrimitive(
 ): boolean {
   const question = questionnaire.questions[questionnaire.nextQuestionIndex];
   if (!question) return false;
-  const expectedMethod =
-    question.options.length === 0 ? "input" : question.multiSelect ? "editor" : "select";
+  const expectedMethod = questionnaire.methods[questionnaire.nextQuestionIndex];
+  if (!expectedMethod) return false;
   const title = readString(rawEvent, "title");
   const titleMatches =
     expectedMethod === "editor"
@@ -1350,7 +1364,12 @@ function mapPiToolExecution(
     context.askUserQuestion = undefined;
     const questions = piAskUserQuestions(state.input);
     if (questions.length > 0 && supportsNativePiQuestionnaire(state.input)) {
-      context.askUserQuestion = { toolCallId, questions, nextQuestionIndex: 0 };
+      context.askUserQuestion = {
+        toolCallId,
+        questions,
+        methods: piAskUserQuestionMethods(state.input),
+        nextQuestionIndex: 0,
+      };
     }
   }
   const itemType = toolItemType(state.toolName);
