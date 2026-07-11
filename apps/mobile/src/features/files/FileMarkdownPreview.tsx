@@ -52,9 +52,15 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
 
   return useMemo(() => {
     const renderers: CustomRenderers = {
+      text: ({ node }) => (
+        <NativeText selectable style={{ color: body }}>
+          {node.content}
+        </NativeText>
+      ),
       link: ({ href, children }) => (
         <NativeText
           className="font-t3-medium"
+          selectable
           onPress={() => {
             if (href) {
               void tryOpenExternalUrl(href, "markdown-link");

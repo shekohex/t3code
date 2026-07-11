@@ -6,7 +6,7 @@ import { LegendList } from "@legendapp/list/react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbolView";
 import { useCallback, useMemo, useRef, type ComponentProps } from "react";
 import {
   ActivityIndicator,

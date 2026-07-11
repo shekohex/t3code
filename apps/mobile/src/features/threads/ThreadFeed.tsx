@@ -3,7 +3,7 @@ import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
 import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbolView";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useNavigation } from "@react-navigation/native";
 import {
@@ -422,12 +422,18 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
       blockTextColor: string,
       preserveSoftBreaks: boolean,
     ): CustomRenderers => ({
+      text: ({ node }) => (
+        <NativeText selectable style={{ color: inlineTextColor }}>
+          {node.content}
+        </NativeText>
+      ),
       link: ({ children, href = "" }) => {
         const presentation = resolveMarkdownLinkPresentation(href);
         if (presentation.kind === "file") {
           return (
             <NativeText
               className="font-t3-bold"
+              selectable
               onPress={() => onLinkPress(href)}
               style={{ color: inlineTextColor }}
             >
@@ -454,6 +460,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         return (
           <NativeText
             className="underline"
+            selectable
             onPress={
               linkHref
                 ? () => {
@@ -504,6 +511,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         return (
           <NativeText
             className="font-mono"
+            selectable
             style={{
               color: inlineCodeTextColor,
               fontSize: markdownFontSizes.codeBlockFontSize,

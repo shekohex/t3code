@@ -1,5 +1,5 @@
 import * as Haptics from "expo-haptics";
-import { SymbolView, type SFSymbol } from "expo-symbols";
+import { SymbolView, type SFSymbol } from "../../components/AppSymbolView";
 import { LayoutAnimation, Pressable, ScrollView, useColorScheme, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";

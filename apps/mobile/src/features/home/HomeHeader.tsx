@@ -116,11 +116,6 @@ export function HomeHeader(props: {
             onPress={props.onOpenSettings}
             separateBackground
           />
-        </NativeHeaderToolbar>
-      )}
-
-      {Platform.OS === "ios" ? null : (
-        <NativeHeaderToolbar placement="bottom">
           <NativeHeaderToolbar.Menu
             accessibilityLabel="Filter and sort threads"
             icon={
@@ -195,9 +190,6 @@ export function HomeHeader(props: {
               ))}
             </NativeHeaderToolbar.Menu>
           </NativeHeaderToolbar.Menu>
-          <NativeHeaderToolbar.Spacer width={8} sharesBackground={false} />
-          <NativeHeaderToolbar.SearchBarSlot />
-          <NativeHeaderToolbar.Spacer width={8} sharesBackground={false} />
           <NativeHeaderToolbar.Button
             accessibilityLabel="New task"
             icon="square.and.pencil"

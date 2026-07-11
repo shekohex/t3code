@@ -10,7 +10,14 @@ import {
   createNativeStackScreen,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
-import { DynamicColorIOS, Platform, Pressable, ScrollView, StyleSheet } from "react-native";
+import {
+  DynamicColorIOS,
+  Platform,
+  PlatformColor,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+} from "react-native";
 import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "./components/AppText";
@@ -56,7 +63,7 @@ const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Pl
 const SHEET_BACKGROUND_COLOR =
   Platform.OS === "ios"
     ? DynamicColorIOS({ light: "rgba(242, 242, 247, 0.98)", dark: "rgba(14, 14, 14, 0.98)" })
-    : undefined;
+    : PlatformColor("?attr/colorSurface");
 
 type AppScreenOptions = NativeStackNavigationOptions & {
   readonly unstable_navigationItemStyle?: "editor";

@@ -1,5 +1,5 @@
 import { DEFAULT_TERMINAL_ID, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbolView";
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { Pressable, View } from "react-native";
 

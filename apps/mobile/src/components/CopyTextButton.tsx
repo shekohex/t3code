@@ -1,4 +1,4 @@
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "./AppSymbolView";
 import { memo, useEffect, useRef, useState } from "react";
 import { Pressable, type ColorValue } from "react-native";
 

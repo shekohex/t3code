@@ -10,6 +10,7 @@ import type { NativeSyntheticEvent, ViewProps } from "react-native";
 import { requireNativeView } from "expo";
 
 import { NativeViewResolutionError } from "../../native/nativeViewResolutionError";
+import { ReviewDiffFallbackSurface } from "./ReviewDiffFallbackSurface";
 
 const NATIVE_REVIEW_DIFF_MODULE_NAME = "T3ReviewDiffSurface";
 const NATIVE_REVIEW_DIFF_PAYLOAD_RETRY_FRAMES = 60;
@@ -265,17 +266,17 @@ function NativeReviewDiffView(props: NativeReviewDiffViewProps) {
   return createElement(RawNativeView, { ...nativeProps, ref: nativeRef });
 }
 
-export function resolveNativeReviewDiffView(): ComponentType<NativeReviewDiffViewProps> | null {
+export function resolveNativeReviewDiffView(): ComponentType<NativeReviewDiffViewProps> {
   if (cachedNativeReviewDiffRawView) {
     return NativeReviewDiffView;
   }
 
   if (nativeReviewDiffViewResolutionFailed) {
-    return null;
+    return ReviewDiffFallbackSurface;
   }
 
   if (getExpoViewConfig(NATIVE_REVIEW_DIFF_MODULE_NAME) == null) {
-    return null;
+    return ReviewDiffFallbackSurface;
   }
 
   try {
@@ -290,8 +291,8 @@ export function resolveNativeReviewDiffView(): ComponentType<NativeReviewDiffVie
         cause,
       }),
     );
-    return null;
+    return ReviewDiffFallbackSurface;
   }
 
-  return cachedNativeReviewDiffRawView ? NativeReviewDiffView : null;
+  return cachedNativeReviewDiffRawView ? NativeReviewDiffView : ReviewDiffFallbackSurface;
 }

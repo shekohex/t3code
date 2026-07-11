@@ -1,4 +1,4 @@
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../../components/AppSymbolView";
 import type { ComponentProps } from "react";
 import { Switch, View } from "react-native";
 

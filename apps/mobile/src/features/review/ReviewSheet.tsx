@@ -6,7 +6,7 @@ import {
   nativeHeaderScrollEdgeEffects,
 } from "../../native/StackHeader";
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbolView";
 import {
   memo,
   type Ref,

@@ -1,6 +1,6 @@
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useNavigation } from "@react-navigation/native";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbolView";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useMemo } from "react";
 import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";

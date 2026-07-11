@@ -1,5 +1,5 @@
 import { useAuth } from "@clerk/expo";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbolView";
 import {
   connectionStatusText,
   type EnvironmentConnectionPhase,

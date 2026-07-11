@@ -1,4 +1,4 @@
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "./AppSymbolView";
 import { Image } from "expo-image";
 import { useState } from "react";
 import { View } from "react-native";

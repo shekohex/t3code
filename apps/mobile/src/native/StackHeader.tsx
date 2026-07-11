@@ -1,4 +1,6 @@
 import { useNavigation, type ParamListBase } from "@react-navigation/native";
+import { MenuView, type MenuAction } from "@react-native-menu/menu";
+import { SymbolView } from "../components/AppSymbolView";
 import type {
   NativeStackHeaderItem,
   NativeStackHeaderItemMenu,
@@ -14,7 +16,9 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import type { ColorValue } from "react-native";
+import { Platform, Pressable, useColorScheme, View, type ColorValue } from "react-native";
+
+import { useThemeColor } from "../lib/useThemeColor";
 
 export {
   nativeHeaderScrollEdgeEffects,
@@ -253,6 +257,150 @@ function collectToolbarItems(children: ReactNode): NativeStackHeaderItem[] {
   return items;
 }
 
+function collectAndroidMenuActions(
+  children: ReactNode,
+  handlers: Map<string, () => void>,
+  path = "menu",
+  depth = 0,
+): MenuAction[] {
+  const actions: MenuAction[] = [];
+  Children.forEach(children, (child, index) => {
+    if (!isValidElement<ToolbarElementProps>(child)) {
+      return;
+    }
+    const typeName = elementTypeName(child);
+    const id = `${path}-${index}`;
+    if (typeName === "NativeHeaderToolbarMenuAction") {
+      if (typeof child.props.onPress === "function") {
+        handlers.set(id, child.props.onPress as () => void);
+      }
+      actions.push({
+        id,
+        title: labelFromChildren(child.props.children),
+        subtitle: typeof child.props.subtitle === "string" ? child.props.subtitle : undefined,
+        attributes: {
+          destructive: Boolean(child.props.destructive),
+          disabled: Boolean(child.props.disabled),
+        },
+        state: child.props.isOn === true ? "on" : "off",
+      });
+      return;
+    }
+    if (typeName === "NativeHeaderToolbarMenu") {
+      const title =
+        typeof child.props.title === "string"
+          ? child.props.title
+          : labelFromChildren(child.props.children);
+      const subactions = collectAndroidMenuActions(child.props.children, handlers, id, depth + 1);
+      if (depth >= 1) {
+        actions.push(
+          ...subactions.map((action) => ({
+            ...action,
+            title: `${title}: ${action.title}`,
+          })),
+        );
+        return;
+      }
+      actions.push({
+        id,
+        title,
+        displayInline: Boolean(child.props.inline),
+        subactions,
+      });
+    }
+  });
+  return actions;
+}
+
+const ANDROID_HEADER_SYMBOLS: Readonly<Record<string, string>> = {
+  "arrow.clockwise": "refresh",
+  "arrow.up.left.and.arrow.down.right": "open_in_full",
+  "chevron.left": "chevron_left",
+  "doc.on.doc": "content_copy",
+  "doc.text": "description",
+  ellipsis: "more_horiz",
+  eye: "visibility",
+  gearshape: "settings",
+  plus: "add",
+  "qrcode.viewfinder": "qr_code_scanner",
+  safari: "public",
+  "sidebar.left": "dock_to_left",
+  "sidebar.right": "dock_to_right",
+  "square.and.pencil": "edit",
+  xmark: "close",
+};
+
+function androidHeaderSymbol(icon: string) {
+  return {
+    ios: icon,
+    android: ANDROID_HEADER_SYMBOLS[icon] ?? "more_horiz",
+  } as never;
+}
+
+function AndroidHeaderToolbar(props: { readonly children?: ReactNode }) {
+  const colorScheme = useColorScheme();
+  const defaultTintColor = useThemeColor("--color-icon");
+  const buttons: ReactNode[] = [];
+
+  Children.forEach(props.children, (child, index) => {
+    if (!isValidElement<ToolbarElementProps>(child)) {
+      return;
+    }
+    const typeName = elementTypeName(child);
+    const icon = typeof child.props.icon === "string" ? child.props.icon : "ellipsis";
+    const accessibilityLabel =
+      typeof child.props.accessibilityLabel === "string"
+        ? child.props.accessibilityLabel
+        : typeof child.props.title === "string"
+          ? child.props.title
+          : undefined;
+    const trigger = (
+      <Pressable
+        accessibilityLabel={accessibilityLabel}
+        accessibilityRole="button"
+        disabled={Boolean(child.props.disabled)}
+        onPress={
+          typeName === "NativeHeaderToolbarButton" && typeof child.props.onPress === "function"
+            ? (child.props.onPress as () => void)
+            : undefined
+        }
+        hitSlop={8}
+        style={{ alignItems: "center", height: 40, justifyContent: "center", width: 40 }}
+      >
+        <SymbolView
+          name={androidHeaderSymbol(icon)}
+          size={20}
+          tintColor={(child.props.tintColor as ColorValue | undefined) ?? defaultTintColor}
+          type="monochrome"
+        />
+      </Pressable>
+    );
+
+    if (typeName === "NativeHeaderToolbarMenu") {
+      const handlers = new Map<string, () => void>();
+      const actions = collectAndroidMenuActions(child.props.children, handlers, `menu-${index}`);
+      buttons.push(
+        <MenuView
+          key={`menu-${index}`}
+          actions={actions}
+          isAnchoredToRight
+          onPressAction={({ nativeEvent }) => handlers.get(nativeEvent.event)?.()}
+          themeVariant={colorScheme === "dark" ? "dark" : "light"}
+          title={typeof child.props.title === "string" ? child.props.title : undefined}
+        >
+          {trigger}
+        </MenuView>,
+      );
+      return;
+    }
+    if (typeName === "NativeHeaderToolbarButton") {
+      buttons.push(<View key={`button-${index}`}>{trigger}</View>);
+    }
+  });
+
+  return <View style={{ alignItems: "center", flexDirection: "row" }}>{buttons}</View>;
+}
+
 function NativeHeaderToolbarRoot(props: {
   readonly placement?: "left" | "right" | "bottom";
   readonly children?: ReactNode;
@@ -263,6 +411,15 @@ function NativeHeaderToolbarRoot(props: {
   useEffect(() => {
     if (!navigation) {
       return;
+    }
+    if (Platform.OS === "android" && props.placement !== "bottom") {
+      const option = props.placement === "left" ? "headerLeft" : "headerRight";
+      navigation.setOptions({
+        [option]: () => <AndroidHeaderToolbar>{props.children}</AndroidHeaderToolbar>,
+      });
+      return () => {
+        navigation.setOptions({ [option]: undefined });
+      };
     }
     if (props.placement === "bottom") {
       navigation.setOptions({
@@ -284,7 +441,7 @@ function NativeHeaderToolbarRoot(props: {
     return () => {
       navigation.setOptions({ unstable_headerRightItems: () => [] });
     };
-  }, [items, navigation, props.placement]);
+  }, [items, navigation, props.children, props.placement]);
 
   return null;
 }

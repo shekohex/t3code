@@ -16,6 +16,15 @@ vi.mock("expo", () => ({
   requireNativeView: expoMocks.requireNativeView,
 }));
 
+vi.mock("react-native", () => ({
+  FlatList: () => null,
+  Pressable: () => null,
+  RefreshControl: () => null,
+  StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
+  Text: () => null,
+  View: () => null,
+}));
+
 describe("resolveNativeReviewDiffView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -27,9 +36,9 @@ describe("resolveNativeReviewDiffView", () => {
     globalThis.expo = originalExpo;
   });
 
-  it("returns null when the native review diff view config is unavailable", async () => {
+  it("returns the React Native fallback when the native review diff view config is unavailable", async () => {
     const { resolveNativeReviewDiffView } = await import("./nativeReviewDiffSurface");
-    expect(resolveNativeReviewDiffView()).toBeNull();
+    expect(resolveNativeReviewDiffView()).not.toBeNull();
     expect(expoMocks.requireNativeView).not.toHaveBeenCalled();
   });
 
@@ -55,11 +64,11 @@ describe("resolveNativeReviewDiffView", () => {
     } as unknown as typeof globalThis.expo;
     expoMocks.requireNativeView.mockReturnValue(nativeView);
     const { resolveNativeReviewDiffView } = await import("./nativeReviewDiffSurface");
-    expect(resolveNativeReviewDiffView()).toBeNull();
+    expect(resolveNativeReviewDiffView()).not.toBeNull();
     expect(expoMocks.requireNativeView).not.toHaveBeenCalled();
   });
 
-  it("returns null when the view manager cannot be required", async () => {
+  it("returns the fallback when the view manager cannot be required", async () => {
     setExpoViewConfigAvailable();
     const cause = new Error("boom");
     expoMocks.requireNativeView.mockImplementation(() => {
@@ -68,8 +77,9 @@ describe("resolveNativeReviewDiffView", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { resolveNativeReviewDiffView } = await import("./nativeReviewDiffSurface");
 
-    expect(resolveNativeReviewDiffView()).toBeNull();
-    expect(resolveNativeReviewDiffView()).toBeNull();
+    const fallback = resolveNativeReviewDiffView();
+    expect(fallback).not.toBeNull();
+    expect(resolveNativeReviewDiffView()).toBe(fallback);
     expect(expoMocks.requireNativeView).toHaveBeenCalledTimes(1);
     expect(consoleError).toHaveBeenCalledWith(
       expect.objectContaining({
