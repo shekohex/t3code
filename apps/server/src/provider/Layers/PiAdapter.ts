@@ -18,6 +18,7 @@ import type {
   RuntimeRequestId,
   ThreadTokenUsageSnapshot,
   TurnId,
+  UserInputQuestion,
 } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
@@ -91,6 +92,14 @@ interface PiAdapterOptions {
 
 interface PendingUiRequest {
   readonly method: string;
+  readonly questionnaire?: boolean;
+}
+
+interface PiAskUserQuestionState {
+  readonly toolCallId: string;
+  readonly questions: ReadonlyArray<UserInputQuestion>;
+  nextQuestionIndex: number;
+  answers?: ProviderUserInputAnswers | undefined;
 }
 
 interface PiAdapterSessionContext {
@@ -99,6 +108,7 @@ interface PiAdapterSessionContext {
   readonly runtime: PiRpcRuntimeShape;
   eventFiber?: Fiber.Fiber<void, never> | undefined;
   readonly pendingUiRequests: Map<ApprovalRequestId, PendingUiRequest>;
+  askUserQuestion?: PiAskUserQuestionState | undefined;
   activeAssistantMessage?: PiAssistantMessageState | undefined;
   assistantMessageCounter: number;
   readonly assistantTextItemsByContentIndex: Map<number, RuntimeItemId>;
@@ -200,6 +210,77 @@ function readRecord(
 ): Record<string, unknown> | undefined {
   const value = record[key];
   return isRecord(value) ? value : undefined;
+}
+
+function piAskUserQuestions(
+  input: Record<string, unknown> | undefined,
+): ReadonlyArray<UserInputQuestion> {
+  if (!Array.isArray(input?.questions)) return [];
+  return input.questions.flatMap((value, index): UserInputQuestion[] => {
+    if (!isRecord(value)) return [];
+    const question = readString(value, "question");
+    if (!question) return [];
+    const options = Array.isArray(value.options)
+      ? value.options.flatMap((option): UserInputQuestion["options"][number][] => {
+          if (!isRecord(option)) return [];
+          const label = readString(option, "label");
+          if (!label) return [];
+          return [{ label, description: readString(option, "description") ?? label }];
+        })
+      : [];
+    return [
+      {
+        id: String(index),
+        header: readString(value, "header") ?? `Question ${index + 1}`,
+        question,
+        options,
+        multiSelect: value.multiSelect === true,
+      },
+    ];
+  });
+}
+
+function supportsNativePiQuestionnaire(input: Record<string, unknown> | undefined): boolean {
+  if (!Array.isArray(input?.questions)) return false;
+  return input.questions.every((value) => {
+    if (!isRecord(value) || value.screenshotRequest !== undefined) return false;
+    if (!Array.isArray(value.options)) return false;
+    return value.options.every(
+      (option) => !isRecord(option) || readString(option, "preview") === undefined,
+    );
+  });
+}
+
+function matchesQuestionnairePrimitive(
+  rawEvent: Record<string, unknown>,
+  questionnaire: PiAskUserQuestionState,
+): boolean {
+  const question = questionnaire.questions[questionnaire.nextQuestionIndex];
+  if (!question) return false;
+  const expectedMethod =
+    question.options.length === 0 ? "input" : question.multiSelect ? "editor" : "select";
+  return (
+    readString(rawEvent, "method") === expectedMethod &&
+    readString(rawEvent, "title") === question.question
+  );
+}
+
+function questionnaireAnswerValue(
+  answers: ProviderUserInputAnswers,
+  question: UserInputQuestion,
+  method: string,
+): string | undefined {
+  const value = answers[question.id];
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    const labels = value.filter((entry): entry is string => typeof entry === "string");
+    return labels.length > 0
+      ? method === "editor"
+        ? JSON.stringify(labels)
+        : labels[0]
+      : undefined;
+  }
+  return undefined;
 }
 
 function stringifyForDetail(value: unknown): string | undefined {
@@ -1263,6 +1344,13 @@ function mapPiToolExecution(
   const toolName = readString(rawEvent, "toolName");
   const input = toolInputFromEvent(rawEvent);
   const state = toolCallStateForExecution(context, toolCallId, toolName, input);
+  if (rawEvent.type === "tool_execution_start" && state.toolName === "ask_user_question") {
+    context.askUserQuestion = undefined;
+    const questions = piAskUserQuestions(state.input);
+    if (questions.length > 0 && supportsNativePiQuestionnaire(state.input)) {
+      context.askUserQuestion = { toolCallId, questions, nextQuestionIndex: 0 };
+    }
+  }
   const itemType = toolItemType(state.toolName);
   const partialResult = rawEvent.partialResult;
   const result = rawEvent.result;
@@ -1313,6 +1401,7 @@ function mapPiToolExecution(
       }),
     });
     context.toolOutputByToolCallId.delete(toolCallId);
+    if (context.askUserQuestion?.toolCallId === toolCallId) context.askUserQuestion = undefined;
   }
   return events;
 }
@@ -1759,7 +1848,27 @@ function mapPiEvent(
       }
 
       if (isPiDialogMethod(method)) {
-        context.pendingUiRequests.set(ApprovalRequestId.make(id), { method });
+        const questionnaire = context.askUserQuestion;
+        const isQuestionnaireRequest =
+          isPiUserInputMethod(method) &&
+          questionnaire !== undefined &&
+          questionnaire.nextQuestionIndex === 0 &&
+          questionnaire.answers === undefined &&
+          matchesQuestionnairePrimitive(rawEvent, questionnaire);
+        context.pendingUiRequests.set(ApprovalRequestId.make(id), {
+          method,
+          ...(isQuestionnaireRequest ? { questionnaire: true } : {}),
+        });
+        if (isQuestionnaireRequest) {
+          return [
+            {
+              ...runtimeEventBase(context, rawEvent),
+              requestId: runtimeRequestId(id),
+              type: "user-input.requested",
+              payload: { questions: questionnaire.questions },
+            } satisfies ProviderRuntimeEvent,
+          ];
+        }
       }
       if (isPiUserInputMethod(method)) {
         const title = readString(rawEvent, "title") ?? "Pi input";
@@ -2165,6 +2274,43 @@ export const makePiAdapter = (
       );
     };
 
+    const autoRespondToQuestionnaireRequest = (
+      context: PiAdapterSessionContext,
+      rawEvent: unknown,
+    ) =>
+      Effect.gen(function* () {
+        if (!isRecord(rawEvent) || rawEvent.type !== "extension_ui_request") return false;
+        const id = readString(rawEvent, "id");
+        const method = readString(rawEvent, "method");
+        const questionnaire = context.askUserQuestion;
+        if (
+          !id ||
+          !method ||
+          !isPiUserInputMethod(method) ||
+          !questionnaire?.answers ||
+          !matchesQuestionnairePrimitive(rawEvent, questionnaire) ||
+          questionnaire.nextQuestionIndex >= questionnaire.questions.length
+        ) {
+          return false;
+        }
+        const question = questionnaire.questions[questionnaire.nextQuestionIndex];
+        if (!question) return false;
+        const value = questionnaireAnswerValue(questionnaire.answers, question, method);
+        yield* context.runtime
+          .notify(
+            value === undefined
+              ? { type: "extension_ui_response", id, cancelled: true }
+              : { type: "extension_ui_response", id, value },
+          )
+          .pipe(
+            Effect.mapError((error) =>
+              adapterError(context.threadId, "extension_ui_response", error),
+            ),
+          );
+        questionnaire.nextQuestionIndex += 1;
+        return true;
+      }).pipe(Effect.orElseSucceed(() => false));
+
     yield* Scope.addFinalizer(
       parentScope,
       Ref.get(sessionsRef).pipe(
@@ -2337,29 +2483,30 @@ export const makePiAdapter = (
                 stopped: false,
               };
               const eventFiber = yield* runtime.events.pipe(
-                Stream.runForEach(({ event }) => {
-                  const activeTurnIdBeforeEvent = context.activeTurnId;
-                  const mappedEvents = mapPiEvent(context, event);
-                  const interruptSettlement =
-                    isRecord(event) &&
-                    event.type === "agent_settled" &&
-                    context.interruptSettlement?.turnId === activeTurnIdBeforeEvent
-                      ? context.interruptSettlement
-                      : undefined;
-                  return Effect.forEach(mappedEvents, emitRuntimeEvent, {
-                    discard: true,
-                  }).pipe(
-                    Effect.andThen(
-                      interruptSettlement
-                        ? Deferred.succeed(interruptSettlement.deferred, undefined).pipe(
-                            Effect.ignore,
-                          )
-                        : Effect.void,
-                    ),
-                    Effect.andThen(scheduleUiRequestTimeout(context, event)),
-                    Effect.andThen(logNativeEvent(context, event)),
-                  );
-                }),
+                Stream.runForEach(({ event }) =>
+                  Effect.gen(function* () {
+                    if (yield* autoRespondToQuestionnaireRequest(context, event)) {
+                      yield* logNativeEvent(context, event);
+                      return;
+                    }
+                    const activeTurnIdBeforeEvent = context.activeTurnId;
+                    const mappedEvents = mapPiEvent(context, event);
+                    const interruptSettlement =
+                      isRecord(event) &&
+                      event.type === "agent_settled" &&
+                      context.interruptSettlement?.turnId === activeTurnIdBeforeEvent
+                        ? context.interruptSettlement
+                        : undefined;
+                    yield* Effect.forEach(mappedEvents, emitRuntimeEvent, { discard: true });
+                    if (interruptSettlement) {
+                      yield* Deferred.succeed(interruptSettlement.deferred, undefined).pipe(
+                        Effect.ignore,
+                      );
+                    }
+                    yield* scheduleUiRequestTimeout(context, event);
+                    yield* logNativeEvent(context, event);
+                  }),
+                ),
                 Effect.ensuring(cleanupEndedSession(context)),
                 Effect.forkIn(childScope),
               );
@@ -2556,7 +2703,11 @@ export const makePiAdapter = (
                     detail: `Unknown pending Pi user-input request: ${requestId}`,
                   });
                 }
-                const value = selectUserInputValue(answers, requestId);
+                const questionnaire = pending.questionnaire ? context.askUserQuestion : undefined;
+                const firstQuestion = questionnaire?.questions[0];
+                const value = firstQuestion
+                  ? questionnaireAnswerValue(answers, firstQuestion, pending.method)
+                  : selectUserInputValue(answers, requestId);
                 yield* context.runtime
                   .notify(
                     value === undefined
@@ -2569,6 +2720,10 @@ export const makePiAdapter = (
                     ),
                   );
                 context.pendingUiRequests.delete(requestId);
+                if (questionnaire) {
+                  questionnaire.answers = answers;
+                  questionnaire.nextQuestionIndex = 1;
+                }
                 yield* emitRuntimeEvent({
                   ...runtimeEventBase(context, {
                     type: "extension_ui_response",
@@ -2577,7 +2732,11 @@ export const makePiAdapter = (
                   requestId: runtimeRequestId(requestId),
                   type: "user-input.resolved",
                   payload: {
-                    answers: value === undefined ? {} : { [requestId]: value },
+                    answers: questionnaire
+                      ? answers
+                      : value === undefined
+                        ? {}
+                        : { [requestId]: value },
                   },
                 });
               }),

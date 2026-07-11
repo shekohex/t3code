@@ -1535,6 +1535,105 @@ it.effect("resolves Pi extension input only after its public UI response is acce
   ),
 );
 
+it.effect("presents Pi ask_user_question as one native questionnaire", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fake = yield* makeFakePiRuntime((command) =>
+        command.type === "get_state" ? Effect.succeed(initialState()) : Effect.succeed({}),
+      );
+      const adapter = yield* makeTestAdapter(() => Effect.succeed(fake.runtime));
+      const testThreadId = ThreadId.make("pi-questionnaire");
+
+      yield* adapter.startSession({ threadId: testThreadId, runtimeMode: "full-access" });
+      yield* nextRuntimeEvent(adapter);
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "ask-1",
+        toolName: "ask_user_question",
+        args: {
+          questions: [
+            {
+              question: "Pick path?",
+              header: "Path",
+              options: [
+                { label: "Fast", description: "Ship quickly" },
+                { label: "Safe", description: "Reduce risk" },
+              ],
+            },
+            {
+              question: "Pick checks?",
+              header: "Checks",
+              multiSelect: true,
+              options: [
+                { label: "Lint, format", description: "Run lint and format" },
+                { label: "Tests", description: "Run tests" },
+              ],
+            },
+          ],
+        },
+      });
+      yield* nextRuntimeEvent(adapter);
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "primitive-1",
+        method: "select",
+        title: "Pick path?",
+        options: ["Fast", "Safe", "Type something."],
+      });
+      const requested = yield* nextRuntimeEvent(adapter);
+
+      NodeAssert.equal(requested._tag, "Some");
+      if (requested._tag === "Some" && requested.value.type === "user-input.requested") {
+        NodeAssert.deepEqual(requested.value.payload.questions, [
+          {
+            id: "0",
+            header: "Path",
+            question: "Pick path?",
+            options: [
+              { label: "Fast", description: "Ship quickly" },
+              { label: "Safe", description: "Reduce risk" },
+            ],
+            multiSelect: false,
+          },
+          {
+            id: "1",
+            header: "Checks",
+            question: "Pick checks?",
+            options: [
+              { label: "Lint, format", description: "Run lint and format" },
+              { label: "Tests", description: "Run tests" },
+            ],
+            multiSelect: true,
+          },
+        ]);
+      }
+
+      yield* adapter.respondToUserInput(testThreadId, ApprovalRequestId.make("primitive-1"), {
+        "0": "Fast",
+        "1": ["Lint, format", "Tests"],
+      });
+      yield* nextRuntimeEvent(adapter);
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "primitive-2",
+        method: "editor",
+        title: "Pick checks?",
+        prefill: "",
+      });
+      yield* Effect.yieldNow;
+
+      NodeAssert.deepEqual(fake.notifications, [
+        { type: "extension_ui_response", id: "primitive-1", value: "Fast" },
+        {
+          type: "extension_ui_response",
+          id: "primitive-2",
+          value: '["Lint, format","Tests"]',
+        },
+      ]);
+    }),
+  ),
+);
+
 it.effect("rejects Pi accept-for-session confirmations without claiming native scope support", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1611,6 +1710,77 @@ it("preserves Pi input placeholders and editor prefill", () => {
       options: [],
       defaultValue: "## Changes\n",
     });
+  }
+});
+
+it("does not aggregate incompatible or unrelated Pi UI requests", () => {
+  const screenshotContext = __PiAdapterTestKit.makeContext({ threadId, turnId });
+  __PiAdapterTestKit.mapEvent(screenshotContext, {
+    type: "tool_execution_start",
+    toolCallId: "screenshot-question",
+    toolName: "ask_user_question",
+    args: {
+      questions: [
+        {
+          question: "Upload screenshot?",
+          header: "Screenshot",
+          screenshotRequest: { prompt: "Upload the broken screen" },
+          options: [],
+        },
+      ],
+    },
+  });
+  const screenshotRequest = __PiAdapterTestKit.mapEvent(screenshotContext, {
+    type: "extension_ui_request",
+    id: "screenshot-input",
+    method: "input",
+    title: "Upload screenshot?\n\nUpload via http://localhost/upload",
+  });
+
+  NodeAssert.equal(screenshotRequest[0]?.type, "user-input.requested");
+  if (screenshotRequest[0]?.type === "user-input.requested") {
+    NodeAssert.equal(screenshotRequest[0].payload.questions.length, 1);
+    NodeAssert.equal(
+      screenshotRequest[0].payload.questions[0]?.question,
+      "Upload screenshot?\n\nUpload via http://localhost/upload",
+    );
+  }
+
+  const interleavedContext = __PiAdapterTestKit.makeContext({ threadId, turnId });
+  __PiAdapterTestKit.mapEvent(interleavedContext, {
+    type: "tool_execution_start",
+    toolCallId: "ask-interleaved",
+    toolName: "ask_user_question",
+    args: {
+      questions: [
+        {
+          question: "Pick path?",
+          header: "Path",
+          options: [
+            { label: "Fast", description: "Ship quickly" },
+            { label: "Safe", description: "Reduce risk" },
+          ],
+        },
+      ],
+    },
+  });
+  const unrelatedRequest = __PiAdapterTestKit.mapEvent(interleavedContext, {
+    type: "extension_ui_request",
+    id: "unrelated-input",
+    method: "input",
+    title: "Extension API key",
+  });
+
+  NodeAssert.equal(unrelatedRequest[0]?.type, "user-input.requested");
+  if (unrelatedRequest[0]?.type === "user-input.requested") {
+    NodeAssert.deepEqual(unrelatedRequest[0].payload.questions, [
+      {
+        id: "unrelated-input",
+        header: "input",
+        question: "Extension API key",
+        options: [],
+      },
+    ]);
   }
 });
 
