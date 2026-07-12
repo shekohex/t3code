@@ -175,6 +175,7 @@ function buildProps() {
     latestTurn: null,
     runningTurnId: null,
     turnDiffSummaryByAssistantMessageId: new Map(),
+    turnDiffSummaryByTurnId: new Map(),
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
     revertTurnCountByUserMessageId: new Map(),
@@ -563,5 +564,73 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("lucide-x");
     expect(markup).toContain('aria-label="Tool call failed"');
+  });
+
+  it("renders a running spinner for an in-progress tool lifecycle entry", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnInProgress
+        latestTurn={{
+          turnId: "turn-1" as never,
+          state: "running",
+          startedAt: "2026-03-17T19:12:27.000Z",
+          completedAt: null,
+        }}
+        runningTurnId={"turn-1" as never}
+        timelineEntries={[
+          {
+            id: "entry-running",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-running",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              turnId: "turn-1" as never,
+              label: "Read file",
+              tone: "tool",
+              toolLifecycleStatus: "inProgress",
+              toolPreview: {
+                kind: "read",
+                path: "src/value.ts",
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain("Read file");
+  });
+
+  it("uses a native button with expansion state for expandable tool rows", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-command",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-command",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Ran command",
+              tone: "tool",
+              toolLifecycleStatus: "completed",
+              toolPreview: { kind: "command", command: "vp check" },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('type="button"');
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain('role="button"');
   });
 });

@@ -372,6 +372,7 @@ export function deriveMessagesTimelineRows(input: {
   isWorking: boolean;
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
+  turnDiffSummaryByTurnId?: ReadonlyMap<TurnId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
@@ -436,9 +437,16 @@ export function deriveMessagesTimelineRows(input: {
         groupedEntries.push(nextEntry.entry);
         cursor += 1;
       }
-      const visibleGroupedEntries = groupedEntries.filter(
-        (entry) => !workEntryIndicatesToolNeutralStatus(entry),
-      );
+      const visibleGroupedEntries = groupedEntries.filter((entry) => {
+        if (!workEntryIndicatesToolNeutralStatus(entry)) {
+          return true;
+        }
+        return (
+          entry.toolLifecycleStatus === "inProgress" &&
+          unsettledTurnId !== null &&
+          entry.turnId === unsettledTurnId
+        );
+      });
       if (visibleGroupedEntries.length > 0) {
         if (visibleGroupedEntries.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {
           nextRows.push({
@@ -515,7 +523,10 @@ export function deriveMessagesTimelineRows(input: {
       assistantCopyStreaming: timelineEntry.message.streaming || assistantTurnStillInProgress,
       assistantTurnDiffSummary:
         timelineEntry.message.role === "assistant"
-          ? input.turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
+          ? (input.turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id) ??
+            (showAssistantMeta && timelineEntry.message.turnId
+              ? input.turnDiffSummaryByTurnId?.get(timelineEntry.message.turnId)
+              : undefined))
           : undefined,
       revertTurnCount:
         timelineEntry.message.role === "user"

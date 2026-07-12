@@ -627,13 +627,12 @@ it("buffers Pi tool-call JSON deltas until execution starts", () => {
   NodeAssert.equal(started?.type, "item.started");
   const payload = started?.payload;
   NodeAssert.equal(payload?.itemType, "command_execution");
-  NodeAssert.equal(payload?.detail, "Runs quality checks");
-  NodeAssert.deepEqual(payload?.data, {
-    toolCallId: "call-1",
-    toolName: "bash",
-    command: "vp check",
-    input: { command: "vp check", description: "Runs quality checks" },
-  });
+  NodeAssert.equal(payload?.title, "Ran command");
+  NodeAssert.equal(payload?.detail, "vp check");
+  NodeAssert.equal(payload?.toolCallId, "call-1");
+  NodeAssert.equal(payload?.toolName, "bash");
+  NodeAssert.deepEqual(payload?.toolPreview, { kind: "command", command: "vp check" });
+  NodeAssert.equal(payload?.data, undefined);
 
   NodeAssert.equal(executionUpdate.length, 1);
   NodeAssert.equal(executionUpdate[0]?.type, "content.delta");
@@ -647,15 +646,12 @@ it("buffers Pi tool-call JSON deltas until execution starts", () => {
   const completed = executionEnd[0];
   NodeAssert.equal(completed?.type, "item.completed");
   NodeAssert.equal(completed?.itemId, started?.itemId);
-  NodeAssert.deepEqual(completed?.payload.data, {
-    toolCallId: "call-1",
-    toolName: "bash",
+  NodeAssert.deepEqual(completed?.payload.toolPreview, {
+    kind: "command",
     command: "vp check",
-    input: { command: "vp check", description: "Runs quality checks" },
-    result: { output: "check output" },
-    outputText: "check output",
-    isError: false,
+    output: "check output",
   });
+  NodeAssert.equal(completed?.payload.data, undefined);
 });
 
 it("uses distinct Pi tool lifecycle state when content indexes are reused", () => {
@@ -702,7 +698,7 @@ it("uses distinct Pi tool lifecycle state when content indexes are reused", () =
   NodeAssert.notEqual(first?.itemId, second?.itemId);
 });
 
-it("keeps Pi tool result content in structured payload", () => {
+it("keeps Pi tool result content in bounded canonical preview", () => {
   const context = __PiAdapterTestKit.makeContext({ threadId, turnId });
 
   const toolEnd = __PiAdapterTestKit.mapEvent(context, {
@@ -715,13 +711,12 @@ it("keeps Pi tool result content in structured payload", () => {
 
   const completed = toolEnd.find((event) => event.type === "item.completed");
   NodeAssert.equal(completed?.type, "item.completed");
-  NodeAssert.deepEqual(completed?.payload.data, {
-    toolCallId: "call-read",
-    toolName: "read",
-    result: { content: [{ type: "text", text: "file contents" }] },
-    outputText: "file contents",
-    isError: false,
+  NodeAssert.deepEqual(completed?.payload.toolPreview, {
+    kind: "read",
+    path: "Unknown path",
+    content: "file contents",
   });
+  NodeAssert.equal(completed?.payload.data, undefined);
 });
 
 it("maps Pi queue updates to session state details", () => {

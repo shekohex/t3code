@@ -17,7 +17,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -65,6 +64,8 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { ToolCallPreviewBody } from "./ToolCallPreviewBody";
+import { Spinner } from "../ui/spinner";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
@@ -132,6 +133,7 @@ interface TimelineRowSharedState {
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  turnDiffSummaryByTurnId: ReadonlyMap<TurnId, TurnDiffSummary>;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
 }
@@ -161,6 +163,7 @@ interface MessagesTimelineProps {
   latestTurn: TimelineLatestTurn | null;
   runningTurnId: TurnId | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
+  turnDiffSummaryByTurnId: Map<TurnId, TurnDiffSummary>;
   routeThreadKey: string;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
@@ -194,6 +197,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   latestTurn,
   runningTurnId,
   turnDiffSummaryByAssistantMessageId,
+  turnDiffSummaryByTurnId,
   routeThreadKey,
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
@@ -302,6 +306,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         isWorking,
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
+        turnDiffSummaryByTurnId,
         revertTurnCountByUserMessageId,
       }),
     [
@@ -313,6 +318,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       isWorking,
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
+      turnDiffSummaryByTurnId,
       revertTurnCountByUserMessageId,
     ],
   );
@@ -419,6 +425,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      turnDiffSummaryByTurnId,
       onToggleTurnFold,
       onToggleWorkGroup,
     }),
@@ -433,6 +440,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      turnDiffSummaryByTurnId,
       onToggleTurnFold,
       onToggleWorkGroup,
     ],
@@ -1113,18 +1121,15 @@ const WorkGroupSection = memo(function WorkGroupSection({
   groupedEntries: Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"];
 }) {
   const { workspaceRoot } = use(TimelineRowCtx);
-  const nonEmptyEntries = useMemo(
-    () => groupedEntries.filter((entry) => !workEntryIndicatesToolNeutralStatus(entry)),
-    [groupedEntries],
-  );
-  const onlyToolEntries = nonEmptyEntries.every((entry) => workLogEntryIsToolLike(entry));
+  const entries = groupedEntries;
+  const onlyToolEntries = entries.every((entry) => workLogEntryIsToolLike(entry));
   const groupLabel = onlyToolEntries
-    ? nonEmptyEntries.length === 1
+    ? entries.length === 1
       ? "1 tool call"
-      : `${nonEmptyEntries.length} tool calls`
+      : `${entries.length} tool calls`
     : "Work Log";
 
-  if (nonEmptyEntries.length === 0) return null;
+  if (entries.length === 0) return null;
 
   return (
     <section className="-mx-1 space-y-0.5 px-1 py-0.5" aria-label={groupLabel}>
@@ -1134,7 +1139,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
         </p>
       )}
       <div className="space-y-px">
-        {nonEmptyEntries.map((workEntry) => (
+        {entries.map((workEntry) => (
           <SimpleWorkEntryRow
             key={workEntry.id}
             workEntry={workEntry}
@@ -1850,6 +1855,19 @@ function buildToolCallExpandedBody(
 }
 
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
+  switch (workEntry.toolPreview?.kind) {
+    case "command":
+      return "terminal";
+    case "read":
+      return "eye";
+    case "file_change":
+      return "square-pen";
+    case "search":
+      return workEntry.itemType === "web_search" ? "globe" : "eye";
+    case "generic":
+    case undefined:
+      break;
+  }
   if (
     workEntry.sourceActivityKind === "user-input.requested" ||
     workEntry.sourceActivityKind === "user-input.resolved"
@@ -1895,7 +1913,49 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
   return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
 }
 
-const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
+function toolPreviewCanExpand(workEntry: TimelineWorkEntry): boolean {
+  const preview = workEntry.toolPreview;
+  if (!preview) return false;
+  switch (preview.kind) {
+    case "command":
+      return preview.command.length > 0 || Boolean(preview.output);
+    case "read":
+      return Boolean(preview.content);
+    case "file_change":
+      return (
+        preview.files.length > 0 ||
+        Boolean(preview.output) ||
+        Boolean(preview.unifiedDiff) ||
+        Boolean(preview.diffTruncated)
+      );
+    case "search":
+      return Boolean(preview.query || preview.path || preview.output);
+    case "generic":
+      return Boolean(preview.input || preview.output);
+  }
+}
+
+function ExpandedToolPreview(props: {
+  previewId: string;
+  preview: NonNullable<TimelineWorkEntry["toolPreview"]>;
+  turnId: TurnId | null;
+  workspaceRoot: string | undefined;
+}) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <ToolCallPreviewBody
+      previewId={props.previewId}
+      preview={props.preview}
+      turnId={props.turnId}
+      canOpenTurnDiff={
+        props.turnId !== null && ctx.turnDiffSummaryByTurnId.get(props.turnId)?.status === "ready"
+      }
+      workspaceRoot={props.workspaceRoot}
+      resolvedTheme={ctx.resolvedTheme}
+      onOpenTurnDiff={ctx.onOpenTurnDiff}
+    />
+  );
+}
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
@@ -1916,8 +1976,10 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       ? null
       : rawPreview;
   const displayText = preview ? `${heading} - ${preview}` : heading;
-  const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
-  const canExpand = expandedBody !== null;
+  const expandedBody = workEntry.toolPreview
+    ? null
+    : buildToolCallExpandedBody(workEntry, workspaceRoot);
+  const canExpand = toolPreviewCanExpand(workEntry) || expandedBody !== null;
   const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle =
     showFailedIndicator &&
@@ -1942,114 +2004,123 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const showSuccessIndicator =
     workEntryIndicatesToolSuccess(workEntry) ||
     (turnSettled && workEntryIndicatesToolNeutralStatus(workEntry));
-  const rowToggleProps = canExpand
-    ? {
-        role: "button" as const,
-        tabIndex: 0 as const,
-        "aria-label": displayText,
-        onClick: () => setExpanded((v) => !v),
-        onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setExpanded((v) => !v);
-          }
-        },
-      }
-    : {};
-
-  return (
-    <div
-      className={cn(
-        "flex flex-col rounded-md px-0.5 py-0.5 transition-colors",
-        canExpand &&
-          "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
-      )}
-      {...rowToggleProps}
-    >
-      <div className="flex select-none items-center gap-1.5 transition-[opacity,translate] duration-200">
-        <span className={iconWrapperClass}>
-          <WorkEntryIconSvg
-            name={entryIconName}
-            className="block size-3.5 shrink-0 stroke-[1.8] opacity-80"
-          />
-        </span>
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          <div className="min-w-0 flex-1 overflow-hidden">
-            <p className="flex min-w-0 w-full items-baseline gap-1.5 text-[12px] leading-5">
-              <span className={cn("min-w-0 shrink truncate", headingClass)}>{heading}</span>
-              {preview && (
-                <span className="min-w-0 flex-1 truncate text-muted-foreground/55">{preview}</span>
-              )}
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-px text-muted-foreground/55">
-            <span
-              className="flex size-4 shrink-0 items-center justify-center"
-              aria-hidden={!canExpand}
-            >
-              {canExpand ? (
-                <ChevronDownIcon
-                  className={cn(
-                    "size-3 shrink-0 opacity-70 transition-transform duration-200",
-                    expanded && "rotate-180",
-                  )}
-                  aria-hidden
-                />
-              ) : null}
-            </span>
-            <span className="flex size-4 shrink-0 items-center justify-center">
-              {showFailedIndicator ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span
-                        className="flex size-4 items-center justify-center"
-                        aria-label="Tool call failed"
-                      />
-                    }
-                  >
-                    <XIcon className="block size-3 shrink-0 text-destructive" aria-hidden />
-                  </TooltipTrigger>
-                  <TooltipPopup>Failed</TooltipPopup>
-                </Tooltip>
-              ) : showSuccessIndicator ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={<span className="flex size-4 items-center justify-center" />}
-                  >
-                    <span className="inline-flex size-4 items-center justify-center">
-                      <CheckIcon
-                        className="block size-3 shrink-0 stroke-current"
-                        stroke="currentColor"
-                        aria-hidden
-                      />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipPopup>Completed</TooltipPopup>
-                </Tooltip>
-              ) : showNeutralIndicator ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={<span className="flex size-4 items-center justify-center" />}
-                  >
-                    <MinusIcon className="block size-3 shrink-0 opacity-70" aria-hidden />
-                  </TooltipTrigger>
-                  <TooltipPopup>Empty</TooltipPopup>
-                </Tooltip>
-              ) : null}
-            </span>
-          </div>
+  const showRunningIndicator =
+    workEntry.toolLifecycleStatus === "inProgress" && activity.activeTurnInProgress;
+  const headerContent = (
+    <>
+      <span className={iconWrapperClass}>
+        <WorkEntryIconSvg
+          name={entryIconName}
+          className="block size-3.5 shrink-0 stroke-[1.8] opacity-80"
+        />
+      </span>
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <p className="flex min-w-0 w-full items-baseline gap-1.5 text-[12px] leading-5">
+            <span className={cn("min-w-0 shrink truncate", headingClass)}>{heading}</span>
+            {preview && (
+              <span className="min-w-0 flex-1 truncate text-muted-foreground/55">{preview}</span>
+            )}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-px text-muted-foreground/55">
+          <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden>
+            {canExpand ? (
+              <ChevronDownIcon
+                className={cn(
+                  "size-3 shrink-0 opacity-70 transition-transform duration-200",
+                  expanded && "rotate-180",
+                )}
+                aria-hidden
+              />
+            ) : null}
+          </span>
+          <span className="flex size-4 shrink-0 items-center justify-center">
+            {showRunningIndicator ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={<span className="flex size-4 items-center justify-center" />}
+                >
+                  <Spinner aria-label="Running" className="size-3" />
+                </TooltipTrigger>
+                <TooltipPopup>Running</TooltipPopup>
+              </Tooltip>
+            ) : showFailedIndicator ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      className="flex size-4 items-center justify-center"
+                      aria-label="Tool call failed"
+                    />
+                  }
+                >
+                  <XIcon className="block size-3 shrink-0 text-destructive" aria-hidden />
+                </TooltipTrigger>
+                <TooltipPopup>Failed</TooltipPopup>
+              </Tooltip>
+            ) : showSuccessIndicator ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={<span className="flex size-4 items-center justify-center" />}
+                >
+                  <span className="inline-flex size-4 items-center justify-center">
+                    <CheckIcon
+                      className="block size-3 shrink-0 stroke-current"
+                      stroke="currentColor"
+                      aria-hidden
+                    />
+                  </span>
+                </TooltipTrigger>
+                <TooltipPopup>Completed</TooltipPopup>
+              </Tooltip>
+            ) : showNeutralIndicator ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={<span className="flex size-4 items-center justify-center" />}
+                >
+                  <MinusIcon className="block size-3 shrink-0 opacity-70" aria-hidden />
+                </TooltipTrigger>
+                <TooltipPopup>Empty</TooltipPopup>
+              </Tooltip>
+            ) : null}
+          </span>
         </div>
       </div>
-      {expanded && canExpand && expandedBody ? (
-        <div
-          className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"
-          onClick={stopRowToggle}
-          onPointerDown={stopRowToggle}
+    </>
+  );
+
+  return (
+    <div className="flex flex-col rounded-md px-0.5 py-0.5">
+      {canExpand ? (
+        <button
+          type="button"
+          aria-label={displayText}
+          aria-expanded={expanded}
+          className="flex w-full cursor-pointer select-none items-center gap-1.5 rounded-md text-left transition-[background-color,opacity,translate] duration-200 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+          onClick={() => setExpanded((value) => !value)}
         >
-          <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground select-text">
-            {expandedBody}
-          </pre>
+          {headerContent}
+        </button>
+      ) : (
+        <div className="flex select-none items-center gap-1.5 transition-[opacity,translate] duration-200">
+          {headerContent}
+        </div>
+      )}
+      {expanded && canExpand ? (
+        <div className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5">
+          {workEntry.toolPreview ? (
+            <ExpandedToolPreview
+              previewId={workEntry.id}
+              preview={workEntry.toolPreview}
+              turnId={workEntry.turnId ?? null}
+              workspaceRoot={workspaceRoot}
+            />
+          ) : expandedBody ? (
+            <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground select-text">
+              {expandedBody}
+            </pre>
+          ) : null}
         </div>
       ) : null}
     </div>

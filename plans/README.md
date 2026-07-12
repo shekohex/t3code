@@ -1,8 +1,9 @@
 # Advisor Artifacts
 
-| File                                                     | Status                  | Scope                                   |
-| -------------------------------------------------------- | ----------------------- | --------------------------------------- |
-| [000-pi-agent-rpc-audit.md](./000-pi-agent-rpc-audit.md) | Remediation in progress | Pi Agent RPC integration at `0de374b28` |
+| File                                                                       | Status                  | Scope                                   |
+| -------------------------------------------------------------------------- | ----------------------- | --------------------------------------- |
+| [000-pi-agent-rpc-audit.md](./000-pi-agent-rpc-audit.md)                   | Remediation in progress | Pi Agent RPC integration at `0de374b28` |
+| [001-pi-tool-call-preview-parity.md](./001-pi-tool-call-preview-parity.md) | Implemented             | Rich, bounded Pi tool-call previews     |
 
 This directory contains audit artifacts and remediation tracking.
 

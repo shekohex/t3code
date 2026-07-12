@@ -1,5 +1,6 @@
 import * as Option from "effect/Option";
 import * as Arr from "effect/Array";
+import * as Schema from "effect/Schema";
 import {
   ApprovalRequestId,
   isToolLifecycleItemType,
@@ -10,8 +11,10 @@ import {
   type ToolLifecycleItemType,
   type UserInputQuestion,
   type ThreadId,
+  ToolCallPreview,
   type TurnId,
 } from "@t3tools/contracts";
+import { deriveToolPreviewPresentation } from "@t3tools/shared/toolActivity";
 
 import type {
   ChatMessage,
@@ -23,6 +26,7 @@ import type {
 } from "./types";
 
 export type ProviderPickerKind = ProviderDriverKind;
+const isToolCallPreview = Schema.is(ToolCallPreview);
 
 export const PROVIDER_OPTIONS: Array<{
   value: ProviderPickerKind;
@@ -71,6 +75,8 @@ export interface WorkLogEntry {
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
+  toolName?: string;
+  toolPreview?: ToolCallPreview;
   toolData?: unknown;
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
@@ -84,6 +90,7 @@ interface DerivedWorkLogEntry extends WorkLogEntry {
   activityKind: OrchestrationThreadActivity["kind"];
   collapseKey?: string;
   toolCallId?: string;
+  startedLifecycle?: boolean;
 }
 
 export interface PendingApproval {
@@ -635,15 +642,21 @@ export function deriveWorkLogEntries(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
-    if (activity.kind === "tool.started") continue;
     if (activity.kind === "task.started") continue;
     if (activity.kind === "context-window.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
-    entries.push(toDerivedWorkLogEntry(activity));
+    const entry = toDerivedWorkLogEntry(activity);
+    if (activity.kind === "tool.started" && !entry.toolCallId) continue;
+    entries.push(entry);
   }
   return collapseDerivedWorkLogEntries(entries).map((entry) => {
-    const { activityKind, collapseKey: _collapseKey, ...rest } = entry;
+    const {
+      activityKind,
+      collapseKey: _collapseKey,
+      startedLifecycle: _startedLifecycle,
+      ...rest
+    } = entry;
     return Object.assign(rest, { sourceActivityKind: activityKind });
   });
 }
@@ -684,8 +697,15 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     activity.payload && typeof activity.payload === "object"
       ? (activity.payload as Record<string, unknown>)
       : null;
-  const commandPreview = extractToolCommand(payload);
-  const changedFiles = extractChangedFiles(payload);
+  const toolPreview = extractToolPreview(payload);
+  const commandPreview =
+    toolPreview?.kind === "command"
+      ? { command: toolPreview.command, rawCommand: null }
+      : extractToolCommand(payload);
+  const changedFiles =
+    toolPreview?.kind === "file_change"
+      ? toolPreview.files.map((file) => file.path)
+      : extractChangedFiles(payload);
   const title = extractToolTitle(payload);
   const isTaskActivity = activity.kind === "task.progress" || activity.kind === "task.completed";
   const taskSummary =
@@ -700,6 +720,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? payload.detail
       : null;
   const taskLabel = taskSummary || taskDetailAsLabel;
+  const previewDetail = toolPreview
+    ? (deriveToolPreviewPresentation(toolPreview).detail ?? null)
+    : null;
   const detail = isTaskActivity
     ? !taskDetailAsLabel &&
       payload &&
@@ -707,7 +730,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       payload.detail.length > 0
       ? stripTrailingExitCode(payload.detail).output
       : null
-    : extractToolDetail(payload, title ?? activity.summary);
+    : (previewDetail ?? extractToolDetail(payload, title ?? activity.summary));
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
@@ -721,6 +744,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
           ? "info"
           : activity.tone,
     activityKind: activity.kind,
+    ...(activity.kind === "tool.started" ? { startedLifecycle: true } : {}),
   };
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
@@ -738,6 +762,13 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (title) {
     entry.toolTitle = title;
+  }
+  const toolName = asTrimmedString(payload?.toolName);
+  if (toolName) {
+    entry.toolName = toolName;
+  }
+  if (toolPreview) {
+    entry.toolPreview = toolPreview;
   }
   if (itemType === "mcp_tool_call") {
     const data = asRecord(payload?.data);
@@ -772,7 +803,26 @@ function collapseDerivedWorkLogEntries(
   entries: ReadonlyArray<DerivedWorkLogEntry>,
 ): DerivedWorkLogEntry[] {
   const collapsed: DerivedWorkLogEntry[] = [];
+  const collapseIndexByKey = new Map<string, number>();
   for (const entry of entries) {
+    if (entry.toolCallId && entry.collapseKey) {
+      const existingIndex = collapseIndexByKey.get(entry.collapseKey);
+      if (existingIndex !== undefined) {
+        const previous = collapsed[existingIndex];
+        if (previous) {
+          if (toolLifecycleIsTerminal(previous) && !toolLifecycleIsTerminal(entry)) {
+            collapseIndexByKey.set(entry.collapseKey, collapsed.length);
+            collapsed.push(entry);
+          } else {
+            collapsed[existingIndex] = mergeDerivedWorkLogEntries(previous, entry);
+          }
+        }
+        continue;
+      }
+      collapseIndexByKey.set(entry.collapseKey, collapsed.length);
+      collapsed.push(entry);
+      continue;
+    }
     const previous = collapsed.at(-1);
     if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
       collapsed[collapsed.length - 1] = mergeDerivedWorkLogEntries(previous, entry);
@@ -787,10 +837,10 @@ function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
-  if (previous.activityKind !== "tool.updated" && previous.activityKind !== "tool.completed") {
+  if (!isToolActivityKind(previous.activityKind)) {
     return false;
   }
-  if (next.activityKind !== "tool.updated" && next.activityKind !== "tool.completed") {
+  if (!isToolActivityKind(next.activityKind)) {
     return false;
   }
   if (previous.activityKind === "tool.completed") {
@@ -822,10 +872,15 @@ function mergeDerivedWorkLogEntries(
   const collapseKey = next.collapseKey ?? previous.collapseKey;
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
+  const startedLifecycle = previous.startedLifecycle || next.startedLifecycle;
+  const toolName = next.toolName ?? previous.toolName;
+  const toolPreview = next.toolPreview ?? previous.toolPreview;
   const toolData = next.toolData ?? previous.toolData;
   return {
     ...previous,
     ...next,
+    id: startedLifecycle ? previous.id : next.id,
+    createdAt: previous.createdAt,
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
@@ -836,6 +891,9 @@ function mergeDerivedWorkLogEntries(
     ...(collapseKey ? { collapseKey } : {}),
     ...(toolCallId ? { toolCallId } : {}),
     ...(toolLifecycleStatus !== undefined ? { toolLifecycleStatus } : {}),
+    ...(startedLifecycle ? { startedLifecycle: true } : {}),
+    ...(toolName ? { toolName } : {}),
+    ...(toolPreview !== undefined ? { toolPreview } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
   };
 }
@@ -852,11 +910,11 @@ function mergeChangedFiles(
 }
 
 function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
-  if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
+  if (!isToolActivityKind(entry.activityKind)) {
     return undefined;
   }
   if (entry.toolCallId) {
-    return `tool:${entry.toolCallId}`;
+    return `tool:${entry.turnId ?? "none"}:${entry.toolCallId}`;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";
@@ -865,6 +923,20 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
     return undefined;
   }
   return [itemType, normalizedLabel, detail].join("\u001f");
+}
+
+function isToolActivityKind(kind: OrchestrationThreadActivity["kind"]): boolean {
+  return kind === "tool.started" || kind === "tool.updated" || kind === "tool.completed";
+}
+
+function toolLifecycleIsTerminal(entry: DerivedWorkLogEntry): boolean {
+  return (
+    entry.activityKind === "tool.completed" ||
+    entry.toolLifecycleStatus === "completed" ||
+    entry.toolLifecycleStatus === "failed" ||
+    entry.toolLifecycleStatus === "declined" ||
+    entry.toolLifecycleStatus === "stopped"
+  );
 }
 
 function normalizeCompactToolLabel(value: string): string {
@@ -1087,8 +1159,16 @@ function extractToolTitle(payload: Record<string, unknown> | null): string | nul
 }
 
 function extractToolCallId(payload: Record<string, unknown> | null): string | null {
+  const canonicalToolCallId = asTrimmedString(payload?.toolCallId);
+  if (canonicalToolCallId) {
+    return canonicalToolCallId;
+  }
   const data = asRecord(payload?.data);
   return asTrimmedString(data?.toolCallId);
+}
+
+function extractToolPreview(payload: Record<string, unknown> | null): ToolCallPreview | undefined {
+  return isToolCallPreview(payload?.toolPreview) ? payload.toolPreview : undefined;
 }
 
 function normalizeInlinePreview(value: string): string {

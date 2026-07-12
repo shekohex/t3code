@@ -295,8 +295,7 @@ const make = Effect.gen(function* () {
       input.assistantMessageId ??
       input.thread.messages
         .toReversed()
-        .find((entry) => entry.role === "assistant" && entry.turnId === input.turnId)?.id ??
-      MessageId.make(`assistant:${input.turnId}`);
+        .find((entry) => entry.role === "assistant" && entry.turnId === input.turnId)?.id;
 
     yield* orchestrationEngine.dispatch({
       type: "thread.turn.diff.complete",
@@ -307,7 +306,7 @@ const make = Effect.gen(function* () {
       checkpointRef: targetCheckpointRef,
       status: input.status,
       files,
-      assistantMessageId,
+      ...(assistantMessageId ? { assistantMessageId } : {}),
       checkpointTurnCount: input.turnCount,
       createdAt: input.createdAt,
     });

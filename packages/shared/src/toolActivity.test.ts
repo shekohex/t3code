@@ -54,4 +54,12 @@ describe("toolActivity", () => {
       summary: "Read file",
     });
   });
+
+  it("reuses canonical preview presentation", () => {
+    expect(
+      deriveToolActivityPresentation({
+        toolPreview: { kind: "read", path: "src/main.ts" },
+      }),
+    ).toEqual({ summary: "Read file", detail: "src/main.ts" });
+  });
 });

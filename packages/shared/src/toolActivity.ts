@@ -1,4 +1,4 @@
-import type { ToolLifecycleItemType } from "@t3tools/contracts";
+import type { ToolCallPreview, ToolLifecycleItemType } from "@t3tools/contracts";
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -189,11 +189,39 @@ export interface ToolActivityPresentationInput {
   readonly detail?: string | null | undefined;
   readonly data?: unknown;
   readonly fallbackSummary?: string | null | undefined;
+  readonly toolPreview?: ToolCallPreview | undefined;
 }
 
 export interface ToolActivityPresentation {
   readonly summary: string;
   readonly detail?: string | undefined;
+}
+
+export function deriveToolPreviewPresentation(
+  toolPreview: ToolCallPreview,
+): ToolActivityPresentation {
+  switch (toolPreview.kind) {
+    case "command":
+      return { summary: "Ran command", detail: toolPreview.command };
+    case "read":
+      return { summary: "Read file", detail: toolPreview.path };
+    case "file_change":
+      return {
+        summary: "Changed files",
+        ...((toolPreview.files[0]?.path ?? toolPreview.output)
+          ? { detail: toolPreview.files[0]?.path ?? toolPreview.output }
+          : {}),
+      };
+    case "search":
+      return {
+        summary: "Searched files",
+        ...((toolPreview.query ?? toolPreview.path)
+          ? { detail: toolPreview.query ?? toolPreview.path }
+          : {}),
+      };
+    case "generic":
+      return { summary: toolPreview.toolName };
+  }
 }
 
 export function deriveToolActivityPresentation(
@@ -203,6 +231,9 @@ export function deriveToolActivityPresentation(
   const detail = stripTrailingExitCode(asTrimmedString(input.detail));
   const fallbackSummary = asTrimmedString(input.fallbackSummary) ?? "Tool";
   const data = asRecord(input.data);
+  if (input.toolPreview) {
+    return deriveToolPreviewPresentation(input.toolPreview);
+  }
   const command = extractToolCommand(data, title);
   const primaryPath = extractPrimaryPath(data);
   const action = classifyToolAction({

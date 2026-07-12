@@ -67,6 +67,12 @@ import {
   type PiRpcRuntimeShape,
 } from "../piRpcRuntime.ts";
 import { buildPiEnvironment, splitPiLaunchArgs } from "../piAgentRuntimeConfig.ts";
+import {
+  canonicalPiToolCallId,
+  classifyPiToolItemType,
+  extractPiToolOutputText as extractToolOutputText,
+  projectPiToolCall,
+} from "../piToolCallPreview.ts";
 import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = ProviderDriverKind.make("piAgent");
@@ -297,16 +303,6 @@ function questionnaireAnswerValue(
       : undefined;
   }
   return undefined;
-}
-
-function stringifyForDetail(value: unknown): string | undefined {
-  if (typeof value === "string") return value.trim() || undefined;
-  if (value === undefined || value === null) return undefined;
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return undefined;
-  }
 }
 
 function trimDetail(value: string | undefined): string | undefined {
@@ -587,103 +583,6 @@ function runtimeEventBase(
   } as Omit<ProviderRuntimeEvent, "type" | "payload">;
 }
 
-function toolItemType(toolName: string | undefined): CanonicalItemType {
-  const normalized = toolName?.toLowerCase() ?? "";
-  if (!normalized) return "dynamic_tool_call";
-  if (
-    normalized.includes("bash") ||
-    normalized.includes("shell") ||
-    normalized.includes("command") ||
-    normalized.includes("terminal")
-  ) {
-    return "command_execution";
-  }
-  if (
-    normalized.includes("edit") ||
-    normalized.includes("write") ||
-    normalized.includes("patch") ||
-    normalized.includes("apply_patch") ||
-    normalized.includes("create") ||
-    normalized.includes("delete") ||
-    normalized.includes("replace")
-  ) {
-    return "file_change";
-  }
-  if (normalized.includes("mcp")) return "mcp_tool_call";
-  if (normalized.includes("web")) return "web_search";
-  if (normalized.includes("image")) return "image_view";
-  if (
-    normalized.includes("agent") ||
-    normalized.includes("subagent") ||
-    normalized.includes("sub-agent") ||
-    normalized === "task"
-  ) {
-    return "collab_agent_tool_call";
-  }
-  return "dynamic_tool_call";
-}
-
-function toolTitle(itemType: CanonicalItemType, toolName: string | undefined): string {
-  switch (itemType) {
-    case "command_execution":
-      return "Command run";
-    case "file_change":
-      return "File change";
-    case "mcp_tool_call":
-      return "MCP tool call";
-    case "collab_agent_tool_call":
-      return "Subagent task";
-    case "web_search":
-      return "Web search";
-    case "image_view":
-      return "Image view";
-    case "dynamic_tool_call":
-      return toolName ?? "Tool call";
-    default:
-      return toolName ?? "Tool";
-  }
-}
-
-function summarizeToolInput(
-  toolName: string | undefined,
-  input: Record<string, unknown> | undefined,
-): string | undefined {
-  if (!input) return toolName;
-  const normalized = toolName?.toLowerCase() ?? "";
-  const command = readString(input, "command") ?? readString(input, "cmd");
-  const description = readString(input, "description") ?? readString(input, "summary");
-  if (command) {
-    return description ?? `${toolName ?? "command"}: ${command}`;
-  }
-
-  const path =
-    readString(input, "path") ?? readString(input, "file") ?? readString(input, "filePath");
-  const pattern = readString(input, "pattern") ?? readString(input, "query");
-  const offset = readNumber(input, "offset");
-  const limit = readNumber(input, "limit");
-
-  if (normalized === "read" || normalized.includes("read")) {
-    const range = [
-      offset === undefined ? undefined : `offset ${offset}`,
-      limit === undefined ? undefined : `limit ${limit}`,
-    ]
-      .filter((part): part is string => part !== undefined)
-      .join(", ");
-    return [toolName ?? "read", path, range ? `(${range})` : undefined].filter(Boolean).join(" ");
-  }
-  if (normalized.includes("grep") || normalized.includes("find") || normalized.includes("search")) {
-    return [toolName, pattern, path ? `in ${path}` : undefined].filter(Boolean).join(" ");
-  }
-  if (normalized === "ls" || normalized.includes("list")) {
-    return [toolName ?? "ls", path].filter(Boolean).join(" ");
-  }
-  if (normalized.includes("edit") || normalized.includes("write") || normalized.includes("patch")) {
-    return [toolName, path].filter(Boolean).join(" ");
-  }
-
-  return `${toolName ?? "tool"}: ${stringifyForDetail(input) ?? "{}"}`;
-}
-
 function toolInputFromEvent(
   rawEvent: Record<string, unknown>,
 ): Record<string, unknown> | undefined {
@@ -691,29 +590,6 @@ function toolInputFromEvent(
     readRecord(rawEvent, "args") ??
     readRecord(rawEvent, "arguments") ??
     readRecord(rawEvent, "input")
-  );
-}
-
-function extractToolOutputText(value: unknown): string | undefined {
-  if (typeof value === "string") return value;
-  if (!isRecord(value)) return undefined;
-  if (Array.isArray(value.content)) {
-    const contentText = value.content
-      .flatMap((entry): string[] => {
-        if (!isRecord(entry)) return [];
-        const text = readString(entry, "text");
-        return text ? [text] : [];
-      })
-      .join("");
-    if (contentText.length > 0) return contentText;
-  }
-  return (
-    readString(value, "output") ??
-    readString(value, "stdout") ??
-    readString(value, "stderr") ??
-    readString(value, "text") ??
-    readString(value, "message") ??
-    readString(value, "content")
   );
 }
 
@@ -1099,7 +975,8 @@ function hasReasoningSnapshotForContentIndex(
 }
 
 function toolCallIdFromToolCall(toolCall: Record<string, unknown> | undefined): string | undefined {
-  return toolCall ? readString(toolCall, "id") : undefined;
+  const toolCallId = toolCall ? readString(toolCall, "id") : undefined;
+  return toolCallId ? canonicalPiToolCallId(toolCallId) : undefined;
 }
 
 function toolNameFromToolCall(toolCall: Record<string, unknown> | undefined): string | undefined {
@@ -1196,35 +1073,20 @@ function toolPayload(input: {
   readonly status: "inProgress" | "completed" | "failed";
   readonly partialResult?: unknown;
   readonly result?: unknown;
-  readonly isError?: boolean;
 }) {
-  const itemType = toolItemType(input.toolName);
-  const command =
-    itemType === "command_execution" && input.input
-      ? (readString(input.input, "command") ?? readString(input.input, "cmd"))
-      : undefined;
-  const detail = trimDetail(
-    summarizeToolInput(input.toolName, input.input) ??
-      extractToolOutputText(input.result) ??
-      extractToolOutputText(input.partialResult),
-  );
-  const outputText =
-    extractToolOutputText(input.result) ?? extractToolOutputText(input.partialResult);
+  const projection = projectPiToolCall({
+    toolName: input.toolName,
+    args: input.input,
+    result: input.result ?? input.partialResult,
+  });
   return {
-    itemType,
+    itemType: projection.itemType,
     status: input.status,
-    title: toolTitle(itemType, input.toolName),
-    ...(detail ? { detail } : {}),
-    data: {
-      ...(input.toolCallId ? { toolCallId: input.toolCallId } : {}),
-      ...(input.toolName ? { toolName: input.toolName } : {}),
-      ...(command ? { command } : {}),
-      ...(input.input ? { input: input.input } : {}),
-      ...(input.partialResult !== undefined ? { partialResult: input.partialResult } : {}),
-      ...(input.result !== undefined ? { result: input.result } : {}),
-      ...(outputText !== undefined ? { outputText } : {}),
-      ...(input.isError !== undefined ? { isError: input.isError } : {}),
-    },
+    title: projection.title,
+    ...(projection.detail ? { detail: projection.detail } : {}),
+    ...(input.toolCallId ? { toolCallId: input.toolCallId } : {}),
+    toolName: projection.toolName,
+    toolPreview: projection.toolPreview,
   } satisfies ProviderRuntimeEvent["payload"];
 }
 
@@ -1356,7 +1218,9 @@ function mapPiToolExecution(
   context: PiAdapterSessionContext,
   rawEvent: Record<string, unknown>,
 ): ReadonlyArray<ProviderRuntimeEvent> {
-  const toolCallId = readString(rawEvent, "toolCallId") ?? NodeCrypto.randomUUID();
+  const toolCallId = canonicalPiToolCallId(
+    readString(rawEvent, "toolCallId") ?? NodeCrypto.randomUUID(),
+  );
   const toolName = readString(rawEvent, "toolName");
   const input = toolInputFromEvent(rawEvent);
   const state = toolCallStateForExecution(context, toolCallId, toolName, input);
@@ -1372,7 +1236,7 @@ function mapPiToolExecution(
       };
     }
   }
-  const itemType = toolItemType(state.toolName);
+  const itemType = classifyPiToolItemType(state.toolName);
   const partialResult = rawEvent.partialResult;
   const result = rawEvent.result;
   const outputText = extractToolOutputText(partialResult) ?? extractToolOutputText(result);
@@ -1418,7 +1282,6 @@ function mapPiToolExecution(
         input: state.input,
         status: rawEvent.isError ? "failed" : "completed",
         result,
-        ...(typeof rawEvent.isError === "boolean" ? { isError: rawEvent.isError } : {}),
       }),
     });
     context.toolOutputByToolCallId.delete(toolCallId);

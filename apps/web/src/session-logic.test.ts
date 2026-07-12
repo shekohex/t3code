@@ -734,24 +734,197 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
-  it("omits tool started entries and keeps completed entries", () => {
+  it("collapses tool started and completed entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "tool-complete",
         createdAt: "2026-02-23T00:00:03.000Z",
         summary: "Tool call complete",
         kind: "tool.completed",
+        turnId: "turn-1",
+        payload: { toolCallId: "call-1", status: "completed" },
       }),
       makeActivity({
         id: "tool-start",
         createdAt: "2026-02-23T00:00:02.000Z",
         summary: "Tool call",
         kind: "tool.started",
+        turnId: "turn-1",
+        payload: { toolCallId: "call-1", status: "inProgress" },
       }),
     ];
 
     const entries = deriveWorkLogEntries(activities);
-    expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
+    expect(entries.map((entry) => entry.id)).toEqual(["tool-start"]);
+    expect(entries[0]?.createdAt).toBe("2026-02-23T00:00:02.000Z");
+    expect(entries[0]?.toolLifecycleStatus).toBe("completed");
+  });
+
+  it("keeps legacy provider starts hidden without canonical tool identity", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "legacy-start",
+        kind: "tool.started",
+        summary: "Command started",
+        payload: { itemType: "command_execution", status: "inProgress" },
+      }),
+      makeActivity({
+        id: "legacy-complete",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: { itemType: "command_execution", status: "completed" },
+      }),
+    ]);
+
+    expect(entries.map((entry) => entry.id)).toEqual(["legacy-complete"]);
+  });
+
+  it("collapses interleaved parallel tool lifecycles by turn and tool call id", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "start-a",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        turnId: "turn-1",
+        payload: { toolCallId: "call-a", status: "inProgress" },
+      }),
+      makeActivity({
+        id: "start-b",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.started",
+        turnId: "turn-1",
+        payload: { toolCallId: "call-b", status: "inProgress" },
+      }),
+      makeActivity({
+        id: "complete-a",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        turnId: "turn-1",
+        payload: { toolCallId: "call-a", status: "completed" },
+      }),
+      makeActivity({
+        id: "complete-b",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "tool.completed",
+        turnId: "turn-1",
+        payload: { toolCallId: "call-b", status: "failed" },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(["start-a", "start-b"]);
+    expect(entries.map((entry) => entry.createdAt)).toEqual([
+      "2026-02-23T00:00:01.000Z",
+      "2026-02-23T00:00:02.000Z",
+    ]);
+    expect(entries.map((entry) => entry.toolLifecycleStatus)).toEqual(["completed", "failed"]);
+  });
+
+  it("does not regress a terminal row when a tool call id is reused", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "first-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        turnId: "turn-1",
+        payload: { toolCallId: "reused-call", status: "inProgress" },
+      }),
+      makeActivity({
+        id: "first-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        turnId: "turn-1",
+        payload: { toolCallId: "reused-call", status: "completed" },
+      }),
+      makeActivity({
+        id: "second-start",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.started",
+        turnId: "turn-1",
+        payload: { toolCallId: "reused-call", status: "inProgress" },
+      }),
+    ]);
+
+    expect(entries.map((entry) => entry.id)).toEqual(["first-start", "second-start"]);
+    expect(entries.map((entry) => entry.toolLifecycleStatus)).toEqual(["completed", "inProgress"]);
+  });
+
+  it("keeps the first row id across start, update, and completion", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "stable-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        turnId: "turn-1",
+        payload: { toolCallId: "stable-call", status: "inProgress" },
+      }),
+      makeActivity({
+        id: "stable-update",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        turnId: "turn-1",
+        payload: { toolCallId: "stable-call", status: "inProgress" },
+      }),
+      makeActivity({
+        id: "stable-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        turnId: "turn-1",
+        payload: { toolCallId: "stable-call", status: "completed" },
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.id).toBe("stable-start");
+    expect(entries[0]?.toolLifecycleStatus).toBe("completed");
+  });
+
+  it("preserves typed tool previews", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "read-complete",
+        kind: "tool.completed",
+        summary: "Read file",
+        payload: {
+          itemType: "dynamic_tool_call",
+          toolCallId: "read-1",
+          toolName: "read",
+          status: "completed",
+          toolPreview: {
+            kind: "read",
+            path: "src/value.ts",
+            content: "export const value = 1;\n",
+          },
+        },
+      }),
+    ]);
+
+    expect(entry).toMatchObject({
+      detail: "src/value.ts",
+      toolName: "read",
+      toolPreview: {
+        kind: "read",
+        path: "src/value.ts",
+        content: "export const value = 1;\n",
+      },
+    });
+  });
+
+  it("drops malformed typed tool previews", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "malformed-preview",
+        kind: "tool.completed",
+        summary: "Changed files",
+        payload: {
+          itemType: "file_change",
+          toolCallId: "change-1",
+          toolPreview: { kind: "file_change" },
+        },
+      }),
+    ]);
+
+    expect(entry?.toolPreview).toBeUndefined();
   });
 
   it("omits task.started but shows task.progress and task.completed", () => {
@@ -1429,7 +1602,7 @@ describe("deriveWorkLogEntries", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       id: "tool-complete",
-      createdAt: "2026-02-23T00:00:03.000Z",
+      createdAt: "2026-02-23T00:00:01.000Z",
       label: "Tool call completed",
       detail: 'Read: {"file_path":"/tmp/app.ts"}',
       command: "sed -n 1,40p /tmp/app.ts",

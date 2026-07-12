@@ -818,6 +818,65 @@ describe("ProviderRuntimeIngestion", () => {
     expect(rawOutput?.content).toBe('import * as Effect from "effect/Effect"\n');
   });
 
+  it("preserves canonical tool lifecycle fields without start data", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const preview = { kind: "command" as const, command: "vp check", output: "ok" };
+
+    for (const [type, status, eventId] of [
+      ["item.started", "inProgress", "evt-tool-preview-start"],
+      ["item.updated", "inProgress", "evt-tool-preview-update"],
+      ["item.completed", "failed", "evt-tool-preview-complete"],
+    ] as const) {
+      harness.emit({
+        type,
+        eventId: asEventId(eventId),
+        provider: ProviderDriverKind.make("piAgent"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-tool-preview"),
+        itemId: asItemId("item-tool-preview"),
+        payload: {
+          itemType: "command_execution",
+          status,
+          title: "Ran command",
+          detail: "vp check",
+          toolCallId: "call-preview",
+          toolName: "bash",
+          toolPreview: preview,
+          data: { raw: "must-not-start" },
+        },
+      });
+    }
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.id === "evt-tool-preview-complete"),
+    );
+    const activities = thread.activities.filter((activity) =>
+      String(activity.id).startsWith("evt-tool-preview-"),
+    );
+    expect(activities).toHaveLength(3);
+    expect(activities.every((activity) => activity.summary === "Ran command")).toBe(true);
+    const payloadByKind = Object.fromEntries(
+      activities.map((activity) => [activity.kind, activity.payload as Record<string, unknown>]),
+    );
+    expect(payloadByKind["tool.started"]).toMatchObject({
+      title: "Ran command",
+      status: "inProgress",
+      toolCallId: "call-preview",
+      toolName: "bash",
+      toolPreview: preview,
+    });
+    expect(payloadByKind["tool.started"]?.data).toBeUndefined();
+    expect(payloadByKind["tool.updated"]?.toolPreview).toEqual(preview);
+    expect(payloadByKind["tool.completed"]).toMatchObject({
+      status: "failed",
+      toolCallId: "call-preview",
+      toolName: "bash",
+      toolPreview: preview,
+    });
+  });
+
   it("normalizes command execution activities to ran-command summaries", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
