@@ -1,0 +1,256 @@
+name: Fork Preview Release
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  PACKAGE_NAME: "@shekohex/t3"
+  REGISTRY_URL: https://npm.pkg.github.com
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: fork-preview-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build_resource_monitor:
+    name: Build resource monitor (${{ matrix.resource_key }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            rust_target: aarch64-apple-darwin
+            resource_key: darwin-arm64
+            binary_name: t3-resource-monitor
+          - runner: macos-14
+            rust_target: x86_64-apple-darwin
+            resource_key: darwin-x64
+            binary_name: t3-resource-monitor
+          - runner: ubuntu-24.04
+            rust_target: x86_64-unknown-linux-gnu
+            resource_key: linux-x64
+            binary_name: t3-resource-monitor
+          - runner: windows-2022
+            rust_target: x86_64-pc-windows-msvc
+            resource_key: win32-x64
+            binary_name: t3-resource-monitor.exe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/resource-monitor -> target
+          shared-key: resource-monitor-${{ matrix.rust_target }}
+
+      - name: Build resource monitor
+        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target "${{ matrix.rust_target }}"
+
+      - name: Collect resource monitor
+        shell: bash
+        run: |
+          set -euo pipefail
+          target_dir="resource-monitor/${{ matrix.resource_key }}"
+          mkdir -p "$target_dir"
+          cp "native/resource-monitor/target/${{ matrix.rust_target }}/release/${{ matrix.binary_name }}" "$target_dir/${{ matrix.binary_name }}"
+          chmod +x "$target_dir/${{ matrix.binary_name }}" 2>/dev/null || true
+
+      - name: Upload resource monitor
+        uses: actions/upload-artifact@v7
+        with:
+          name: fork-resource-monitor-${{ matrix.resource_key }}
+          path: resource-monitor/${{ matrix.resource_key }}/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish @shekohex/t3 preview
+    needs: build_resource_monitor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --no-frozen-lockfile
+              - --filter=t3...
+              - --filter=@t3tools/web...
+              - --filter=@t3tools/scripts...
+
+      - name: Configure GitHub Packages
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+          registry-url: ${{ env.REGISTRY_URL }}
+          scope: "@shekohex"
+
+      - id: preview_version
+        name: Resolve package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_version="$(node --print "require('./apps/server/package.json').version.split('+')[0]")"
+          short_sha="$(git rev-parse --short=12 HEAD)"
+          package_version="${base_version}-preview.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}.${short_sha}"
+          echo "value=$package_version" >> "$GITHUB_OUTPUT"
+
+      - name: Build web package
+        run: vp run --filter @t3tools/web build
+
+      - name: Build CLI package
+        run: vp run --filter t3 build
+
+      - name: Build service launcher
+        working-directory: apps/server
+        run: vp pack src/service-launcher.ts --out-dir dist --no-clean
+
+      - name: Download resource monitors
+        uses: actions/download-artifact@v8
+        with:
+          pattern: fork-resource-monitor-*
+          path: ${{ runner.temp }}/resource-monitors
+
+      - name: Bundle resource monitors
+        shell: bash
+        run: |
+          set -euo pipefail
+          for artifact_dir in "$RUNNER_TEMP"/resource-monitors/fork-resource-monitor-*; do
+            resource_key="${artifact_dir##*/fork-resource-monitor-}"
+            target_dir="apps/server/dist/resource-monitor/${resource_key}"
+            mkdir -p "$target_dir"
+            cp "$artifact_dir"/t3-resource-monitor* "$target_dir/"
+            chmod +x "$target_dir"/t3-resource-monitor 2>/dev/null || true
+          done
+
+      - name: Set fork package metadata
+        env:
+          REPOSITORY_URL: https://github.com/${{ github.repository }}.git
+        shell: bash
+        run: |
+          npm pkg set \
+            --prefix apps/server \
+            "name=$PACKAGE_NAME" \
+            "version=${{ steps.preview_version.outputs.value }}" \
+            "repository.url=$REPOSITORY_URL"
+
+      - name: Validate package
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: node apps/server/scripts/cli.ts publish --dry-run --tag preview --verbose
+
+      - name: Publish package
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: node apps/server/scripts/cli.ts publish --tag preview --verbose
+
+      - name: Render preview release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INSTALL_SCRIPT_URL: https://github.com/${{ github.repository }}/releases/download/fork-preview/install-github-package.sh
+          WINDOWS_INSTALL_SCRIPT_URL: https://github.com/${{ github.repository }}/releases/download/fork-preview/install-github-package.ps1
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous_target=""
+          if gh release view fork-preview >/dev/null 2>&1; then
+            previous_target="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/fork-preview" --jq '.target_commitish')"
+          fi
+
+          changelog_body='- Rolling fork preview initialized.'
+          if [[ -n "$previous_target" ]] && git rev-parse --verify "$previous_target" >/dev/null 2>&1; then
+            changelog_body="$(git log --no-merges --pretty='- %s (%h)' "${previous_target}..HEAD")"
+          fi
+          if [[ -z "$changelog_body" ]]; then
+            changelog_body="$(git log --no-merges -20 --pretty='- %s (%h)')"
+          fi
+
+          export CHANGELOG_BODY="$changelog_body"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          template = Path('.github/release-notes/fork-preview.md').read_text()
+          rendered = template.replace('{{PACKAGE_VERSION}}', '${{ steps.preview_version.outputs.value }}')
+          rendered = rendered.replace('{{CHANGELOG_BODY}}', os.environ['CHANGELOG_BODY'])
+          rendered = rendered.replace('{{INSTALL_SCRIPT_URL}}', os.environ['INSTALL_SCRIPT_URL'])
+          rendered = rendered.replace('{{WINDOWS_INSTALL_SCRIPT_URL}}', os.environ['WINDOWS_INSTALL_SCRIPT_URL'])
+          Path('/tmp/fork-preview-release.md').write_text(rendered)
+
+          shell_installer = Path('scripts/install-github-package.sh').read_text()
+          shell_installer = shell_installer.replace("default_package_version='preview'", "default_package_version='${{ steps.preview_version.outputs.value }}'", 1)
+          Path('/tmp/install-github-package.sh').write_text(shell_installer)
+
+          powershell_installer = Path('scripts/install-github-package.ps1').read_text()
+          powershell_installer = powershell_installer.replace("$defaultPackageVersion = 'preview'", "$defaultPackageVersion = '${{ steps.preview_version.outputs.value }}'", 1)
+          Path('/tmp/install-github-package.ps1').write_text(powershell_installer)
+
+          Path('/tmp/release-manifest.json').write_text('''{
+            "packageName": "@shekohex/t3",
+            "version": "${{ steps.preview_version.outputs.value }}",
+            "channel": "preview",
+            "commit": "${{ github.sha }}",
+            "registryUrl": "https://npm.pkg.github.com"
+          }\n''')
+          PY
+
+      - name: Upsert rolling preview release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view fork-preview >/dev/null 2>&1; then
+            gh api \
+              --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/git/refs/tags/fork-preview" \
+              -f sha="$GITHUB_SHA" \
+              -F force=true
+            gh release edit fork-preview \
+              --title "Fork Preview" \
+              --target "$GITHUB_SHA" \
+              --notes-file /tmp/fork-preview-release.md \
+              --prerelease
+          else
+            gh release create fork-preview \
+              --title "Fork Preview" \
+              --target "$GITHUB_SHA" \
+              --notes-file /tmp/fork-preview-release.md \
+              --prerelease
+          fi
+
+          gh release upload fork-preview \
+            /tmp/install-github-package.sh#install-github-package.sh \
+            /tmp/install-github-package.ps1#install-github-package.ps1 \
+            /tmp/release-manifest.json#release-manifest.json \
+            --clobber
